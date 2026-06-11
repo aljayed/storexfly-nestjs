@@ -12,3 +12,4 @@ export * from './reviews.schema';
 export * from './customers.schema';
 export * from './orders.schema';
 export * from './subscriptions.schema';
+export * from './coupons.schema';

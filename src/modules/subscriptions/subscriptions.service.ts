@@ -11,6 +11,10 @@ import {
   type OnModuleInit,
 } from '@nestjs/common';
 import { and, asc, desc, eq, isNull, lte } from 'drizzle-orm';
+import {
+  MONTHLY_FEE_CENTS,
+  PLATFORM_CURRENCY,
+} from '../../common/constants/billing';
 import { DRIZZLE } from '../../database/database.constants';
 import type { DrizzleDB } from '../../database/drizzle.types';
 import {
@@ -20,14 +24,13 @@ import {
   type SubscriptionPaymentRow,
   type SubscriptionRow,
 } from '../../database/schema';
+import { CouponsService } from '../coupons/coupons.service';
 import {
   ShopCreditResponse,
   SubscriptionResponse,
 } from './dto/subscription.response';
 
-/** Monthly platform fee per shop: ৳1,199.00 in integer paisa. */
-export const MONTHLY_FEE_CENTS = 119900;
-export const PLATFORM_CURRENCY = 'BDT';
+export { MONTHLY_FEE_CENTS, PLATFORM_CURRENCY };
 
 /** How often the background billing sweep looks for due subscriptions. */
 const BILLING_SWEEP_INTERVAL_MS = 60 * 60 * 1000;
@@ -50,7 +53,10 @@ export class SubscriptionsService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(SubscriptionsService.name);
   private sweepTimer?: NodeJS.Timeout;
 
-  constructor(@Inject(DRIZZLE) private readonly db: DrizzleDB) {}
+  constructor(
+    @Inject(DRIZZLE) private readonly db: DrizzleDB,
+    private readonly coupons: CouponsService,
+  ) {}
 
   onModuleInit(): void {
     // Hourly auto-debit sweep. Reads also settle lazily, so this only exists
@@ -71,23 +77,51 @@ export class SubscriptionsService implements OnModuleInit, OnModuleDestroy {
   /**
    * Dummy payment gateway for the one-off shop-creation fee. Idempotent: if
    * the seller already holds an unconsumed credit it is returned as-is
-   * instead of charging twice.
+   * instead of charging twice. An optional coupon code discounts this first
+   * payment (coupons never apply to renewals); an invalid code fails the
+   * whole payment with a 400 rather than silently charging full price.
    */
-  async payShopCreationFee(userId: string): Promise<ShopCreditResponse> {
+  async payShopCreationFee(
+    userId: string,
+    couponCode?: string,
+  ): Promise<ShopCreditResponse> {
     const existing = await this.findUnconsumedCredit(userId);
     if (existing) {
       return ShopCreditResponse.fromRow(existing);
     }
+
+    let coupon: { id: string; code: string } | undefined;
+    let discountCents = 0;
+    if (couponCode?.trim()) {
+      const check = await this.coupons.checkForShopCreation(
+        couponCode,
+        userId,
+      );
+      if (!check.ok) {
+        throw new BadRequestException(
+          this.coupons.rejectionMessage(check.reason),
+        );
+      }
+      coupon = check.coupon;
+      discountCents = check.discountCents;
+    }
+
     const [row] = await this.db
       .insert(subscriptionPayments)
       .values({
         userId,
         type: 'shop_creation',
         method: 'manual',
-        amountCents: MONTHLY_FEE_CENTS,
+        amountCents: MONTHLY_FEE_CENTS - discountCents,
         currency: PLATFORM_CURRENCY,
+        couponId: coupon?.id,
+        couponCode: coupon?.code,
+        discountCents,
       })
       .returning();
+    if (coupon) {
+      await this.coupons.markRedeemed(coupon.id);
+    }
     return ShopCreditResponse.fromRow(row);
   }
 

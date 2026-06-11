@@ -32,6 +32,17 @@ export const adminAuthConfig = registerAs('adminAuth', () => ({
   ticketExpiresIn: process.env.ADMIN_2FA_TICKET_EXPIRES_IN ?? '5m',
 }));
 
+// Platform-admin console (storexfly.com/platform-admin). A single operator
+// identity whose credentials come from the environment — no DB row, so the
+// console works even on an empty database. Use a strong unique password and
+// secret in production.
+export const platformAdminConfig = registerAs('platformAdmin', () => ({
+  email: (process.env.PLATFORM_ADMIN_EMAIL ?? '').toLowerCase(),
+  password: process.env.PLATFORM_ADMIN_PASSWORD as string,
+  jwtSecret: process.env.PLATFORM_JWT_SECRET as string,
+  jwtExpiresIn: process.env.PLATFORM_JWT_EXPIRES_IN ?? '12h',
+}));
+
 export const googleConfig = registerAs('google', () => ({
   clientId: process.env.GOOGLE_CLIENT_ID ?? '',
   clientSecret: process.env.GOOGLE_CLIENT_SECRET ?? '',
@@ -55,6 +66,7 @@ export const configurations = [
   databaseConfig,
   jwtConfig,
   adminAuthConfig,
+  platformAdminConfig,
   googleConfig,
   throttleConfig,
 ];

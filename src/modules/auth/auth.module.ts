@@ -13,6 +13,7 @@ import { TokenService } from './token.service';
 import { AdminJwtStrategy } from './strategies/admin-jwt.strategy';
 import { GoogleStrategy } from './strategies/google.strategy';
 import { JwtStrategy } from './strategies/jwt.strategy';
+import { PlatformJwtStrategy } from './strategies/platform-jwt.strategy';
 
 @Module({
   imports: [
@@ -31,6 +32,7 @@ import { JwtStrategy } from './strategies/jwt.strategy';
     OtpService,
     JwtStrategy,
     AdminJwtStrategy,
+    PlatformJwtStrategy,
     GoogleStrategy,
   ],
   exports: [AdminUsersService, TokenService],

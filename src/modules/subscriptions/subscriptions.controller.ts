@@ -5,6 +5,7 @@ import {
   Param,
   Patch,
   Post,
+  Query,
   UseGuards,
 } from '@nestjs/common';
 import {
@@ -19,6 +20,9 @@ import { AdminJwtAuthGuard } from '../../common/guards/admin-jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { ShopScopeGuard } from '../../common/guards/shop-scope.guard';
 import type { SellerPrincipal } from '../../common/types/principal';
+import { CouponsService } from '../coupons/coupons.service';
+import { CouponPreviewResponse } from '../coupons/dto/coupon.response';
+import { PayShopCreditDto } from './dto/pay-shop-credit.dto';
 import { SetAutoDebitDto } from './dto/set-auto-debit.dto';
 import { SetShopLiveDto } from './dto/set-shop-live.dto';
 import {
@@ -30,7 +34,10 @@ import { SubscriptionsService } from './subscriptions.service';
 @ApiTags('subscriptions')
 @Controller()
 export class SubscriptionsController {
-  constructor(private readonly subscriptions: SubscriptionsService) {}
+  constructor(
+    private readonly subscriptions: SubscriptionsService,
+    private readonly coupons: CouponsService,
+  ) {}
 
   // ── Seller (onboarding wizard) ────────────────────────────────
   @ApiBearerAuth()
@@ -45,8 +52,24 @@ export class SubscriptionsController {
   @Post('billing/shop-credit')
   @ApiOperation({ summary: 'Pay the ৳1,199 shop-creation fee (dummy gateway)' })
   @ApiOkResponse({ type: ShopCreditResponse })
-  payShopCredit(@CurrentUser() user: SellerPrincipal) {
-    return this.subscriptions.payShopCreationFee(user.id);
+  payShopCredit(
+    @CurrentUser() user: SellerPrincipal,
+    @Body() dto: PayShopCreditDto,
+  ) {
+    return this.subscriptions.payShopCreationFee(user.id, dto.couponCode);
+  }
+
+  @ApiBearerAuth()
+  @Get('billing/coupon-preview')
+  @ApiOperation({
+    summary: 'Dry-run a coupon against the shop-creation fee',
+  })
+  @ApiOkResponse({ type: CouponPreviewResponse })
+  previewCoupon(
+    @CurrentUser() user: SellerPrincipal,
+    @Query('code') code = '',
+  ) {
+    return this.coupons.preview(code, user.id);
   }
 
   // ── Admin console (Subscription page) ─────────────────────────

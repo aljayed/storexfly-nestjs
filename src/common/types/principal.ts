@@ -23,7 +23,16 @@ export interface AdminPrincipal {
   twoFactorVerified: boolean;
 }
 
-export type Principal = SellerPrincipal | AdminPrincipal;
+/**
+ * The platform operator (storexfly.com/platform-admin) — a single
+ * env-configured identity, attached by the platform JWT strategy.
+ */
+export interface PlatformPrincipal {
+  kind: 'platform';
+  email: string;
+}
+
+export type Principal = SellerPrincipal | AdminPrincipal | PlatformPrincipal;
 
 export interface RequestWithPrincipal<P extends Principal = Principal>
   extends Request {

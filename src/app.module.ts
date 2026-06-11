@@ -12,8 +12,10 @@ import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
 import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
 import { DatabaseModule } from './database/database.module';
 import { AuthModule } from './modules/auth/auth.module';
+import { CouponsModule } from './modules/coupons/coupons.module';
 import { CustomersModule } from './modules/customers/customers.module';
 import { HealthModule } from './modules/health/health.module';
+import { PlatformModule } from './modules/platform/platform.module';
 import { OrdersModule } from './modules/orders/orders.module';
 import { ProductsModule } from './modules/products/products.module';
 import { ReportsModule } from './modules/reports/reports.module';
@@ -44,7 +46,9 @@ import { UsersModule } from './modules/users/users.module';
     UsersModule,
     AuthModule,
     ShopsModule,
+    CouponsModule,
     SubscriptionsModule,
+    PlatformModule,
     ProductsModule,
     OrdersModule,
     CustomersModule,

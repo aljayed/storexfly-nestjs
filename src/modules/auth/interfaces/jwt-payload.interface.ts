@@ -18,6 +18,17 @@ export interface AdminJwtPayload {
   typ: 'admin';
 }
 
+/**
+ * Claims carried by the platform-admin JWT (the storexfly.com/platform-admin
+ * console). The operator is a single env-configured identity, so the subject
+ * is a fixed sentinel rather than a database id.
+ */
+export interface PlatformJwtPayload {
+  sub: 'platform-admin';
+  email: string;
+  typ: 'platform';
+}
+
 /** Short-lived ticket bridging the credentials and 2FA stages of admin login. */
 export interface TwoFactorTicketPayload {
   sub: string; // admin user id

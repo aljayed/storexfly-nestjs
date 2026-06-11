@@ -11,6 +11,8 @@ export class SubscriptionPaymentResponse {
   @ApiProperty({ enum: ['auto', 'manual'] }) method!: string;
   @ApiProperty({ example: 1199 }) amount!: number;
   @ApiProperty({ example: 'BDT' }) currency!: string;
+  @ApiPropertyOptional({ example: 'STOREXFLY75' }) couponCode?: string;
+  @ApiPropertyOptional({ example: 899.25 }) discount?: number;
   @ApiPropertyOptional() periodStart?: string;
   @ApiPropertyOptional() periodEnd?: string;
   @ApiProperty() paidAt!: string;
@@ -22,6 +24,8 @@ export class SubscriptionPaymentResponse {
       method: row.method,
       amount: row.amountCents / 100,
       currency: row.currency,
+      couponCode: row.couponCode ?? undefined,
+      discount: row.discountCents ? row.discountCents / 100 : undefined,
       periodStart: row.periodStart?.toISOString(),
       periodEnd: row.periodEnd?.toISOString(),
       paidAt: row.paidAt.toISOString(),
@@ -71,8 +75,11 @@ export class SubscriptionResponse {
 /** Pre-shop "creation fee" payment state for the onboarding wizard. */
 export class ShopCreditResponse {
   @ApiProperty() paid!: boolean;
+  /** Amount actually charged (after any coupon), major units (৳). */
   @ApiProperty({ example: 1199 }) amount!: number;
   @ApiProperty({ example: 'BDT' }) currency!: string;
+  @ApiPropertyOptional({ example: 'STOREXFLY75' }) couponCode?: string;
+  @ApiPropertyOptional({ example: 899.25 }) discount?: number;
   @ApiPropertyOptional() paidAt?: string;
 
   static fromRow(row: SubscriptionPaymentRow): ShopCreditResponse {
@@ -80,6 +87,8 @@ export class ShopCreditResponse {
       paid: true,
       amount: row.amountCents / 100,
       currency: row.currency,
+      couponCode: row.couponCode ?? undefined,
+      discount: row.discountCents ? row.discountCents / 100 : undefined,
       paidAt: row.paidAt.toISOString(),
     };
   }

@@ -71,6 +71,23 @@ export class EnvironmentVariables {
   @IsOptional()
   ADMIN_2FA_TICKET_EXPIRES_IN = '5m';
 
+  // ── Platform-admin console (env-based operator identity) ─
+  @IsString()
+  @IsNotEmpty()
+  PLATFORM_ADMIN_EMAIL!: string;
+
+  @IsString()
+  @IsNotEmpty()
+  PLATFORM_ADMIN_PASSWORD!: string;
+
+  @IsString()
+  @IsNotEmpty()
+  PLATFORM_JWT_SECRET!: string;
+
+  @IsString()
+  @IsOptional()
+  PLATFORM_JWT_EXPIRES_IN = '12h';
+
   // ── Google OAuth (optional) ───────────────────────────────
   @IsString()
   @IsOptional()

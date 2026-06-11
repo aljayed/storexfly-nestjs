@@ -50,6 +50,13 @@
       "when": 1781119333553,
       "tag": "0006_careless_king_bedlam",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1781176212986,
+      "tag": "0007_fair_anita_blake",
+      "breakpoints": true
     }
   ]
 }

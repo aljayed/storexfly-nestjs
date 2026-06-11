@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { JwtService, type JwtSignOptions } from '@nestjs/jwt';
 import type {
   AdminJwtPayload,
+  PlatformJwtPayload,
   SellerJwtPayload,
   TwoFactorTicketPayload,
 } from './interfaces/jwt-payload.interface';
@@ -39,6 +40,16 @@ export class TokenService {
       {
         secret: this.config.getOrThrow<string>('adminAuth.jwtSecret'),
         expiresIn: this.config.getOrThrow<string>('adminAuth.jwtExpiresIn'),
+      } as JwtSignOptions,
+    );
+  }
+
+  async signPlatformToken(email: string): Promise<string> {
+    return this.jwt.signAsync(
+      { sub: 'platform-admin', email, typ: 'platform' } satisfies PlatformJwtPayload,
+      {
+        secret: this.config.getOrThrow<string>('platformAdmin.jwtSecret'),
+        expiresIn: this.config.getOrThrow<string>('platformAdmin.jwtExpiresIn'),
       } as JwtSignOptions,
     );
   }

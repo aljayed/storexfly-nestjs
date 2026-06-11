@@ -14,6 +14,7 @@ import {
   platformPaymentTypeEnum,
   subscriptionStatusEnum,
 } from './enums';
+import { coupons } from './coupons.schema';
 import { shops } from './shops.schema';
 import { users } from './users.schema';
 
@@ -87,8 +88,16 @@ export const subscriptionPayments = pgTable(
     }),
     type: platformPaymentTypeEnum('type').notNull(),
     method: platformPaymentMethodEnum('method').notNull().default('manual'),
+    // The amount actually charged, after any coupon discount.
     amountCents: integer('amount_cents').notNull(),
     currency: varchar('currency', { length: 3 }).notNull().default('BDT'),
+    // Coupon applied to this payment (shop_creation only). The code is
+    // denormalized so the ledger stays readable if the coupon is deleted.
+    couponId: uuid('coupon_id').references(() => coupons.id, {
+      onDelete: 'set null',
+    }),
+    couponCode: varchar('coupon_code', { length: 40 }),
+    discountCents: integer('discount_cents').notNull().default(0),
     periodStart: timestamp('period_start', { withTimezone: true }),
     periodEnd: timestamp('period_end', { withTimezone: true }),
     paidAt: timestamp('paid_at', { withTimezone: true }).notNull().defaultNow(),
@@ -126,6 +135,10 @@ export const subscriptionPaymentsRelations = relations(
     user: one(users, {
       fields: [subscriptionPayments.userId],
       references: [users.id],
+    }),
+    coupon: one(coupons, {
+      fields: [subscriptionPayments.couponId],
+      references: [coupons.id],
     }),
   }),
 );
