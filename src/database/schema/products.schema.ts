@@ -1,0 +1,97 @@
+import { relations } from 'drizzle-orm';
+import {
+  doublePrecision,
+  index,
+  integer,
+  jsonb,
+  pgTable,
+  text,
+  timestamp,
+  uniqueIndex,
+  uuid,
+  varchar,
+} from 'drizzle-orm/pg-core';
+import { paymentMethodEnum, productTagEnum } from './enums';
+import { shops } from './shops.schema';
+import { reviews } from './reviews.schema';
+
+/**
+ * A seller-authored selling point shown on the product page (the "trust"
+ * badges, e.g. "Free next-day · Cold-chain delivery"). `icon` is a key into a
+ * fixed front-end icon set; an empty list renders nothing to buyers.
+ */
+export interface ProductHighlight {
+  icon?: string;
+  title: string;
+  subtitle?: string;
+}
+
+/**
+ * A catalog item within a shop. Maps to `Product` in the design handoff.
+ * Money is stored as integer cents (`priceCents`) to avoid floating-point
+ * drift; the API layer exposes it as a decimal `price`.
+ */
+export const products = pgTable(
+  'products',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    shopId: uuid('shop_id')
+      .notNull()
+      .references(() => shops.id, { onDelete: 'cascade' }),
+    name: varchar('name', { length: 200 }).notNull(),
+    slug: varchar('slug', { length: 220 }).notNull(),
+    cat: varchar('cat', { length: 80 }).notNull(),
+    priceCents: integer('price_cents').notNull(),
+    unit: varchar('unit', { length: 60 }).notNull(),
+    stock: integer('stock').notNull().default(0),
+    // Per-product delivery charge in integer cents, split by zone. 0 = free
+    // (no charge is shown to buyers). Defaults: Dhaka ৳70, elsewhere ৳120.
+    deliveryDhakaCents: integer('delivery_dhaka_cents').notNull().default(7000),
+    deliveryOutsideCents: integer('delivery_outside_cents')
+      .notNull()
+      .default(12000),
+    emoji: varchar('emoji', { length: 16 }).notNull().default('📦'),
+    tone: varchar('tone', { length: 9 }).notNull().default('#f3f1ec'),
+    tag: productTagEnum('tag'),
+    // Payment methods a buyer may use for this item. Defaults to all three;
+    // a seller can disable some, but at least one must stay enabled.
+    paymentMethods: paymentMethodEnum('payment_methods')
+      .array()
+      .notNull()
+      .default(['mbank', 'card', 'cod']),
+    rating: doublePrecision('rating').notNull().default(0),
+    reviewsCount: integer('reviews_count').notNull().default(0),
+    blurb: text('blurb').notNull().default(''),
+    images: text('images').array(),
+    // Seller-authored selling points ("trust" badges). Empty = nothing shown.
+    highlights: jsonb('highlights')
+      .$type<ProductHighlight[]>()
+      .notNull()
+      .default([]),
+    // Optional product video — a YouTube watch/share/embed URL. Rendered as an
+    // embedded player on the storefront product page.
+    videoUrl: text('video_url'),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true })
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (table) => [
+    uniqueIndex('products_shop_slug_unique_idx').on(table.shopId, table.slug),
+    index('products_shop_cat_idx').on(table.shopId, table.cat),
+  ],
+);
+
+export const productsRelations = relations(products, ({ one, many }) => ({
+  shop: one(shops, {
+    fields: [products.shopId],
+    references: [shops.id],
+  }),
+  reviews: many(reviews),
+}));
+
+export type ProductRow = typeof products.$inferSelect;
+export type NewProductRow = typeof products.$inferInsert;

@@ -1,0 +1,2 @@
+ALTER TABLE "products" ADD COLUMN "delivery_dhaka_cents" integer DEFAULT 7000 NOT NULL;--> statement-breakpoint
+ALTER TABLE "products" ADD COLUMN "delivery_outside_cents" integer DEFAULT 12000 NOT NULL;

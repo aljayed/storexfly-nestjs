@@ -1,0 +1,48 @@
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import {
+  IsEnum,
+  IsOptional,
+  IsString,
+  Matches,
+  MaxLength,
+  MinLength,
+} from 'class-validator';
+import type { BrandSwatchId } from '../../../common/constants/brand-swatches';
+import {
+  brandSwatchEnum,
+  shopCategoryEnum,
+} from '../../../database/schema/enums';
+
+type ShopCategory = (typeof shopCategoryEnum.enumValues)[number];
+
+/** Create-shop wizard submission (README §2). */
+export class CreateShopDto {
+  @ApiProperty({ example: 'Mango Shop' })
+  @IsString()
+  @MinLength(2)
+  @MaxLength(160)
+  name!: string;
+
+  @ApiProperty({ example: 'mango-shop', description: 'URL handle' })
+  @IsString()
+  @Matches(/^[a-z0-9-]+$/, {
+    message: 'Handle may only contain lowercase letters, numbers and hyphens',
+  })
+  @MinLength(2)
+  @MaxLength(80)
+  handle!: string;
+
+  @ApiPropertyOptional({ example: 'Tropical fruit, delivered fresh.' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(240)
+  tagline?: string;
+
+  @ApiProperty({ enum: shopCategoryEnum.enumValues })
+  @IsEnum(shopCategoryEnum.enumValues)
+  cat!: ShopCategory;
+
+  @ApiProperty({ enum: brandSwatchEnum.enumValues })
+  @IsEnum(brandSwatchEnum.enumValues)
+  brandId!: BrandSwatchId;
+}
