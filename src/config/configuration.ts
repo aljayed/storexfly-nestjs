@@ -6,15 +6,21 @@ import { registerAs } from '@nestjs/config';
  * raw env-var names.
  */
 
-export const appConfig = registerAs('app', () => ({
-  env: process.env.NODE_ENV ?? 'development',
-  port: parseInt(process.env.PORT ?? '3000', 10),
-  apiPrefix: process.env.API_PREFIX ?? 'api',
-  corsOrigins: (process.env.CORS_ORIGINS ?? 'http://localhost:5173')
+export const appConfig = registerAs('app', () => {
+  const corsOrigins = (process.env.CORS_ORIGINS ?? 'http://localhost:5173')
     .split(',')
     .map((o) => o.trim())
-    .filter(Boolean),
-}));
+    .filter(Boolean);
+  return {
+    env: process.env.NODE_ENV ?? 'development',
+    port: parseInt(process.env.PORT ?? '3000', 10),
+    apiPrefix: process.env.API_PREFIX ?? 'api',
+    corsOrigins,
+    // Public origin of the Vue app — used to build links emailed to users
+    // (e.g. the password-reset page). Defaults to the first CORS origin.
+    webUrl: process.env.PUBLIC_WEB_URL ?? corsOrigins[0] ?? 'http://localhost:5173',
+  };
+});
 
 export const databaseConfig = registerAs('database', () => ({
   url: process.env.DATABASE_URL as string,
@@ -32,7 +38,7 @@ export const adminAuthConfig = registerAs('adminAuth', () => ({
   ticketExpiresIn: process.env.ADMIN_2FA_TICKET_EXPIRES_IN ?? '5m',
 }));
 
-// Platform-admin console (storexfly.com/platform-admin). A single operator
+// Platform-admin console (hoomri.com/platform-admin). A single operator
 // identity whose credentials come from the environment — no DB row, so the
 // console works even on an empty database. Use a strong unique password and
 // secret in production.
@@ -56,6 +62,21 @@ export const googleConfig = registerAs('google', () => ({
   },
 }));
 
+// Outbound email (SMTP via nodemailer). When host/user/pass are unset the
+// MailService falls back to logging the message in non-production, so the
+// password-reset flow is testable without a real mail gateway.
+export const mailConfig = registerAs('mail', () => ({
+  host: process.env.MAIL_HOST ?? '',
+  port: parseInt(process.env.MAIL_PORT ?? '587', 10),
+  secure: (process.env.MAIL_SECURE ?? 'false') === 'true',
+  user: process.env.MAIL_USER ?? '',
+  pass: process.env.MAIL_PASS ?? '',
+  from: process.env.MAIL_FROM ?? 'Storexfly <no-reply@storexfly.com>',
+  get enabled() {
+    return Boolean(this.host && this.user && this.pass);
+  },
+}));
+
 export const throttleConfig = registerAs('throttle', () => ({
   ttl: parseInt(process.env.THROTTLE_TTL ?? '60000', 10),
   limit: parseInt(process.env.THROTTLE_LIMIT ?? '120', 10),
@@ -68,5 +89,6 @@ export const configurations = [
   adminAuthConfig,
   platformAdminConfig,
   googleConfig,
+  mailConfig,
   throttleConfig,
 ];

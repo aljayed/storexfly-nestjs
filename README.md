@@ -1,6 +1,6 @@
-# StoreXFly Backend — NestJS API
+# Hoomri Backend — NestJS API
 
-Enterprise-grade backend for the StoreXFly social-SME multi-shop commerce platform.
+Enterprise-grade backend for the Hoomri social-SME multi-shop commerce platform.
 
 ## Stack
 

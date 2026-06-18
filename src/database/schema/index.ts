@@ -13,3 +13,5 @@ export * from './customers.schema';
 export * from './orders.schema';
 export * from './subscriptions.schema';
 export * from './coupons.schema';
+export * from './platform-settings.schema';
+export * from './buyers.schema';

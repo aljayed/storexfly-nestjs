@@ -24,7 +24,7 @@ export interface AdminPrincipal {
 }
 
 /**
- * The platform operator (storexfly.com/platform-admin) — a single
+ * The platform operator (hoomri.com/platform-admin) — a single
  * env-configured identity, attached by the platform JWT strategy.
  */
 export interface PlatformPrincipal {
@@ -32,7 +32,19 @@ export interface PlatformPrincipal {
   email: string;
 }
 
-export type Principal = SellerPrincipal | AdminPrincipal | PlatformPrincipal;
+/** A signed-in shopper, attached by the buyer JWT strategy. Leaves reviews. */
+export interface BuyerPrincipal {
+  kind: 'buyer';
+  id: string;
+  email: string;
+  name: string;
+}
+
+export type Principal =
+  | SellerPrincipal
+  | AdminPrincipal
+  | PlatformPrincipal
+  | BuyerPrincipal;
 
 export interface RequestWithPrincipal<P extends Principal = Principal>
   extends Request {

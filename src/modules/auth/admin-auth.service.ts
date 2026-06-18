@@ -61,7 +61,7 @@ export class AdminAuthService {
    * Stage 1 — verify the workspace + credentials, branch on 2FA.
    *
    * Authentication accepts either credential store, so a seller can use the
-   * same email/password they use on storexfly:
+   * same email/password they use on Hoomri:
    *  - **Shop owner** — the password is checked against the platform `users`
    *    account; any shop the seller owns is a valid workspace (the admin token
    *    is scoped to that shop, not to the one their `admin_users` row happens to

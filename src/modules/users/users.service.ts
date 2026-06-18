@@ -38,6 +38,14 @@ export class UsersService {
     return this.db.query.users.findFirst({ where: eq(users.phone, phone) });
   }
 
+  /** Replaces the stored password hash (used by the reset-password flow). */
+  async updatePassword(id: string, passwordHash: string): Promise<void> {
+    await this.db
+      .update(users)
+      .set({ passwordHash })
+      .where(eq(users.id, id));
+  }
+
   async create(data: NewUserRow): Promise<UserRow> {
     const normalized: NewUserRow = {
       ...data,

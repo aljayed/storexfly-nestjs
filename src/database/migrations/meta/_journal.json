@@ -57,6 +57,55 @@
       "when": 1781176212986,
       "tag": "0007_fair_anita_blake",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1781685472794,
+      "tag": "0008_lush_demogoblin",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1781688030638,
+      "tag": "0009_steep_arclight",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1781689967938,
+      "tag": "0010_dapper_light_dark_logos",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1781692797688,
+      "tag": "0011_buyers_and_review_images",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1781720065266,
+      "tag": "0012_solid_vindicator",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1781720633559,
+      "tag": "0013_orange_rocket_raccoon",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1781721726713,
+      "tag": "0014_calm_bloodaxe",
+      "breakpoints": true
     }
   ]
 }

@@ -105,6 +105,36 @@ export class EnvironmentVariables {
   @IsOptional()
   OAUTH_SUCCESS_REDIRECT = 'http://localhost:5173/auth/callback';
 
+  // ── Outbound email (SMTP, optional) ───────────────────────
+  @IsString()
+  @IsOptional()
+  PUBLIC_WEB_URL = 'http://localhost:5173';
+
+  @IsString()
+  @IsOptional()
+  MAIL_HOST = '';
+
+  @IsInt()
+  @IsOptional()
+  @Transform(({ value }) => parseInt(value, 10))
+  MAIL_PORT = 587;
+
+  @IsString()
+  @IsOptional()
+  MAIL_SECURE = 'false';
+
+  @IsString()
+  @IsOptional()
+  MAIL_USER = '';
+
+  @IsString()
+  @IsOptional()
+  MAIL_PASS = '';
+
+  @IsString()
+  @IsOptional()
+  MAIL_FROM = 'Storexfly <no-reply@storexfly.com>';
+
   // ── Throttling ────────────────────────────────────────────
   @IsInt()
   @IsOptional()

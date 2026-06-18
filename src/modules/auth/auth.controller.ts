@@ -28,9 +28,14 @@ import type { UserRow } from '../../database/schema';
 import { UserResponse } from '../users/dto/user.response';
 import { AuthService } from './auth.service';
 import { LoginDto } from './dto/login.dto';
+import {
+  ForgotPasswordDto,
+  ResetPasswordDto,
+} from './dto/password-reset.dto';
 import { PhoneStartDto, PhoneVerifyDto } from './dto/phone.dto';
 import { RegisterDto } from './dto/register.dto';
 import { GoogleOAuthGuard } from './guards/google-oauth.guard';
+import { PasswordResetService } from './password-reset.service';
 
 @ApiTags('auth')
 @Controller('auth')
@@ -38,6 +43,7 @@ export class AuthController {
   constructor(
     private readonly auth: AuthService,
     private readonly config: ConfigService,
+    private readonly passwordReset: PasswordResetService,
   ) {}
 
   @Public()
@@ -73,6 +79,27 @@ export class AuthController {
   @ApiOperation({ summary: 'Verify a phone OTP and sign in' })
   verifyPhone(@Body() dto: PhoneVerifyDto) {
     return this.auth.verifyPhone(dto.phone, dto.code);
+  }
+
+  @Public()
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
+  @Post('forgot-password')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Email a password-reset link (email accounts)' })
+  async forgotPassword(@Body() dto: ForgotPasswordDto) {
+    await this.passwordReset.request(dto.email);
+    // Always 200 with the same shape — never reveal whether the email exists.
+    return { ok: true };
+  }
+
+  @Public()
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  @Post('reset-password')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Set a new password using a reset token' })
+  async resetPassword(@Body() dto: ResetPasswordDto) {
+    await this.passwordReset.reset(dto.token, dto.password);
+    return { ok: true };
   }
 
   @Public()

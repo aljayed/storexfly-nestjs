@@ -298,7 +298,7 @@ async function seed(): Promise<void> {
     console.log('  password: admin12345');
     console.log(`  2FA TOTP secret: ${totpSecret}`);
     console.log(
-      `  otpauth URL:     ${authenticator.keyuri('maya@mango-shop.com', 'StoreXFly', totpSecret)}`,
+      `  otpauth URL:     ${authenticator.keyuri('maya@mango-shop.com', 'Hoomri', totpSecret)}`,
     );
     console.log(`  current code:    ${authenticator.generate(totpSecret)}\n`);
   } finally {
