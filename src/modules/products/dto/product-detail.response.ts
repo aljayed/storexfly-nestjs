@@ -7,6 +7,7 @@ export class ReviewResponse {
   @ApiProperty() author!: string;
   @ApiProperty() rating!: number;
   @ApiProperty() body!: string;
+  @ApiProperty({ nullable: true }) imageUrl!: string | null;
   @ApiProperty() verified!: boolean;
   @ApiProperty() createdAt!: string;
 
@@ -16,6 +17,7 @@ export class ReviewResponse {
       author: row.author,
       rating: row.rating,
       body: row.body,
+      imageUrl: row.imageUrl ?? null,
       verified: row.verified,
       createdAt: row.createdAt.toISOString(),
     };

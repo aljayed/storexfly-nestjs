@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { JwtModule } from '@nestjs/jwt';
 import { PassportModule } from '@nestjs/passport';
+import { MailModule } from '../mail/mail.module';
 import { ShopsModule } from '../shops/shops.module';
 import { UsersModule } from '../users/users.module';
 import { AdminAuthController } from './admin-auth.controller';
@@ -9,6 +10,7 @@ import { AdminUsersService } from './admin-users.service';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { OtpService } from './otp.service';
+import { PasswordResetService } from './password-reset.service';
 import { TokenService } from './token.service';
 import { AdminJwtStrategy } from './strategies/admin-jwt.strategy';
 import { GoogleStrategy } from './strategies/google.strategy';
@@ -22,6 +24,7 @@ import { PlatformJwtStrategy } from './strategies/platform-jwt.strategy';
     JwtModule.register({}),
     UsersModule,
     ShopsModule,
+    MailModule,
   ],
   controllers: [AuthController, AdminAuthController],
   providers: [
@@ -30,6 +33,7 @@ import { PlatformJwtStrategy } from './strategies/platform-jwt.strategy';
     AdminUsersService,
     TokenService,
     OtpService,
+    PasswordResetService,
     JwtStrategy,
     AdminJwtStrategy,
     PlatformJwtStrategy,

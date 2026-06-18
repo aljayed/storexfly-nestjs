@@ -15,7 +15,7 @@ import { customers } from './customers.schema';
 import { adminUsers } from './admin-users.schema';
 
 /**
- * A seller's branded storefront, reachable at storexfly.com/shops/<handle>.
+ * A seller's branded storefront, reachable at hoomri.com/shops/<handle>.
  * Maps to `Shop` in the design handoff. `brand`/`brandSoft` are the resolved
  * hex values for the chosen swatch and drive the per-shop CSS custom props.
  */

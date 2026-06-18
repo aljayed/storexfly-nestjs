@@ -108,7 +108,7 @@ export const customerSegmentEnum = pgEnum('customer_segment', [
   'New',
 ]);
 
-// Platform subscription (the monthly per-shop fee sellers pay StoreXFly).
+// Platform subscription (the monthly per-shop fee sellers pay Hoomri).
 export const subscriptionStatusEnum = pgEnum('subscription_status', [
   'active',
   'past_due',

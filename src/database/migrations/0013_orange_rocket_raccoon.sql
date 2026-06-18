@@ -1,0 +1,1 @@
+ALTER TABLE "buyers" ADD COLUMN "geo" jsonb;

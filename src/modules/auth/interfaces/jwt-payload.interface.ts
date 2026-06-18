@@ -7,6 +7,14 @@ export interface SellerJwtPayload {
   typ: 'seller';
 }
 
+/** Claims carried by the buyer-session JWT (shopper reviews). */
+export interface BuyerJwtPayload {
+  sub: string; // buyer id
+  email: string;
+  name: string;
+  typ: 'buyer';
+}
+
 /** Claims carried by the admin-console JWT (issued post-2FA). */
 export interface AdminJwtPayload {
   sub: string; // admin user id
@@ -19,7 +27,7 @@ export interface AdminJwtPayload {
 }
 
 /**
- * Claims carried by the platform-admin JWT (the storexfly.com/platform-admin
+ * Claims carried by the platform-admin JWT (the hoomri.com/platform-admin
  * console). The operator is a single env-configured identity, so the subject
  * is a fixed sentinel rather than a database id.
  */

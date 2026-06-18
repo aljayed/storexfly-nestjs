@@ -1,8 +1,8 @@
 {
-  "name": "storexfly_backend",
+  "name": "hoomri_backend",
   "version": "0.1.0",
-  "description": "StoreXFly — social SME multi-shop commerce platform API",
-  "author": "StoreXFly",
+  "description": "Hoomri — social SME multi-shop commerce platform API",
+  "author": "Hoomri",
   "private": true,
   "license": "UNLICENSED",
   "scripts": {
@@ -41,6 +41,7 @@
     "drizzle-orm": "^0.44.2",
     "express": "^5.2.1",
     "helmet": "^8.1.0",
+    "nodemailer": "^9.0.1",
     "otplib": "^12.0.1",
     "passport": "^0.7.0",
     "passport-google-oauth20": "^2.0.0",
@@ -59,6 +60,7 @@
     "@types/express": "^5.0.0",
     "@types/jest": "^30.0.0",
     "@types/node": "^22.10.7",
+    "@types/nodemailer": "^8.0.1",
     "@types/passport-google-oauth20": "^2.0.16",
     "@types/passport-jwt": "^4.0.1",
     "@types/supertest": "^6.0.2",

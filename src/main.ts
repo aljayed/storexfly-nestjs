@@ -49,7 +49,7 @@ async function bootstrap(): Promise<void> {
 
   // OpenAPI docs at /<prefix>/docs.
   const swaggerConfig = new DocumentBuilder()
-    .setTitle('StoreXFly API')
+    .setTitle('Hoomri API')
     .setDescription('Social SME multi-shop commerce platform API')
     .setVersion('0.1.0')
     .addBearerAuth()
@@ -60,7 +60,7 @@ async function bootstrap(): Promise<void> {
   });
 
   await app.listen(port);
-  logger.log(`StoreXFly API listening on http://localhost:${port}/${apiPrefix}`);
+  logger.log(`Hoomri API listening on http://localhost:${port}/${apiPrefix}`);
   logger.log(`OpenAPI docs at http://localhost:${port}/${apiPrefix}/docs`);
 }
 

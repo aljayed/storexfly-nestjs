@@ -11,7 +11,7 @@ export class SubscriptionPaymentResponse {
   @ApiProperty({ enum: ['auto', 'manual'] }) method!: string;
   @ApiProperty({ example: 1199 }) amount!: number;
   @ApiProperty({ example: 'BDT' }) currency!: string;
-  @ApiPropertyOptional({ example: 'STOREXFLY75' }) couponCode?: string;
+  @ApiPropertyOptional({ example: 'HOOMRI75' }) couponCode?: string;
   @ApiPropertyOptional({ example: 899.25 }) discount?: number;
   @ApiPropertyOptional() periodStart?: string;
   @ApiPropertyOptional() periodEnd?: string;
@@ -78,7 +78,7 @@ export class ShopCreditResponse {
   /** Amount actually charged (after any coupon), major units (৳). */
   @ApiProperty({ example: 1199 }) amount!: number;
   @ApiProperty({ example: 'BDT' }) currency!: string;
-  @ApiPropertyOptional({ example: 'STOREXFLY75' }) couponCode?: string;
+  @ApiPropertyOptional({ example: 'HOOMRI75' }) couponCode?: string;
   @ApiPropertyOptional({ example: 899.25 }) discount?: number;
   @ApiPropertyOptional() paidAt?: string;
 

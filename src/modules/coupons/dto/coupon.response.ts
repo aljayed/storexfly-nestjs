@@ -4,7 +4,7 @@ import type { CouponRow } from '../../../database/schema';
 /** Platform-admin console view of a coupon. */
 export class CouponResponse {
   @ApiProperty() id!: string;
-  @ApiProperty({ example: 'STOREXFLY75' }) code!: string;
+  @ApiProperty({ example: 'HOOMRI75' }) code!: string;
   @ApiPropertyOptional() description?: string;
   @ApiProperty({ example: 75 }) percentOff!: number;
   @ApiProperty() active!: boolean;
@@ -31,7 +31,7 @@ export class CouponResponse {
 /** Seller-facing preview of what a code does to the shop-creation fee. */
 export class CouponPreviewResponse {
   @ApiProperty() valid!: boolean;
-  @ApiPropertyOptional({ example: 'STOREXFLY75' }) code?: string;
+  @ApiPropertyOptional({ example: 'HOOMRI75' }) code?: string;
   @ApiPropertyOptional({ example: 75 }) percentOff?: number;
   /** Fee before discount, major units (৳). */
   @ApiProperty({ example: 1199 }) amount!: number;

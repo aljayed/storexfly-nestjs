@@ -28,7 +28,7 @@ import { CouponPreviewResponse, CouponResponse } from './dto/coupon.response';
  * always available unless an operator deactivates or deletes it.
  */
 const DEFAULT_COUPON = {
-  code: 'STOREXFLY75',
+  code: 'HOOMRI75',
   percentOff: 75,
   description: '75% off the first payment when creating a shop',
 };

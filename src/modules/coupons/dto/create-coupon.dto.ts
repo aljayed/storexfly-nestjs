@@ -11,7 +11,7 @@ import {
 } from 'class-validator';
 
 export class CreateCouponDto {
-  @ApiProperty({ example: 'StoreXFly75' })
+  @ApiProperty({ example: 'Hoomri75' })
   @IsString()
   @Matches(/^[A-Za-z0-9_-]{3,40}$/, {
     message:

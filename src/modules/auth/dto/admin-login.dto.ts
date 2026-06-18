@@ -13,7 +13,7 @@ import {
 export class AdminLoginDto {
   @ApiProperty({
     example: 'mango-shop',
-    description: 'Shop handle (workspace) — storexfly.com/admin/<workspace>',
+    description: 'Shop handle (workspace) — hoomri.com/admin/<workspace>',
   })
   @IsString()
   @MinLength(1)
