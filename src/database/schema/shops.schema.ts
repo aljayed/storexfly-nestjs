@@ -2,12 +2,13 @@ import { relations } from 'drizzle-orm';
 import {
   boolean,
   pgTable,
+  text,
   timestamp,
   uniqueIndex,
   uuid,
   varchar,
 } from 'drizzle-orm/pg-core';
-import { brandSwatchEnum, shopCategoryEnum } from './enums';
+import { brandSwatchEnum, kycStatusEnum, shopCategoryEnum } from './enums';
 import { users } from './users.schema';
 import { products } from './products.schema';
 import { orders } from './orders.schema';
@@ -26,6 +27,15 @@ export const shops = pgTable(
     name: varchar('name', { length: 160 }).notNull(),
     handle: varchar('handle', { length: 80 }).notNull(),
     tagline: varchar('tagline', { length: 240 }),
+    // Buyer-facing support contacts shown on the storefront. Optional.
+    supportEmail: varchar('support_email', { length: 320 }),
+    supportPhone: varchar('support_phone', { length: 24 }),
+    // Storefront hero banner images, stored inline as data URLs (same approach
+    // as product images). Ordered; the storefront rotates through them.
+    bannerImages: text('banner_images').array(),
+    // Decorative images that float over the hero banner (replace the default
+    // product-emoji bubbles). Also inline data URLs, in display order.
+    floatingImages: text('floating_images').array(),
     cat: shopCategoryEnum('cat').notNull().default('Other'),
     // ISO 4217 currency code the shop prices in (see SUPPORTED_CURRENCIES).
     currency: varchar('currency', { length: 3 }).notNull().default('BDT'),
@@ -39,6 +49,16 @@ export const shops = pgTable(
     // and checkout endpoints all refuse to serve the shop. Forced off when
     // the platform subscription is cancelled.
     live: boolean('live').notNull().default(true),
+    // ── Business verification (trade-license KYC) ──────────────────
+    // All optional: a shop can be created and go live without any of this,
+    // and the seller can complete or update it later from the console.
+    // `kycDocument` holds the uploaded trade licence inline as a data URL
+    // (same approach as product images); it is never sent to public routes.
+    kycStatus: kycStatusEnum('kyc_status').notNull().default('unsubmitted'),
+    kycLegalName: varchar('kyc_legal_name', { length: 200 }),
+    kycLicenseNo: varchar('kyc_license_no', { length: 120 }),
+    kycDocument: text('kyc_document'),
+    kycSubmittedAt: timestamp('kyc_submitted_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true })
       .notNull()
       .defaultNow(),

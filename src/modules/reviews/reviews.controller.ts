@@ -1,4 +1,13 @@
-import { Body, Controller, Get, Param, Post, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Param,
+  Patch,
+  Post,
+  UseGuards,
+} from '@nestjs/common';
 import {
   ApiBearerAuth,
   ApiOkResponse,
@@ -53,5 +62,35 @@ export class ReviewsController {
     @Body() dto: CreateReviewDto,
   ) {
     return this.reviews.create(handle, slug, buyer, dto);
+  }
+
+  @Public()
+  @UseGuards(BuyerJwtAuthGuard)
+  @ApiBearerAuth()
+  @Patch('reviews/:id')
+  @ApiOperation({ summary: 'Buyer: edit your own review' })
+  @ApiOkResponse({ type: ReviewResponse })
+  update(
+    @Param('handle') handle: string,
+    @Param('slug') slug: string,
+    @Param('id') id: string,
+    @CurrentUser() buyer: BuyerPrincipal,
+    @Body() dto: CreateReviewDto,
+  ) {
+    return this.reviews.update(handle, slug, id, buyer, dto);
+  }
+
+  @Public()
+  @UseGuards(BuyerJwtAuthGuard)
+  @ApiBearerAuth()
+  @Delete('reviews/:id')
+  @ApiOperation({ summary: 'Buyer: delete your own review' })
+  remove(
+    @Param('handle') handle: string,
+    @Param('slug') slug: string,
+    @Param('id') id: string,
+    @CurrentUser() buyer: BuyerPrincipal,
+  ) {
+    return this.reviews.remove(handle, slug, id, buyer);
   }
 }

@@ -19,6 +19,8 @@ import { SHOP_CATEGORIES } from '../../database/schema/enums';
 import type { SellerPrincipal } from '../../common/types/principal';
 import { CheckHandleQuery } from './dto/check-handle.query';
 import { CreateShopDto } from './dto/create-shop.dto';
+import { SubmitKycDto } from './dto/kyc.dto';
+import { KycResponse } from './dto/kyc.response';
 import { ShopResponse } from './dto/shop.response';
 import { UpdateShopDto } from './dto/update-shop.dto';
 import { ShopsService } from './shops.service';
@@ -56,6 +58,26 @@ export class ShopsController {
   @ApiOperation({ summary: "List the signed-in seller's shops" })
   mine(@CurrentUser() user: SellerPrincipal) {
     return this.shops.listForOwner(user.id);
+  }
+
+  @ApiBearerAuth()
+  @Get(':id/kyc')
+  @ApiOperation({ summary: 'Read the shop business verification (owner only)' })
+  @ApiOkResponse({ type: KycResponse })
+  getKyc(@CurrentUser() user: SellerPrincipal, @Param('id') id: string) {
+    return this.shops.getKyc(user.id, id);
+  }
+
+  @ApiBearerAuth()
+  @Patch(':id/kyc')
+  @ApiOperation({ summary: 'Submit/update business verification (owner only)' })
+  @ApiOkResponse({ type: KycResponse })
+  submitKyc(
+    @CurrentUser() user: SellerPrincipal,
+    @Param('id') id: string,
+    @Body() dto: SubmitKycDto,
+  ) {
+    return this.shops.submitKyc(user.id, id, dto);
   }
 
   @Public()

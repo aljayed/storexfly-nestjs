@@ -1,16 +1,25 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { Transform } from 'class-transformer';
-import { IsEmail, IsString, MaxLength, MinLength } from 'class-validator';
+import { Transform, Type } from 'class-transformer';
+import {
+  IsEmail,
+  IsOptional,
+  IsString,
+  MaxLength,
+  MinLength,
+  ValidateNested,
+} from 'class-validator';
 import type { BuyerRow } from '../../../database/schema';
-import type { BuyerProfile } from './buyer-overview.dto';
+import { BuyerGeoDto, type BuyerProfile } from './buyer-overview.dto';
 
 const lower = ({ value }: { value: unknown }) =>
   typeof value === 'string' ? value.trim().toLowerCase() : value;
+const trim = ({ value }: { value: unknown }) =>
+  typeof value === 'string' ? value.trim() : value;
 
 export class BuyerRegisterDto {
   @ApiProperty({ example: 'Aarav Sharma' })
   @IsString()
-  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  @Transform(trim)
   @MinLength(1)
   @MaxLength(160)
   name!: string;
@@ -26,6 +35,44 @@ export class BuyerRegisterDto {
   @MinLength(8)
   @MaxLength(128)
   password!: string;
+
+  // Optional checkout details captured when the account is created inline at
+  // checkout, so the new profile is seeded in one round-trip. `phone` holds the
+  // 10 digits after +880 and is also checked for conflicts (one account per
+  // phone number).
+  @ApiProperty({ example: '1712345678', required: false })
+  @IsOptional()
+  @IsString()
+  @Transform(trim)
+  @MaxLength(24)
+  phone?: string;
+
+  @ApiProperty({ example: 'House 12, Road 5, Dhanmondi', required: false })
+  @IsOptional()
+  @IsString()
+  @Transform(trim)
+  @MaxLength(500)
+  address?: string;
+
+  @ApiProperty({ example: 'Dhaka', required: false })
+  @IsOptional()
+  @IsString()
+  @Transform(trim)
+  @MaxLength(120)
+  city?: string;
+
+  @ApiProperty({ example: '1207', required: false })
+  @IsOptional()
+  @IsString()
+  @Transform(trim)
+  @MaxLength(24)
+  pincode?: string;
+
+  @ApiProperty({ type: BuyerGeoDto, required: false, nullable: true })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => BuyerGeoDto)
+  geo?: BuyerGeoDto | null;
 }
 
 export class BuyerLoginDto {

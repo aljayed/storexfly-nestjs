@@ -19,6 +19,8 @@ import {
 import { ProductResponse } from '../products/dto/product.response';
 import { SubscriptionsService } from '../subscriptions/subscriptions.service';
 import type { CreateShopDto } from './dto/create-shop.dto';
+import type { SubmitKycDto } from './dto/kyc.dto';
+import { KycResponse } from './dto/kyc.response';
 import { ShopResponse } from './dto/shop.response';
 import type { UpdateShopDto } from './dto/update-shop.dto';
 
@@ -76,6 +78,9 @@ export class ShopsService {
         brand: swatch.c,
         brandSoft: swatch.soft,
         ownerId,
+        // Optional KYC supplied during onboarding — skipped sellers start
+        // 'unsubmitted' (the column default).
+        ...this.kycPatch(dto.kyc),
       })
       .returning();
     // Consume the paid credit and open the monthly subscription.
@@ -119,11 +124,28 @@ export class ShopsService {
       cat: dto.cat ?? undefined,
       currency: dto.currency ?? undefined,
     };
+    // Support contacts: an empty string clears the saved value.
+    if (dto.supportEmail !== undefined) {
+      patch.supportEmail = dto.supportEmail.trim() || null;
+    }
+    if (dto.supportPhone !== undefined) {
+      patch.supportPhone = dto.supportPhone.trim() || null;
+    }
     if (dto.brandId) {
       const swatch = BRAND_SWATCHES[dto.brandId];
       patch.brandId = dto.brandId;
       patch.brand = swatch.c;
       patch.brandSoft = swatch.soft;
+    }
+    // Banners are replace-all: an empty array clears them; null keeps the column
+    // tidy when there are none left.
+    if (dto.bannerImages !== undefined) {
+      const banners = dto.bannerImages.map((b) => b.trim()).filter(Boolean);
+      patch.bannerImages = banners.length ? banners : null;
+    }
+    if (dto.floatingImages !== undefined) {
+      const floats = dto.floatingImages.map((b) => b.trim()).filter(Boolean);
+      patch.floatingImages = floats.length ? floats : null;
     }
     const [row] = await this.db
       .update(shops)
@@ -131,6 +153,81 @@ export class ShopsService {
       .where(eq(shops.id, id))
       .returning();
     return ShopResponse.fromRow(row);
+  }
+
+  /** Owner-only read of the full KYC record (includes the trade licence). */
+  async getKyc(ownerId: string, id: string): Promise<KycResponse> {
+    const shop = await this.requireById(id);
+    if (shop.ownerId !== ownerId) {
+      throw new ForbiddenException('You do not own this shop');
+    }
+    return KycResponse.fromRow(shop);
+  }
+
+  /**
+   * Create or update the shop's business verification. Sellers can save
+   * partial details and finish later; submitting (or replacing) the document
+   * moves the shop into the 'pending' review state. Already-verified shops
+   * keep their status when only the editable text fields change.
+   */
+  async submitKyc(
+    ownerId: string,
+    id: string,
+    dto: SubmitKycDto,
+  ): Promise<KycResponse> {
+    const shop = await this.requireById(id);
+    if (shop.ownerId !== ownerId) {
+      throw new ForbiddenException('You do not own this shop');
+    }
+    const patch = this.kycPatch(dto, shop);
+    if (Object.keys(patch).length === 0) {
+      return KycResponse.fromRow(shop);
+    }
+    const [row] = await this.db
+      .update(shops)
+      .set(patch)
+      .where(eq(shops.id, id))
+      .returning();
+    return KycResponse.fromRow(row);
+  }
+
+  /**
+   * Build the KYC column patch from a (partial) submission. `current` is the
+   * existing shop on an update (absent during onboarding).
+   *
+   * A submission (re)enters the operator's 'pending' review queue when either:
+   *  - a fresh document is uploaded, or
+   *  - a previously *rejected* shop resubmits — even with no new file — so the
+   *    operator sees it again and the seller isn't stuck on 'rejected'.
+   * A *verified* shop keeps its badge on text-only edits (only a new document
+   * sends it back for review). Returns an empty object when nothing was given.
+   */
+  private kycPatch(dto?: SubmitKycDto, current?: ShopRow): Partial<ShopRow> {
+    if (!dto) return {};
+    const patch: Partial<ShopRow> = {};
+    if (dto.legalName !== undefined) {
+      patch.kycLegalName = dto.legalName.trim() || null;
+    }
+    if (dto.licenseNo !== undefined) {
+      patch.kycLicenseNo = dto.licenseNo.trim() || null;
+    }
+
+    const hasNewDoc = dto.document !== undefined;
+    if (hasNewDoc) {
+      patch.kycDocument = dto.document!.trim() || null;
+    }
+
+    // A document must be on file for there to be anything to review — either
+    // the one just uploaded, or the one already saved on a resubmission.
+    const documentOnFile = hasNewDoc
+      ? !!patch.kycDocument
+      : !!current?.kycDocument;
+    const resubmittingRejected = current?.kycStatus === 'rejected';
+    if (documentOnFile && (hasNewDoc || resubmittingRejected)) {
+      patch.kycStatus = 'pending';
+      patch.kycSubmittedAt = new Date();
+    }
+    return patch;
   }
 
   async listForOwner(ownerId: string): Promise<ShopResponse[]> {

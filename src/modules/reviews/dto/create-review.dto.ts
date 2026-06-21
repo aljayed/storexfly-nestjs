@@ -36,4 +36,6 @@ export class CreateReviewDto {
 export class ReviewEligibilityResponse {
   @ApiProperty() purchased!: boolean;
   @ApiProperty() alreadyReviewed!: boolean;
+  // The id of the buyer's existing review, so the client can offer edit/delete.
+  @ApiProperty({ nullable: true }) reviewId!: string | null;
 }
