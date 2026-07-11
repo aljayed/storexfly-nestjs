@@ -163,5 +163,32 @@ export function validateEnv(
       .join('; ');
     throw new Error(`Invalid environment configuration: ${detail}`);
   }
+
+  // Refuse to boot production on the .env.example placeholders — every signed
+  // token would otherwise be forgeable by anyone who has read the repo.
+  if (validated.NODE_ENV === NodeEnv.Production) {
+    const secrets: [string, string][] = [
+      ['JWT_SECRET', validated.JWT_SECRET],
+      ['ADMIN_JWT_SECRET', validated.ADMIN_JWT_SECRET],
+      ['ADMIN_2FA_TICKET_SECRET', validated.ADMIN_2FA_TICKET_SECRET],
+      ['PLATFORM_JWT_SECRET', validated.PLATFORM_JWT_SECRET],
+    ];
+    const weak = secrets
+      .filter(([, v]) => v.includes('change-me') || v.length < 32)
+      .map(([k]) => k);
+    if (weak.length > 0) {
+      throw new Error(
+        `Refusing to start in production with placeholder/short secrets (min 32 chars): ${weak.join(', ')}`,
+      );
+    }
+    if (
+      validated.PLATFORM_ADMIN_PASSWORD === validated.PLATFORM_ADMIN_EMAIL ||
+      validated.PLATFORM_ADMIN_PASSWORD.length < 12
+    ) {
+      throw new Error(
+        'Refusing to start in production: PLATFORM_ADMIN_PASSWORD must be a strong password (min 12 chars, not the email)',
+      );
+    }
+  }
   return validated;
 }

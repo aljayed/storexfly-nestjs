@@ -24,11 +24,13 @@ async function bootstrap(): Promise<void> {
   const corsOrigins = config.get<string[]>('app.corsOrigins', [
     'http://localhost:5173',
   ]);
+  const isProduction = config.get<string>('app.env') === 'production';
 
   app.setGlobalPrefix(apiPrefix);
 
-  // Security headers (CSP relaxed so Swagger UI works in non-prod).
-  app.use(helmet({ contentSecurityPolicy: false }));
+  // Security headers. CSP is only relaxed outside production, where the
+  // Swagger UI (inline scripts) is served; production keeps helmet defaults.
+  app.use(helmet(isProduction ? {} : { contentSecurityPolicy: false }));
 
   app.enableCors({
     origin: corsOrigins,
@@ -47,21 +49,26 @@ async function bootstrap(): Promise<void> {
 
   app.enableShutdownHooks();
 
-  // OpenAPI docs at /<prefix>/docs.
-  const swaggerConfig = new DocumentBuilder()
-    .setTitle('Hoomri API')
-    .setDescription('Social SME multi-shop commerce platform API')
-    .setVersion('0.1.0')
-    .addBearerAuth()
-    .build();
-  const document = SwaggerModule.createDocument(app, swaggerConfig);
-  SwaggerModule.setup(`${apiPrefix}/docs`, app, document, {
-    swaggerOptions: { persistAuthorization: true },
-  });
+  // OpenAPI docs at /<prefix>/docs — development tooling only, never exposed
+  // in production (the spec maps the whole API surface for an attacker).
+  if (!isProduction) {
+    const swaggerConfig = new DocumentBuilder()
+      .setTitle('Hoomri API')
+      .setDescription('Social SME multi-shop commerce platform API')
+      .setVersion('0.1.0')
+      .addBearerAuth()
+      .build();
+    const document = SwaggerModule.createDocument(app, swaggerConfig);
+    SwaggerModule.setup(`${apiPrefix}/docs`, app, document, {
+      swaggerOptions: { persistAuthorization: true },
+    });
+  }
 
   await app.listen(port);
   logger.log(`Hoomri API listening on http://localhost:${port}/${apiPrefix}`);
-  logger.log(`OpenAPI docs at http://localhost:${port}/${apiPrefix}/docs`);
+  if (!isProduction) {
+    logger.log(`OpenAPI docs at http://localhost:${port}/${apiPrefix}/docs`);
+  }
 }
 
 void bootstrap();

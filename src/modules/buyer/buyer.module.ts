@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { PassportModule } from '@nestjs/passport';
 import { AuthModule } from '../auth/auth.module';
 import { BuyerAuthController } from './buyer-auth.controller';
+import { BuyerOrdersController } from './buyer-orders.controller';
 import { BuyerProfileController } from './buyer-profile.controller';
 import { BuyerService } from './buyer.service';
 import { BuyerJwtStrategy } from './strategies/buyer-jwt.strategy';
@@ -12,7 +13,11 @@ import { BuyerJwtStrategy } from './strategies/buyer-jwt.strategy';
  */
 @Module({
   imports: [AuthModule, PassportModule],
-  controllers: [BuyerAuthController, BuyerProfileController],
+  controllers: [
+    BuyerAuthController,
+    BuyerOrdersController,
+    BuyerProfileController,
+  ],
   providers: [BuyerService, BuyerJwtStrategy],
   exports: [BuyerService],
 })

@@ -13,6 +13,9 @@ interface ErrorBody {
   statusCode: number;
   error: string;
   message: string | string[];
+  // Optional machine-readable code (e.g. 'PHONE_TAKEN') for clients that need
+  // to branch on a specific failure rather than match on the message text.
+  code?: string;
   path: string;
   timestamp: string;
 }
@@ -35,6 +38,7 @@ export class AllExceptionsFilter implements ExceptionFilter {
     let status = HttpStatus.INTERNAL_SERVER_ERROR;
     let message: string | string[] = 'Internal server error';
     let error = 'Internal Server Error';
+    let code: string | undefined;
 
     if (exception instanceof HttpException) {
       status = exception.getStatus();
@@ -45,6 +49,7 @@ export class AllExceptionsFilter implements ExceptionFilter {
         const body = res as Record<string, unknown>;
         message = (body.message as string | string[]) ?? exception.message;
         error = (body.error as string) ?? exception.name;
+        if (typeof body.code === 'string') code = body.code;
       }
     } else {
       const mapped = postgresErrorToHttp(exception);
@@ -66,6 +71,7 @@ export class AllExceptionsFilter implements ExceptionFilter {
       statusCode: status,
       error,
       message,
+      ...(code ? { code } : {}),
       path: request.url,
       timestamp: new Date().toISOString(),
     };

@@ -10,8 +10,8 @@ export class RevenuePointResponse {
  * Dashboard KPIs + revenue series for the selected window. Range-scoped
  * figures (`revenue`, `orders`, …) cover [rangeFrom, rangeTo]; the `prev*`
  * pair covers the preceding window of equal length so the UI can show real
- * period-over-period deltas. The series is bucketed per day for windows up
- * to ~2 months and per month beyond that.
+ * period-over-period deltas. The series is bucketed per hour for windows up
+ * to 2 days, per day up to ~2 months, and per month beyond that.
  */
 export class DashboardResponse {
   // Always-current snapshot (independent of the selected range).
@@ -36,7 +36,8 @@ export class DashboardResponse {
   @ApiProperty({ description: 'Paid orders in the previous window' })
   prevOrders!: number;
 
-  @ApiProperty({ enum: ['day', 'month'] }) granularity!: 'day' | 'month';
+  @ApiProperty({ enum: ['hour', 'day', 'month'] })
+  granularity!: 'hour' | 'day' | 'month';
   @ApiProperty({ type: [RevenuePointResponse] })
   revenueSeries!: RevenuePointResponse[];
 }

@@ -1,0 +1,199 @@
+import { Logger } from '@nestjs/common';
+import {
+  MessageBody,
+  ConnectedSocket,
+  OnGatewayConnection,
+  OnGatewayDisconnect,
+  OnGatewayInit,
+  SubscribeMessage,
+  WebSocketGateway,
+  WebSocketServer,
+} from '@nestjs/websockets';
+import { eq } from 'drizzle-orm';
+import { Inject } from '@nestjs/common';
+import type { Server, Socket } from 'socket.io';
+import { DRIZZLE } from '../../database/database.constants';
+import type { DrizzleDB } from '../../database/drizzle.types';
+import { chatConversations } from '../../database/schema';
+import type { ChatActor } from './chat-actor';
+import { ChatRealtimeService } from './chat-realtime.service';
+import { ChatTokenService } from './chat-token.service';
+import { MessagesService } from './messages.service';
+
+interface ChatSocket extends Socket {
+  data: { actor?: ChatActor; eventWindow?: { start: number; count: number } };
+}
+
+// Per-socket inbound event budget. Every typing/read event costs a DB lookup,
+// so cap the rate; the REST throttler doesn't cover the gateway.
+const EVENT_WINDOW_MS = 10_000;
+const EVENTS_PER_WINDOW = 30;
+
+/** True when this socket may spend another event; silently drops the excess. */
+function withinBudget(client: ChatSocket): boolean {
+  const now = Date.now();
+  const win = client.data.eventWindow;
+  if (!win || now - win.start > EVENT_WINDOW_MS) {
+    client.data.eventWindow = { start: now, count: 1 };
+    return true;
+  }
+  win.count += 1;
+  return win.count <= EVENTS_PER_WINDOW;
+}
+
+const corsOrigins = (process.env.CORS_ORIGINS ?? 'http://localhost:5173')
+  .split(',')
+  .map((o) => o.trim())
+  .filter(Boolean);
+
+/**
+ * Real-time side of the chat: presence, typing, live delivery and read
+ * receipts. Serves under its own Socket.IO path (`/api/chat-ws`) so the Vue
+ * dev proxy and any reverse proxy can route it independently of the host
+ * app's REST traffic. Auth: the same platform token the REST guard accepts,
+ * passed in the connection's `auth.token`.
+ */
+@WebSocketGateway({
+  namespace: '/chat',
+  path: '/api/chat-ws',
+  cors: { origin: corsOrigins, credentials: true },
+})
+export class ChatGateway
+  implements OnGatewayInit, OnGatewayConnection, OnGatewayDisconnect
+{
+  private readonly logger = new Logger(ChatGateway.name);
+
+  @WebSocketServer()
+  server!: Server;
+
+  constructor(
+    @Inject(DRIZZLE) private readonly db: DrizzleDB,
+    private readonly tokens: ChatTokenService,
+    private readonly realtime: ChatRealtimeService,
+    private readonly messages: MessagesService,
+  ) {}
+
+  afterInit(server: Server): void {
+    this.realtime.attachServer(server);
+  }
+
+  async handleConnection(client: ChatSocket): Promise<void> {
+    try {
+      const token = (client.handshake.auth as { token?: string })?.token;
+      const actor = await this.tokens.verify(token);
+      client.data.actor = actor;
+
+      const room = ChatRealtimeService.actorRoom(actor);
+      await client.join(room);
+      const cameOnline = this.realtime.connected(room, client.id);
+
+      // Anything sent while this side was away is now delivered.
+      await this.messages.markDeliveredOnConnect(actor);
+
+      if (cameOnline) {
+        await this.broadcastPresence(actor, true);
+      }
+    } catch {
+      client.emit('error', { message: 'Unauthorized' });
+      client.disconnect(true);
+    }
+  }
+
+  async handleDisconnect(client: ChatSocket): Promise<void> {
+    const actor = client.data.actor;
+    if (!actor) return;
+    const room = ChatRealtimeService.actorRoom(actor);
+    const wentOffline = this.realtime.disconnected(room, client.id);
+    if (wentOffline) {
+      await this.broadcastPresence(actor, false);
+    }
+  }
+
+  @SubscribeMessage('typing')
+  async onTyping(
+    @ConnectedSocket() client: ChatSocket,
+    @MessageBody() body: { conversationId?: string; isTyping?: boolean },
+  ): Promise<void> {
+    const actor = client.data.actor;
+    if (!actor || !body?.conversationId || !withinBudget(client)) return;
+    if (typeof body.conversationId !== 'string') return;
+    const convo = await this.db.query.chatConversations.findFirst({
+      where: eq(chatConversations.id, body.conversationId),
+    });
+    if (!convo) return;
+    if (
+      actor.role === 'customer'
+        ? convo.buyerId !== actor.id
+        : convo.shopId !== actor.shopId
+    ) {
+      return;
+    }
+    const counterpartRoom =
+      actor.role === 'customer'
+        ? ChatRealtimeService.room('shop', convo.shopId)
+        : ChatRealtimeService.room('buyer', convo.buyerId);
+    this.realtime.emitTo(counterpartRoom, 'typing', {
+      conversationId: convo.id,
+      isTyping: body.isTyping === true,
+    });
+  }
+
+  @SubscribeMessage('read')
+  async onRead(
+    @ConnectedSocket() client: ChatSocket,
+    @MessageBody() body: { conversationId?: string; upToMessageId?: string },
+  ): Promise<void> {
+    const actor = client.data.actor;
+    if (!actor || !body?.conversationId || !body?.upToMessageId) return;
+    if (
+      typeof body.conversationId !== 'string' ||
+      typeof body.upToMessageId !== 'string' ||
+      !withinBudget(client)
+    ) {
+      return;
+    }
+    try {
+      await this.messages.markRead(actor, body.conversationId, {
+        upToMessageId: body.upToMessageId,
+      });
+    } catch (err) {
+      this.logger.debug(`read event rejected: ${String(err)}`);
+    }
+  }
+
+  /** Tell every counterpart of this actor that they went on/offline. */
+  private async broadcastPresence(
+    actor: ChatActor,
+    online: boolean,
+  ): Promise<void> {
+    const isCustomer = actor.role === 'customer';
+    const convos = await this.db.query.chatConversations.findMany({
+      where: isCustomer
+        ? eq(chatConversations.buyerId, actor.id)
+        : eq(chatConversations.shopId, actor.shopId),
+      columns: { buyerId: true, shopId: true },
+    });
+    const payload = {
+      role: actor.role,
+      // Sellers present as their shop (any staff socket online = shop online).
+      id: isCustomer ? actor.id : actor.shopId,
+      online,
+      lastSeenAt: online
+        ? undefined
+        : this.realtime.lastSeenAt(
+            isCustomer ? 'buyer' : 'shop',
+            isCustomer ? actor.id : actor.shopId,
+          ),
+    };
+    const counterpartRooms = new Set(
+      convos.map((c) =>
+        isCustomer
+          ? ChatRealtimeService.room('shop', c.shopId)
+          : ChatRealtimeService.room('buyer', c.buyerId),
+      ),
+    );
+    for (const room of counterpartRooms) {
+      this.realtime.emitTo(room, 'presence', payload);
+    }
+  }
+}

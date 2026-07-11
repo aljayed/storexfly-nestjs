@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Param,
   Patch,
@@ -22,6 +23,7 @@ import { ShopScopeGuard } from '../../common/guards/shop-scope.guard';
 import type { SellerPrincipal } from '../../common/types/principal';
 import { CouponsService } from '../coupons/coupons.service';
 import { CouponPreviewResponse } from '../coupons/dto/coupon.response';
+import { ApplyCouponDto } from './dto/apply-coupon.dto';
 import { PayShopCreditDto } from './dto/pay-shop-credit.dto';
 import { SetAutoDebitDto } from './dto/set-auto-debit.dto';
 import { SetShopLiveDto } from './dto/set-shop-live.dto';
@@ -111,6 +113,26 @@ export class SubscriptionsController {
   @ApiOkResponse({ type: SubscriptionResponse })
   resume(@Param('shopId') shopId: string) {
     return this.subscriptions.resume(shopId);
+  }
+
+  @Public()
+  @UseGuards(AdminJwtAuthGuard, ShopScopeGuard, RolesGuard)
+  @ApiBearerAuth()
+  @Post('shops/:shopId/subscription/coupon')
+  @ApiOperation({ summary: 'Admin: apply a coupon to the next renewal' })
+  @ApiOkResponse({ type: SubscriptionResponse })
+  applyCoupon(@Param('shopId') shopId: string, @Body() dto: ApplyCouponDto) {
+    return this.subscriptions.applyCoupon(shopId, dto.code);
+  }
+
+  @Public()
+  @UseGuards(AdminJwtAuthGuard, ShopScopeGuard, RolesGuard)
+  @ApiBearerAuth()
+  @Delete('shops/:shopId/subscription/coupon')
+  @ApiOperation({ summary: 'Admin: remove the pending renewal coupon' })
+  @ApiOkResponse({ type: SubscriptionResponse })
+  removeCoupon(@Param('shopId') shopId: string) {
+    return this.subscriptions.removeCoupon(shopId);
   }
 
   @Public()

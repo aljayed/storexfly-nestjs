@@ -13,6 +13,7 @@ import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
 import { DatabaseModule } from './database/database.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { BuyerModule } from './modules/buyer/buyer.module';
+import { ChatModule } from './modules/chat/chat.module';
 import { CouponsModule } from './modules/coupons/coupons.module';
 import { CustomersModule } from './modules/customers/customers.module';
 import { HealthModule } from './modules/health/health.module';
@@ -56,6 +57,7 @@ import { UsersModule } from './modules/users/users.module';
     CustomersModule,
     ReportsModule,
     BuyerModule,
+    ChatModule,
     ReviewsModule,
     HealthModule,
   ],

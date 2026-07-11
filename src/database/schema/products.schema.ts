@@ -11,7 +11,7 @@ import {
   uuid,
   varchar,
 } from 'drizzle-orm/pg-core';
-import { paymentMethodEnum, productTagEnum } from './enums';
+import { listingTypeEnum, paymentMethodEnum, productTagEnum } from './enums';
 import { shops } from './shops.schema';
 import { reviews } from './reviews.schema';
 
@@ -41,6 +41,9 @@ export const products = pgTable(
     name: varchar('name', { length: 200 }).notNull(),
     slug: varchar('slug', { length: 220 }).notNull(),
     cat: varchar('cat', { length: 80 }).notNull(),
+    // 'sale' = normal online checkout; 'showcase' = advertise-only, buyers
+    // contact the seller to purchase offline. Showcase items can't be ordered.
+    listingType: listingTypeEnum('listing_type').notNull().default('sale'),
     priceCents: integer('price_cents').notNull(),
     unit: varchar('unit', { length: 60 }).notNull(),
     stock: integer('stock').notNull().default(0),

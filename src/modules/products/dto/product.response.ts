@@ -1,6 +1,7 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { centsToDollars } from '../../../common/utils/money.util';
 import type { ProductHighlight, ProductRow } from '../../../database/schema';
+import type { ListingType } from '../../../database/schema/enums';
 
 /** Public-facing product shape (the `Product` interface from the design handoff). */
 export class ProductResponse {
@@ -9,6 +10,12 @@ export class ProductResponse {
   @ApiProperty() name!: string;
   @ApiProperty() slug!: string;
   @ApiProperty() cat!: string;
+  @ApiProperty({
+    enum: ['sale', 'showcase'],
+    description:
+      "'sale' = online checkout; 'showcase' = advertise-only, contact the seller to buy.",
+  })
+  listingType!: ListingType;
   @ApiProperty({ example: 38, description: 'Unit price in dollars' })
   price!: number;
   @ApiProperty({ example: 'box of 12' }) unit!: string;
@@ -41,6 +48,7 @@ export class ProductResponse {
       name: row.name,
       slug: row.slug,
       cat: row.cat,
+      listingType: row.listingType,
       price: centsToDollars(row.priceCents),
       unit: row.unit,
       stock: row.stock,

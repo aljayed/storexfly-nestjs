@@ -50,6 +50,17 @@ export const SHOP_CATEGORIES: string[] = [
   'Other',
 ];
 
+// Seller business verification (trade-license KYC) state. Optional at shop
+// creation — a shop starts 'unsubmitted' and can be completed any time from
+// the seller console. 'pending' means a document was submitted and is awaiting
+// review; an operator can later move it to 'verified' or 'rejected'.
+export const kycStatusEnum = pgEnum('kyc_status', [
+  'unsubmitted',
+  'pending',
+  'verified',
+  'rejected',
+]);
+
 export const brandSwatchEnum = pgEnum('brand_swatch', [
   'amber',
   'blue',
@@ -74,6 +85,11 @@ export const productTagEnum = pgEnum('product_tag', [
   'Trending',
   'Premium',
 ]);
+
+// How a product can be acquired. 'sale' is the normal online-checkout flow;
+// 'showcase' items are advertised only (e.g. flat shares, big-ticket goods
+// sold offline) — buyers read about them and contact the seller directly.
+export const listingTypeEnum = pgEnum('listing_type', ['sale', 'showcase']);
 
 export const orderStatusEnum = pgEnum('order_status', [
   'New',
@@ -130,7 +146,9 @@ export type AuthMethod = (typeof authMethodEnum.enumValues)[number];
 export type AdminRole = (typeof adminRoleEnum.enumValues)[number];
 export type ShopCategory = (typeof shopCategoryEnum.enumValues)[number];
 export type BrandSwatch = (typeof brandSwatchEnum.enumValues)[number];
+export type KycStatus = (typeof kycStatusEnum.enumValues)[number];
 export type ProductTag = (typeof productTagEnum.enumValues)[number];
+export type ListingType = (typeof listingTypeEnum.enumValues)[number];
 export type OrderStatus = (typeof orderStatusEnum.enumValues)[number];
 export type PaymentStatus = (typeof paymentStatusEnum.enumValues)[number];
 export type PaymentMethod = (typeof paymentMethodEnum.enumValues)[number];

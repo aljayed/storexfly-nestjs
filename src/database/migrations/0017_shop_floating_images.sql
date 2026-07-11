@@ -1,0 +1,1 @@
+ALTER TABLE "shops" ADD COLUMN IF NOT EXISTS "floating_images" text[];

@@ -12,9 +12,9 @@ import { subscriptionPayments } from './subscriptions.schema';
 
 /**
  * Platform-level discount coupons, managed from the platform admin console.
- * Today a coupon applies only to the one-off shop-creation fee (a seller's
- * first subscription payment) — never to monthly renewals — and each seller
- * can redeem a given code once. Codes are stored uppercase and matched
+ * A coupon discounts one subscription payment — the one-off shop-creation fee
+ * or, applied from the shop console, a subscription's next renewal — and each
+ * seller can redeem a given code once. Codes are stored uppercase and matched
  * case-insensitively.
  */
 export const coupons = pgTable(

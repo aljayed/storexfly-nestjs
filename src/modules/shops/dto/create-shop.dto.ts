@@ -1,17 +1,21 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { Type } from 'class-transformer';
 import {
   IsEnum,
+  IsObject,
   IsOptional,
   IsString,
   Matches,
   MaxLength,
   MinLength,
+  ValidateNested,
 } from 'class-validator';
 import type { BrandSwatchId } from '../../../common/constants/brand-swatches';
 import {
   brandSwatchEnum,
   shopCategoryEnum,
 } from '../../../database/schema/enums';
+import { SubmitKycDto } from './kyc.dto';
 
 type ShopCategory = (typeof shopCategoryEnum.enumValues)[number];
 
@@ -45,4 +49,13 @@ export class CreateShopDto {
   @ApiProperty({ enum: brandSwatchEnum.enumValues })
   @IsEnum(brandSwatchEnum.enumValues)
   brandId!: BrandSwatchId;
+
+  // Optional business verification captured during onboarding. Sellers can
+  // skip this entirely and complete it later from the console.
+  @ApiPropertyOptional({ type: SubmitKycDto })
+  @IsOptional()
+  @IsObject()
+  @ValidateNested()
+  @Type(() => SubmitKycDto)
+  kyc?: SubmitKycDto;
 }

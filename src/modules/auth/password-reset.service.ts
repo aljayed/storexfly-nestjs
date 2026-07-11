@@ -67,7 +67,9 @@ export class PasswordResetService {
     const entry = this.store.get(token);
     if (!entry || Date.now() > entry.expiresAt) {
       this.store.delete(token);
-      throw new BadRequestException('This reset link is invalid or has expired');
+      throw new BadRequestException(
+        'This reset link is invalid or has expired',
+      );
     }
     this.store.delete(token);
 
@@ -92,7 +94,7 @@ export class PasswordResetService {
     return `
       <div style="font-family:system-ui,sans-serif;max-width:480px;margin:0 auto;color:#1a1814">
         <h2 style="font-weight:800">Reset your password</h2>
-        <p>Hi ${name},</p>
+        <p>Hi ${escapeHtml(name)},</p>
         <p>We received a request to reset your Storexfly password. Click the
            button below to choose a new one. This link expires in 30 minutes.</p>
         <p style="margin:28px 0">
@@ -108,4 +110,14 @@ export class PasswordResetService {
       </div>
     `;
   }
+}
+
+/** The display name is user-supplied — never interpolate it into HTML raw. */
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }

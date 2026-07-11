@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { randomInt, timingSafeEqual } from 'crypto';
 
 interface OtpEntry {
   code: string;
@@ -20,7 +21,9 @@ export class OtpService {
   private readonly maxAttempts = 5;
 
   async issue(phone: string): Promise<void> {
-    const code = String(Math.floor(1000 + Math.random() * 9000));
+    // CSPRNG, 6 digits: Math.random is predictable enough to make a 4-digit
+    // code guessable, which would let an attacker log in as any phone account.
+    const code = String(randomInt(0, 1_000_000)).padStart(6, '0');
     this.store.set(phone, {
       code,
       expiresAt: Date.now() + this.ttlMs,
@@ -42,7 +45,7 @@ export class OtpService {
       this.store.delete(phone);
       return false;
     }
-    if (entry.code !== code) {
+    if (!constantTimeEquals(entry.code, code)) {
       return false;
     }
     this.store.delete(phone);
@@ -56,4 +59,12 @@ export class OtpService {
     // TODO: integrate SMS gateway (Twilio/Vonage) here.
     return Promise.resolve();
   }
+}
+
+/** Length-safe constant-time string compare (codes are short and same-charset). */
+function constantTimeEquals(a: string, b: string): boolean {
+  const bufA = Buffer.from(a);
+  const bufB = Buffer.from(b);
+  if (bufA.length !== bufB.length) return false;
+  return timingSafeEqual(bufA, bufB);
 }

@@ -63,12 +63,23 @@ export class ReportsService {
       now.getDate(),
     );
 
-    // Resolve the window. `to` is inclusive → compare against the next day.
+    // Resolve the window. Date-only bounds are inclusive calendar dates
+    // (`to` → compare against the next day); datetime bounds (with a time
+    // part, e.g. "last 24 hours") are exact instants with `to` exclusive.
     const from = fromIso
-      ? startOfDay(new Date(fromIso))
+      ? hasTimePart(fromIso)
+        ? new Date(fromIso)
+        : startOfDay(new Date(fromIso))
       : new Date(now.getFullYear(), now.getMonth() - 11, 1);
-    const toInclusive = toIso ? startOfDay(new Date(toIso)) : startOfToday;
-    const end = addDays(toInclusive, 1);
+    let toInclusive: Date;
+    let end: Date;
+    if (toIso && hasTimePart(toIso)) {
+      end = new Date(toIso);
+      toInclusive = end;
+    } else {
+      toInclusive = toIso ? startOfDay(new Date(toIso)) : startOfToday;
+      end = addDays(toInclusive, 1);
+    }
     // The preceding window of identical length, for period-over-period deltas.
     const spanMs = end.getTime() - from.getTime();
     const prevFrom = new Date(from.getTime() - spanMs);
@@ -97,9 +108,10 @@ export class ReportsService {
     }
 
     const inRange = paid.filter((r) => r.placedAt >= from && r.placedAt < end);
-    // Day buckets for short windows, month buckets beyond ~2 months.
+    // Hour buckets up to 2 days, day buckets up to ~2 months, else months.
     const spanDays = Math.round(spanMs / 86_400_000);
-    const granularity: 'day' | 'month' = spanDays <= 62 ? 'day' : 'month';
+    const granularity: 'hour' | 'day' | 'month' =
+      spanMs <= 48 * 3_600_000 ? 'hour' : spanDays <= 62 ? 'day' : 'month';
 
     return {
       revenueToday: centsToDollars(revenueTodayCents),
@@ -118,9 +130,11 @@ export class ReportsService {
       prevOrders,
       granularity,
       revenueSeries:
-        granularity === 'day'
-          ? this.buildDailySeries(inRange, from, end)
-          : this.buildMonthlySeries(inRange, from, end),
+        granularity === 'hour'
+          ? this.buildHourlySeries(inRange, from, end)
+          : granularity === 'day'
+            ? this.buildDailySeries(inRange, from, end)
+            : this.buildMonthlySeries(inRange, from, end),
     };
   }
 
@@ -232,6 +246,36 @@ export class ReportsService {
     }));
   }
 
+  /** One bucket per hour between `from` (inclusive) and `end` (exclusive). */
+  private buildHourlySeries(
+    rows: { totalCents: number; placedAt: Date }[],
+    from: Date,
+    end: Date,
+  ): RevenuePointResponse[] {
+    const hourKey = (d: Date) => `${isoDate(d)}T${d.getHours()}`;
+    const buckets: { label: string; key: string; cents: number }[] = [];
+    for (
+      let cursor = startOfHour(from);
+      cursor < end && buckets.length < 48;
+      cursor = addHours(cursor, 1)
+    ) {
+      buckets.push({
+        label: `${String(cursor.getHours()).padStart(2, '0')}:00`,
+        key: hourKey(cursor),
+        cents: 0,
+      });
+    }
+    const index = new Map(buckets.map((b) => [b.key, b]));
+    for (const r of rows) {
+      const bucket = index.get(hourKey(r.placedAt));
+      if (bucket) bucket.cents += r.totalCents;
+    }
+    return buckets.map((b) => ({
+      label: b.label,
+      value: centsToDollars(b.cents),
+    }));
+  }
+
   /** One bucket per day between `from` (inclusive) and `end` (exclusive). */
   private buildDailySeries(
     rows: { totalCents: number; placedAt: Date }[],
@@ -262,8 +306,21 @@ export class ReportsService {
   }
 }
 
+/** Whether an ISO-8601 string carries a time component (vs date-only). */
+function hasTimePart(iso: string): boolean {
+  return iso.includes('T');
+}
+
 function startOfDay(d: Date): Date {
   return new Date(d.getFullYear(), d.getMonth(), d.getDate());
+}
+
+function startOfHour(d: Date): Date {
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate(), d.getHours());
+}
+
+function addHours(d: Date, hours: number): Date {
+  return new Date(d.getTime() + hours * 3_600_000);
 }
 
 function addDays(d: Date, days: number): Date {

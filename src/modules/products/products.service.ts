@@ -68,6 +68,9 @@ export class ProductsService {
   async create(shopId: string, dto: CreateProductDto): Promise<ProductResponse> {
     await this.shops.requireById(shopId);
     const slug = await this.uniqueSlug(shopId, dto.name);
+    // Showcase items can't be ordered online, so stock is meaningless for
+    // them — pin it to 0 regardless of what the caller sends.
+    const listingType = dto.listingType ?? 'sale';
     const [row] = await this.db
       .insert(products)
       .values({
@@ -75,9 +78,10 @@ export class ProductsService {
         name: dto.name,
         slug,
         cat: dto.cat,
+        listingType,
         priceCents: dollarsToCents(dto.price),
         unit: dto.unit,
-        stock: dto.stock ?? 0,
+        stock: listingType === 'showcase' ? 0 : (dto.stock ?? 0),
         deliveryDhakaCents:
           dto.deliveryDhaka !== undefined
             ? dollarsToCents(dto.deliveryDhaka)
@@ -105,10 +109,11 @@ export class ProductsService {
     id: string,
     dto: UpdateProductDto,
   ): Promise<ProductResponse> {
-    await this.requireOwned(shopId, id);
+    const current = await this.requireOwned(shopId, id);
     const patch: Partial<ProductRow> = {
       name: dto.name ?? undefined,
       cat: dto.cat ?? undefined,
+      listingType: dto.listingType ?? undefined,
       unit: dto.unit ?? undefined,
       stock: dto.stock ?? undefined,
       emoji: dto.emoji ?? undefined,
@@ -131,6 +136,11 @@ export class ProductsService {
     }
     if (dto.deliveryOutside !== undefined) {
       patch.deliveryOutsideCents = dollarsToCents(dto.deliveryOutside);
+    }
+    // Same invariant as create: a showcase item (whether it just became one
+    // or already was) never carries stock.
+    if ((dto.listingType ?? current.listingType) === 'showcase') {
+      patch.stock = 0;
     }
     const [row] = await this.db
       .update(products)

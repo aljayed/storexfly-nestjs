@@ -78,8 +78,8 @@ export class SubscriptionsService implements OnModuleInit, OnModuleDestroy {
    * Dummy payment gateway for the one-off shop-creation fee. Idempotent: if
    * the seller already holds an unconsumed credit it is returned as-is
    * instead of charging twice. An optional coupon code discounts this first
-   * payment (coupons never apply to renewals); an invalid code fails the
-   * whole payment with a 400 rather than silently charging full price.
+   * payment; an invalid code fails the whole payment with a 400 rather than
+   * silently charging full price.
    */
   async payShopCreationFee(
     userId: string,
@@ -224,8 +224,11 @@ export class SubscriptionsService implements OnModuleInit, OnModuleDestroy {
       shopId: sub.shopId,
       type: 'renewal',
       method: 'manual',
-      amountCents: sub.amountCents,
+      amountCents: sub.amountCents - sub.pendingDiscountCents,
       currency: sub.currency,
+      couponId: sub.pendingCouponId ?? undefined,
+      couponCode: sub.pendingCouponCode ?? undefined,
+      discountCents: sub.pendingDiscountCents,
       periodStart,
       periodEnd,
       paidAt: now,
@@ -236,6 +239,10 @@ export class SubscriptionsService implements OnModuleInit, OnModuleDestroy {
         nextBillingAt: periodEnd,
         // Still behind by more than a full period? Stay past_due.
         status: periodEnd > now ? 'active' : 'past_due',
+        // The pending coupon covered this payment.
+        pendingCouponId: null,
+        pendingCouponCode: null,
+        pendingDiscountCents: 0,
       })
       .where(eq(subscriptions.id, sub.id))
       .returning();
@@ -289,6 +296,65 @@ export class SubscriptionsService implements OnModuleInit, OnModuleDestroy {
       .set({ autoDebit: enabled })
       .where(eq(subscriptions.id, sub.id))
       .returning();
+    return this.toResponse(await this.settle(updated));
+  }
+
+  // ── Renewal coupon ─────────────────────────────────────────────
+
+  /**
+   * Apply a coupon to the shop's next renewal payment. The discount sits on
+   * the subscription until that renewal is collected (auto-debit or manual
+   * "Pay now"), which consumes it. Re-applying replaces any pending coupon,
+   * releasing the old one's redemption.
+   */
+  async applyCoupon(
+    shopId: string,
+    code: string,
+  ): Promise<SubscriptionResponse> {
+    const sub = await this.settle(await this.requireByShop(shopId));
+    if (sub.status === 'cancelled') {
+      throw new ForbiddenException(
+        'This subscription is cancelled. Resume it before applying a coupon.',
+      );
+    }
+    const check = await this.coupons.check(code, sub.ownerId, sub.amountCents);
+    if (!check.ok) {
+      throw new BadRequestException(this.coupons.rejectionMessage(check.reason));
+    }
+    const [updated] = await this.db
+      .update(subscriptions)
+      .set({
+        pendingCouponId: check.coupon.id,
+        pendingCouponCode: check.coupon.code,
+        pendingDiscountCents: check.discountCents,
+      })
+      .where(eq(subscriptions.id, sub.id))
+      .returning();
+    await this.coupons.markRedeemed(check.coupon.id);
+    if (sub.pendingCouponId) {
+      await this.coupons.release(sub.pendingCouponId);
+    }
+    return this.toResponse(updated);
+  }
+
+  /** Remove a pending (not yet charged) coupon from the next renewal. */
+  async removeCoupon(shopId: string): Promise<SubscriptionResponse> {
+    const sub = await this.requireByShop(shopId);
+    if (!sub.pendingCouponId && !sub.pendingCouponCode) {
+      return this.toResponse(await this.settle(sub));
+    }
+    const [updated] = await this.db
+      .update(subscriptions)
+      .set({
+        pendingCouponId: null,
+        pendingCouponCode: null,
+        pendingDiscountCents: 0,
+      })
+      .where(eq(subscriptions.id, sub.id))
+      .returning();
+    if (sub.pendingCouponId) {
+      await this.coupons.release(sub.pendingCouponId);
+    }
     return this.toResponse(await this.settle(updated));
   }
 
@@ -351,15 +417,20 @@ export class SubscriptionsService implements OnModuleInit, OnModuleDestroy {
     }
 
     if (collected.length > 0) {
+      // A pending coupon discounts only the first (earliest) renewal charged.
       await this.db.insert(subscriptionPayments).values(
-        collected.map((period) => ({
+        collected.map((period, i) => ({
           userId: sub.ownerId,
           subscriptionId: sub.id,
           shopId: sub.shopId,
           type: 'renewal' as const,
           method: 'auto' as const,
-          amountCents: sub.amountCents,
+          amountCents:
+            sub.amountCents - (i === 0 ? sub.pendingDiscountCents : 0),
           currency: sub.currency,
+          couponId: (i === 0 ? sub.pendingCouponId : null) ?? undefined,
+          couponCode: (i === 0 ? sub.pendingCouponCode : null) ?? undefined,
+          discountCents: i === 0 ? sub.pendingDiscountCents : 0,
           periodStart: period.periodStart,
           periodEnd: period.periodEnd,
           paidAt: now,
@@ -371,7 +442,15 @@ export class SubscriptionsService implements OnModuleInit, OnModuleDestroy {
     }
     const [updated] = await this.db
       .update(subscriptions)
-      .set({ nextBillingAt: next, status })
+      .set({
+        nextBillingAt: next,
+        status,
+        ...(collected.length > 0 && {
+          pendingCouponId: null,
+          pendingCouponCode: null,
+          pendingDiscountCents: 0,
+        }),
+      })
       .where(eq(subscriptions.id, sub.id))
       .returning();
     return updated;

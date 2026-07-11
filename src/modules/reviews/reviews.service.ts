@@ -73,6 +73,24 @@ export class ReviewsService {
     });
   }
 
+  /** Load a review and assert it exists on this product and belongs to the buyer. */
+  private async requireOwnReview(
+    reviewId: string,
+    productId: string,
+    buyerId: string,
+  ) {
+    const row = await this.db.query.reviews.findFirst({
+      where: eq(reviews.id, reviewId),
+    });
+    if (!row || row.productId !== productId) {
+      throw new NotFoundException('Review not found');
+    }
+    if (row.buyerId !== buyerId) {
+      throw new ForbiddenException('You can only change your own review.');
+    }
+    return row;
+  }
+
   async eligibility(
     handle: string,
     slug: string,
@@ -83,7 +101,11 @@ export class ReviewsService {
       this.hasPurchased(product.id, buyer.email),
       this.existingReview(product.id, buyer.id),
     ]);
-    return { purchased, alreadyReviewed: !!existing };
+    return {
+      purchased,
+      alreadyReviewed: !!existing,
+      reviewId: existing?.id ?? null,
+    };
   }
 
   async create(
@@ -118,6 +140,46 @@ export class ReviewsService {
 
     await this.recomputeAggregate(product.id);
     return ReviewResponse.fromRow(row);
+  }
+
+  /** Edit the buyer's own review (rating / text / photo). */
+  async update(
+    handle: string,
+    slug: string,
+    reviewId: string,
+    buyer: BuyerPrincipal,
+    dto: CreateReviewDto,
+  ): Promise<ReviewResponse> {
+    const product = await this.resolveProduct(handle, slug);
+    await this.requireOwnReview(reviewId, product.id, buyer.id);
+
+    const [row] = await this.db
+      .update(reviews)
+      .set({
+        rating: dto.rating,
+        body: dto.body ?? '',
+        imageUrl: dto.image ?? null,
+      })
+      .where(eq(reviews.id, reviewId))
+      .returning();
+
+    await this.recomputeAggregate(product.id);
+    return ReviewResponse.fromRow(row);
+  }
+
+  /** Delete the buyer's own review. */
+  async remove(
+    handle: string,
+    slug: string,
+    reviewId: string,
+    buyer: BuyerPrincipal,
+  ): Promise<{ deleted: true }> {
+    const product = await this.resolveProduct(handle, slug);
+    await this.requireOwnReview(reviewId, product.id, buyer.id);
+
+    await this.db.delete(reviews).where(eq(reviews.id, reviewId));
+    await this.recomputeAggregate(product.id);
+    return { deleted: true };
   }
 
   /** Keep the product's denormalized rating + count in sync with its reviews. */

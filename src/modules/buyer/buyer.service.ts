@@ -1,10 +1,12 @@
 import {
   ConflictException,
+  ForbiddenException,
   Inject,
   Injectable,
+  NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
-import { desc, eq } from 'drizzle-orm';
+import { and, desc, eq } from 'drizzle-orm';
 import * as bcrypt from 'bcryptjs';
 import { DRIZZLE } from '../../database/database.constants';
 import type { DrizzleDB } from '../../database/drizzle.types';
@@ -22,6 +24,7 @@ import {
   BuyerLoginDto,
   BuyerRegisterDto,
 } from './dto/buyer-auth.dto';
+import type { ClaimOrderDto } from './dto/claim-order.dto';
 import type {
   BuyerOverview,
   BuyerProfile,
@@ -29,6 +32,15 @@ import type {
 } from './dto/buyer-overview.dto';
 
 const BCRYPT_ROUNDS = 10;
+
+/** Reduce any BD phone format to the bare 10-digit national number, so numbers
+ *  captured as "+8801712…", "01712…" or "1712…" all compare equal. */
+function normalizePhone(raw: string | null | undefined): string {
+  return (raw ?? '')
+    .replace(/\D/g, '')
+    .replace(/^880/, '')
+    .replace(/^0+/, '');
+}
 
 /** Buyer accounts: email register/login, used to gate verified-purchase reviews. */
 @Injectable()
@@ -46,16 +58,88 @@ export class BuyerService {
     return this.db.query.buyers.findFirst({ where: eq(buyers.email, email) });
   }
 
+  /** Look up a buyer by their normalized (national 10-digit) phone number. */
+  private async findByPhone(phone: string): Promise<BuyerRow | undefined> {
+    const normalized = normalizePhone(phone);
+    if (!normalized) return undefined;
+    return this.db.query.buyers.findFirst({
+      where: eq(buyers.phone, normalized),
+    });
+  }
+
   async register(dto: BuyerRegisterDto): Promise<BuyerAuthResponse> {
     if (await this.findByEmail(dto.email)) {
-      throw new ConflictException('An account with this email already exists');
+      throw new ConflictException({
+        code: 'EMAIL_TAKEN',
+        message: 'An account with this email already exists',
+      });
+    }
+    // One account per phone number. Checked before insert so the buyer gets a
+    // clear "this phone already has an account" message (and a sign-in path).
+    const phone = dto.phone ? normalizePhone(dto.phone) : null;
+    if (phone && (await this.findByPhone(phone))) {
+      throw new ConflictException({
+        code: 'PHONE_TAKEN',
+        message: 'This phone number is already associated with another account',
+      });
     }
     const passwordHash = await bcrypt.hash(dto.password, BCRYPT_ROUNDS);
     const [row] = await this.db
       .insert(buyers)
-      .values({ name: dto.name, email: dto.email, passwordHash })
+      .values({
+        name: dto.name,
+        email: dto.email,
+        passwordHash,
+        // Seed the saved checkout details captured at inline checkout.
+        phone,
+        addressLine: dto.address || null,
+        addressCity: dto.city || null,
+        addressPincode: dto.pincode || null,
+        geo: dto.geo ?? null,
+      })
       .returning();
     return this.issue(row);
+  }
+
+  /**
+   * Link a guest order to the signed-in buyer after they could not auto-create
+   * an account (the order's phone already belonged to this account). Proof of
+   * ownership is the phone match: the order was placed with the same number
+   * saved on this account. Linking rewrites the order's email to the buyer's,
+   * which is the key order history and verified-purchase reviews match on.
+   */
+  async claimOrder(
+    buyerId: string,
+    dto: ClaimOrderDto,
+  ): Promise<{ linked: boolean }> {
+    const buyer = await this.findById(buyerId);
+    if (!buyer) throw new UnauthorizedException('Account no longer exists');
+
+    const order = await this.db.query.orders.findFirst({
+      where: and(
+        eq(orders.shopId, dto.shopId),
+        eq(orders.reference, dto.reference),
+      ),
+    });
+    if (!order) throw new NotFoundException('Order not found');
+
+    // Already linked (e.g. the order email already matches) — idempotent.
+    if (order.email === buyer.email) return { linked: true };
+
+    if (
+      !buyer.phone ||
+      normalizePhone(order.phone) !== normalizePhone(buyer.phone)
+    ) {
+      throw new ForbiddenException(
+        'This order cannot be linked to your account',
+      );
+    }
+
+    await this.db
+      .update(orders)
+      .set({ email: buyer.email })
+      .where(eq(orders.id, order.id));
+    return { linked: true };
   }
 
   async login(dto: BuyerLoginDto): Promise<BuyerAuthResponse> {
@@ -90,7 +174,7 @@ export class BuyerService {
   ): Promise<BuyerProfile> {
     const patch: Partial<NewBuyerRow> = {};
     if (dto.name !== undefined) patch.name = dto.name;
-    if (dto.phone !== undefined) patch.phone = dto.phone || null;
+    if (dto.phone !== undefined) patch.phone = normalizePhone(dto.phone) || null;
     if (dto.address !== undefined) patch.addressLine = dto.address || null;
     if (dto.city !== undefined) patch.addressCity = dto.city || null;
     if (dto.pincode !== undefined) patch.addressPincode = dto.pincode || null;
