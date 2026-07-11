@@ -86,6 +86,11 @@ export const productTagEnum = pgEnum('product_tag', [
   'Premium',
 ]);
 
+// How a product can be acquired. 'sale' is the normal online-checkout flow;
+// 'showcase' items are advertised only (e.g. flat shares, big-ticket goods
+// sold offline) — buyers read about them and contact the seller directly.
+export const listingTypeEnum = pgEnum('listing_type', ['sale', 'showcase']);
+
 export const orderStatusEnum = pgEnum('order_status', [
   'New',
   'Packed',
@@ -143,6 +148,7 @@ export type ShopCategory = (typeof shopCategoryEnum.enumValues)[number];
 export type BrandSwatch = (typeof brandSwatchEnum.enumValues)[number];
 export type KycStatus = (typeof kycStatusEnum.enumValues)[number];
 export type ProductTag = (typeof productTagEnum.enumValues)[number];
+export type ListingType = (typeof listingTypeEnum.enumValues)[number];
 export type OrderStatus = (typeof orderStatusEnum.enumValues)[number];
 export type PaymentStatus = (typeof paymentStatusEnum.enumValues)[number];
 export type PaymentMethod = (typeof paymentMethodEnum.enumValues)[number];

@@ -19,6 +19,7 @@ import { SHOP_CATEGORIES } from '../../database/schema/enums';
 import type { SellerPrincipal } from '../../common/types/principal';
 import { CheckHandleQuery } from './dto/check-handle.query';
 import { CreateShopDto } from './dto/create-shop.dto';
+import { DiscoverResponse } from './dto/discover.response';
 import { SubmitKycDto } from './dto/kyc.dto';
 import { KycResponse } from './dto/kyc.response';
 import { ShopResponse } from './dto/shop.response';
@@ -43,6 +44,15 @@ export class ShopsController {
   @ApiOperation({ summary: 'All shop categories (onboarding + settings)' })
   categories(): { categories: string[] } {
     return { categories: SHOP_CATEGORIES };
+  }
+
+  // Declared before `:handle` so "discover" never resolves as a shop.
+  @Public()
+  @Get('discover')
+  @ApiOperation({ summary: 'Public marketplace feed (live shops + newest products)' })
+  @ApiOkResponse({ type: DiscoverResponse })
+  discover() {
+    return this.shops.discover();
   }
 
   @ApiBearerAuth()

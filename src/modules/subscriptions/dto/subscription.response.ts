@@ -41,6 +41,10 @@ export class SubscriptionResponse {
   @ApiProperty({ example: 1199 }) amount!: number;
   @ApiProperty({ example: 'BDT' }) currency!: string;
   @ApiProperty() autoDebit!: boolean;
+  /** What the next renewal will actually charge (after any pending coupon). */
+  @ApiProperty({ example: 299.75 }) nextAmount!: number;
+  @ApiPropertyOptional({ example: 'HOOMRI75' }) couponCode?: string;
+  @ApiPropertyOptional({ example: 899.25 }) couponDiscount?: number;
   @ApiProperty() startedAt!: string;
   @ApiProperty() nextBillingAt!: string;
   @ApiPropertyOptional() cancelledAt?: string;
@@ -62,6 +66,11 @@ export class SubscriptionResponse {
       amount: sub.amountCents / 100,
       currency: sub.currency,
       autoDebit: sub.autoDebit,
+      nextAmount: (sub.amountCents - sub.pendingDiscountCents) / 100,
+      couponCode: sub.pendingCouponCode ?? undefined,
+      couponDiscount: sub.pendingDiscountCents
+        ? sub.pendingDiscountCents / 100
+        : undefined,
       startedAt: sub.startedAt.toISOString(),
       nextBillingAt: sub.nextBillingAt.toISOString(),
       cancelledAt: sub.cancelledAt?.toISOString(),

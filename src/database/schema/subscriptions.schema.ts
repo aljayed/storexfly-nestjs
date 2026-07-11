@@ -42,6 +42,16 @@ export const subscriptions = pgTable(
     // date (dummy gateway). When false the sub goes past_due until the seller
     // pays manually from the console.
     autoDebit: boolean('auto_debit').notNull().default(true),
+    // Coupon the seller applied from the console, discounting only the next
+    // renewal. Consumed (cleared) when that renewal is collected; the code is
+    // denormalized so the console can show it if the coupon is deleted.
+    pendingCouponId: uuid('pending_coupon_id').references(() => coupons.id, {
+      onDelete: 'set null',
+    }),
+    pendingCouponCode: varchar('pending_coupon_code', { length: 40 }),
+    pendingDiscountCents: integer('pending_discount_cents')
+      .notNull()
+      .default(0),
     startedAt: timestamp('started_at', { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -91,8 +101,8 @@ export const subscriptionPayments = pgTable(
     // The amount actually charged, after any coupon discount.
     amountCents: integer('amount_cents').notNull(),
     currency: varchar('currency', { length: 3 }).notNull().default('BDT'),
-    // Coupon applied to this payment (shop_creation only). The code is
-    // denormalized so the ledger stays readable if the coupon is deleted.
+    // Coupon applied to this payment. The code is denormalized so the
+    // ledger stays readable if the coupon is deleted.
     couponId: uuid('coupon_id').references(() => coupons.id, {
       onDelete: 'set null',
     }),

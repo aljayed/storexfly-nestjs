@@ -1,6 +1,7 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import {
+  ArrayMaxSize,
   ArrayMinSize,
   ArrayUnique,
   IsArray,
@@ -18,12 +19,14 @@ import {
   ValidateNested,
 } from 'class-validator';
 import {
+  listingTypeEnum,
   paymentMethodEnum,
   productTagEnum,
 } from '../../../database/schema/enums';
 
 type ProductTag = (typeof productTagEnum.enumValues)[number];
 type PaymentMethod = (typeof paymentMethodEnum.enumValues)[number];
+type ListingType = (typeof listingTypeEnum.enumValues)[number];
 
 /** One seller-authored selling point (the product-page "trust" badges). */
 export class HighlightDto {
@@ -60,6 +63,16 @@ export class CreateProductDto {
   @IsString()
   @MaxLength(80)
   cat!: string;
+
+  @ApiPropertyOptional({
+    enum: listingTypeEnum.enumValues,
+    default: 'sale',
+    description:
+      "'sale' = online checkout; 'showcase' = advertise-only, buyers contact the seller.",
+  })
+  @IsOptional()
+  @IsEnum(listingTypeEnum.enumValues)
+  listingType?: ListingType;
 
   @ApiProperty({ example: 38, description: 'Unit price in dollars' })
   @Type(() => Number)
@@ -145,7 +158,12 @@ export class CreateProductDto {
   @ApiPropertyOptional({ type: [String] })
   @IsOptional()
   @IsArray()
+  // Same caps as the shop banner images: at most 8 photos, each ≤ ~2 MB as a
+  // base64 data URL, so one product can't balloon into a multi-MB public
+  // payload every storefront visitor downloads.
+  @ArrayMaxSize(8)
   @IsString({ each: true })
+  @MaxLength(3_000_000, { each: true })
   images?: string[];
 
   @ApiPropertyOptional({ type: [HighlightDto] })

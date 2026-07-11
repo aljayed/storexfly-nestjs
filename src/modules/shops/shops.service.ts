@@ -6,8 +6,9 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { and, desc, eq, ne } from 'drizzle-orm';
+import { and, desc, eq, ne, sql } from 'drizzle-orm';
 import { BRAND_SWATCHES } from '../../common/constants/brand-swatches';
+import { centsToDollars } from '../../common/utils/money.util';
 import { handleize } from '../../common/utils/slug.util';
 import { DRIZZLE } from '../../database/database.constants';
 import type { DrizzleDB } from '../../database/drizzle.types';
@@ -22,9 +23,12 @@ import type { CreateShopDto } from './dto/create-shop.dto';
 import type { SubmitKycDto } from './dto/kyc.dto';
 import { KycResponse } from './dto/kyc.response';
 import { ShopResponse } from './dto/shop.response';
+import { DiscoverResponse } from './dto/discover.response';
 import type { UpdateShopDto } from './dto/update-shop.dto';
 
 const FEATURED_LIMIT = 8;
+// Cards per section on the public marketplace feed (logged-in no-shop home).
+const DISCOVER_LIMIT = 12;
 
 @Injectable()
 export class ShopsService {
@@ -86,6 +90,73 @@ export class ShopsService {
     // Consume the paid credit and open the monthly subscription.
     await this.subscriptions.activateForNewShop(ownerId, row.id);
     return ShopResponse.fromRow(row);
+  }
+
+  /**
+   * Public marketplace feed — live shops plus the newest products across
+   * them, for buyers browsing outside any single storefront. Only the cover
+   * image travels per product; the full data-URL arrays would put megabytes
+   * on what should be a light feed.
+   */
+  async discover(): Promise<DiscoverResponse> {
+    const [shopRows, productRows] = await Promise.all([
+      this.db.query.shops.findMany({
+        where: eq(shops.live, true),
+        orderBy: [desc(shops.createdAt)],
+        limit: DISCOVER_LIMIT,
+        columns: {
+          name: true,
+          handle: true,
+          tagline: true,
+          cat: true,
+          brand: true,
+          brandSoft: true,
+        },
+      }),
+      this.db
+        .select({
+          name: products.name,
+          slug: products.slug,
+          listingType: products.listingType,
+          priceCents: products.priceCents,
+          unit: products.unit,
+          stock: products.stock,
+          emoji: products.emoji,
+          tone: products.tone,
+          tag: products.tag,
+          rating: products.rating,
+          reviews: products.reviewsCount,
+          image: sql<string | null>`(${products.images})[1]`,
+          shopHandle: shops.handle,
+          shopName: shops.name,
+          currency: shops.currency,
+        })
+        .from(products)
+        .innerJoin(shops, eq(products.shopId, shops.id))
+        .where(eq(shops.live, true))
+        .orderBy(desc(products.createdAt))
+        .limit(DISCOVER_LIMIT),
+    ]);
+    return {
+      shops: shopRows.map((s) => ({ ...s, tagline: s.tagline ?? undefined })),
+      products: productRows.map((p) => ({
+        name: p.name,
+        slug: p.slug,
+        listingType: p.listingType,
+        price: centsToDollars(p.priceCents),
+        unit: p.unit,
+        stock: p.stock,
+        emoji: p.emoji,
+        tone: p.tone,
+        tag: p.tag ?? undefined,
+        rating: p.rating,
+        reviews: p.reviews,
+        image: p.image ?? undefined,
+        shopHandle: p.shopHandle,
+        shopName: p.shopName,
+        currency: p.currency,
+      })),
+    };
   }
 
   /** Public storefront load — shop + a slice of featured products. */

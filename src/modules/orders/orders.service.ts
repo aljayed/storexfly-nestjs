@@ -68,6 +68,13 @@ export class OrdersService {
       if (!product) {
         throw new NotFoundException('Product not found in this shop');
       }
+      // Showcase items are advertised only — the sale happens offline, so
+      // online checkout is never allowed for them.
+      if (product.listingType === 'showcase') {
+        throw new ConflictException(
+          'This item cannot be ordered online — please contact the seller.',
+        );
+      }
       if (product.stock < dto.qty) {
         throw new ConflictException('Not enough stock for this quantity');
       }

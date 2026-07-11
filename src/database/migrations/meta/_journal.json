@@ -127,6 +127,41 @@
       "when": 1781941422078,
       "tag": "0017_shop_floating_images",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1783070307937,
+      "tag": "0018_showcase_listings",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1783401900098,
+      "tag": "0019_chat",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1783622342295,
+      "tag": "0020_chat_quick_reply_defaults",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1783646279212,
+      "tag": "0021_chat_quick_reply_hidden",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1783660045069,
+      "tag": "0022_subscription_renewal_coupon",
+      "breakpoints": true
     }
   ]
 }

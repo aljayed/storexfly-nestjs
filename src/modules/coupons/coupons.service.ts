@@ -6,7 +6,7 @@ import {
   NotFoundException,
   type OnModuleInit,
 } from '@nestjs/common';
-import { and, desc, eq, sql } from 'drizzle-orm';
+import { and, desc, eq, gte, sql } from 'drizzle-orm';
 import {
   MONTHLY_FEE_CENTS,
   PLATFORM_CURRENCY,
@@ -14,11 +14,7 @@ import {
 import { isUniqueViolation } from '../../common/utils/postgres-error.util';
 import { DRIZZLE } from '../../database/database.constants';
 import type { DrizzleDB } from '../../database/drizzle.types';
-import {
-  coupons,
-  subscriptionPayments,
-  type CouponRow,
-} from '../../database/schema';
+import { coupons, orders, shops, type CouponRow } from '../../database/schema';
 import type { CreateCouponDto } from './dto/create-coupon.dto';
 import { CouponPreviewResponse, CouponResponse } from './dto/coupon.response';
 
@@ -39,24 +35,32 @@ type RejectReason =
   | 'inactive'
   | 'expired'
   | 'exhausted'
-  | 'already_used';
+  | 'high_sales';
 
 const REJECT_COPY: Record<RejectReason, string> = {
   not_found: 'That coupon code does not exist.',
   inactive: 'This coupon is no longer active.',
   expired: 'This coupon has expired.',
   exhausted: 'This coupon has reached its redemption limit.',
-  already_used: 'You have already used this coupon.',
+  high_sales:
+    'Coupons are not available to sellers with ৳100,000 or more in sales in the last 30 days.',
 };
+
+/** Sellers whose shop sold this much (paisa) in the last 30 days get no coupons. */
+const HIGH_SALES_THRESHOLD_CENTS = 100_000 * 100;
+
+const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
 
 export type CouponCheck =
   | { ok: true; coupon: CouponRow; discountCents: number }
   | { ok: false; reason: RejectReason };
 
 /**
- * Platform coupons. Coupons apply only to the one-off shop-creation fee —
- * a seller's first subscription payment — never to monthly renewals, and a
- * seller can redeem any given code once.
+ * Platform coupons. A coupon discounts a single subscription payment — the
+ * one-off shop-creation fee, or (applied from the console) a shop's next
+ * monthly renewal. A seller can redeem the same code repeatedly; instead,
+ * coupons are withheld from high-volume sellers (any shop with ≥৳100,000 in
+ * paid sales over the last 30 days).
  */
 @Injectable()
 export class CouponsService implements OnModuleInit {
@@ -132,16 +136,19 @@ export class CouponsService implements OnModuleInit {
     return { deleted: true };
   }
 
-  // ── Redemption (shop-creation fee only) ────────────────────────
+  // ── Redemption ─────────────────────────────────────────────────
 
   /**
-   * Can `userId` redeem `code` against the shop-creation fee right now?
-   * Checks existence, active flag, expiry, the global cap and one-per-seller
-   * use; on success returns the coupon and the discount in paisa.
+   * Can `userId` redeem `code` against a payment of `amountCents` right now?
+   * Checks existence, active flag, expiry, the global cap, and that none of
+   * the seller's shops crossed the high-sales threshold in the last 30 days
+   * (repeat use of the same code is fine); on success returns the coupon and
+   * the discount in paisa.
    */
-  async checkForShopCreation(
+  async check(
     code: string,
     userId: string,
+    amountCents: number,
   ): Promise<CouponCheck> {
     const coupon = await this.db.query.coupons.findFirst({
       where: eq(coupons.code, code.trim().toUpperCase()),
@@ -157,19 +164,41 @@ export class CouponsService implements OnModuleInit {
     ) {
       return { ok: false, reason: 'exhausted' };
     }
-    const priorUse = await this.db.query.subscriptionPayments.findFirst({
-      where: and(
-        eq(subscriptionPayments.userId, userId),
-        eq(subscriptionPayments.couponId, coupon.id),
-      ),
-      columns: { id: true },
-    });
-    if (priorUse) return { ok: false, reason: 'already_used' };
+    const since = new Date(Date.now() - THIRTY_DAYS_MS);
+    const highSalesShop = await this.db
+      .select({ shopId: orders.shopId })
+      .from(orders)
+      .innerJoin(shops, eq(orders.shopId, shops.id))
+      .where(
+        and(
+          eq(shops.ownerId, userId),
+          eq(orders.pay, 'Paid'),
+          gte(orders.placedAt, since),
+        ),
+      )
+      .groupBy(orders.shopId)
+      .having(
+        gte(
+          sql`sum(${orders.totalCents})`,
+          sql`${HIGH_SALES_THRESHOLD_CENTS}`,
+        ),
+      )
+      .limit(1);
+    if (highSalesShop.length > 0) return { ok: false, reason: 'high_sales' };
 
-    const discountCents = Math.round(
-      (MONTHLY_FEE_CENTS * coupon.percentOff) / 100,
-    );
+    // Round the discount up to a whole taka so the price after the coupon is
+    // a whole amount (৳1,199 at 75% → ৳299, not ৳299.75).
+    const discountCents =
+      Math.ceil((amountCents * coupon.percentOff) / 100 / 100) * 100;
     return { ok: true, coupon, discountCents };
+  }
+
+  /** Coupon check against the one-off shop-creation fee. */
+  async checkForShopCreation(
+    code: string,
+    userId: string,
+  ): Promise<CouponCheck> {
+    return this.check(code, userId, MONTHLY_FEE_CENTS);
   }
 
   /** Seller-facing dry run for the onboarding wizard's coupon field. */
@@ -205,6 +234,16 @@ export class CouponsService implements OnModuleInit {
     await this.db
       .update(coupons)
       .set({ redemptions: sql`${coupons.redemptions} + 1` })
+      .where(eq(coupons.id, couponId));
+  }
+
+  /** Give back a redemption when a pending (not yet charged) coupon is removed. */
+  async release(couponId: string): Promise<void> {
+    await this.db
+      .update(coupons)
+      .set({
+        redemptions: sql`greatest(${coupons.redemptions} - 1, 0)`,
+      })
       .where(eq(coupons.id, couponId));
   }
 }

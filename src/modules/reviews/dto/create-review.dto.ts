@@ -29,6 +29,9 @@ export class CreateReviewDto {
   @IsOptional()
   @IsString()
   @Matches(/^data:image\//, { message: 'image must be an image data URL' })
+  // ~2 MB of base64 — reviews render on the public product page, so an
+  // unbounded string would be an amplification vector for every visitor.
+  @MaxLength(3_000_000)
   image?: string;
 }
 
