@@ -1,4 +1,5 @@
 import {
+  boolean,
   jsonb,
   pgTable,
   text,
@@ -43,6 +44,9 @@ export const buyers = pgTable(
     addressPincode: varchar('address_pincode', { length: 24 }),
     // Saved map-pin location (see BuyerGeoValue). Null until they pin one.
     geo: jsonb('geo').$type<BuyerGeoValue>(),
+    // True only for accounts created via the OTP-verified signup modal; the
+    // instant account created inline at checkout is never verified this way.
+    emailVerified: boolean('email_verified').notNull().default(false),
     createdAt: timestamp('created_at', { withTimezone: true })
       .notNull()
       .defaultNow(),

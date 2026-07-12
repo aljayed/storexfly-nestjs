@@ -27,6 +27,7 @@ import type {
 import type { UserRow } from '../../database/schema';
 import { UserResponse } from '../users/dto/user.response';
 import { AuthService } from './auth.service';
+import { EmailOtpVerifyDto } from './dto/email-otp-verify.dto';
 import { LoginDto } from './dto/login.dto';
 import {
   ForgotPasswordDto,
@@ -47,11 +48,21 @@ export class AuthController {
   ) {}
 
   @Public()
-  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
   @Post('register')
-  @ApiOperation({ summary: 'Register a seller account (email)' })
-  register(@Body() dto: RegisterDto) {
-    return this.auth.register(dto);
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Start seller registration (email): sends a verification code' })
+  registerStart(@Body() dto: RegisterDto) {
+    return this.auth.registerStart(dto);
+  }
+
+  @Public()
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  @Post('register/verify')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Verify the code and complete seller registration' })
+  registerVerify(@Body() dto: EmailOtpVerifyDto) {
+    return this.auth.registerVerify(dto.email, dto.code);
   }
 
   @Public()

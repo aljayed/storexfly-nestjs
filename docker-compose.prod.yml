@@ -1,0 +1,108 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: storexfly_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - storexfly_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks: [internal]
+
+  api:
+    build: ./backend
+    container_name: storexfly_api
+    restart: unless-stopped
+    env_file: ./backend/.env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [internal]
+
+  web:
+    build: ./frontend
+    container_name: storexfly_web
+    restart: unless-stopped
+    depends_on:
+      - api
+    ports:
+      - '80:80'
+      - '443:443'
+    volumes:
+      - ./frontend/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - certbot_conf:/etc/letsencrypt
+      - certbot_www:/var/www/certbot
+    networks: [internal]
+
+  certbot:
+    image: certbot/certbot
+    volumes:
+      - certbot_conf:/etc/letsencrypt
+      - certbot_www:/var/www/certbot
+
+  mailserver:
+    image: docker.io/mailserver/docker-mailserver:latest
+    container_name: storexfly_mailserver
+    hostname: mail
+    domainname: hoomri.com
+    restart: unless-stopped
+    env_file: ./mailserver.env
+    ports:
+      - '25:25'
+      - '587:587'
+      - '993:993'
+    volumes:
+      - maildata:/var/mail
+      - mailstate:/var/mail-state
+      - maillogs:/var/log/mail
+      - ./mailserver/config:/tmp/docker-mailserver
+      - certbot_conf:/etc/letsencrypt:ro
+    cap_add:
+      - NET_ADMIN
+    networks:
+      internal:
+        aliases:
+          - mail.hoomri.com
+
+  webmail:
+    image: roundcube/roundcubemail:latest
+    container_name: storexfly_webmail
+    restart: unless-stopped
+    depends_on:
+      - mailserver
+    environment:
+      ROUNDCUBEMAIL_DEFAULT_HOST: ssl://mail.hoomri.com
+      ROUNDCUBEMAIL_DEFAULT_PORT: 993
+      ROUNDCUBEMAIL_SMTP_SERVER: tls://mail.hoomri.com
+      ROUNDCUBEMAIL_SMTP_PORT: 587
+      ROUNDCUBEMAIL_DB_TYPE: sqlite
+    volumes:
+      - webmaildb:/var/roundcube/db
+    networks: [internal]
+
+networks:
+  internal:
+
+volumes:
+  storexfly_pgdata:
+    name: storexfly_pgdata
+  certbot_conf:
+    name: storexfly_certbot_conf
+  certbot_www:
+    name: storexfly_certbot_www
+  maildata:
+    name: storexfly_maildata
+  mailstate:
+    name: storexfly_mailstate
+  maillogs:
+    name: storexfly_maillogs
+  webmaildb:
+    name: storexfly_webmaildb

@@ -1,4 +1,12 @@
-import { Body, Controller, Get, Post, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  HttpCode,
+  HttpStatus,
+  Post,
+  UseGuards,
+} from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 import {
   ApiBearerAuth,
@@ -10,6 +18,7 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { Public } from '../../common/decorators/public.decorator';
 import { BuyerJwtAuthGuard } from '../../common/guards/buyer-jwt-auth.guard';
 import type { BuyerPrincipal } from '../../common/types/principal';
+import { EmailOtpVerifyDto } from '../auth/dto/email-otp-verify.dto';
 import { BuyerService } from './buyer.service';
 import {
   BuyerAuthResponse,
@@ -30,6 +39,25 @@ export class BuyerAuthController {
   @ApiOkResponse({ type: BuyerAuthResponse })
   register(@Body() dto: BuyerRegisterDto) {
     return this.buyers.register(dto);
+  }
+
+  @Public()
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
+  @Post('signup')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Buyer: start account creation, sends a verification code' })
+  signupStart(@Body() dto: BuyerRegisterDto) {
+    return this.buyers.signupStart(dto);
+  }
+
+  @Public()
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  @Post('signup/verify')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Buyer: verify the code and complete account creation' })
+  @ApiOkResponse({ type: BuyerAuthResponse })
+  signupVerify(@Body() dto: EmailOtpVerifyDto) {
+    return this.buyers.signupVerify(dto.email, dto.code);
   }
 
   @Public()

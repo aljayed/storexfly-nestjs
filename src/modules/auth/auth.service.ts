@@ -7,16 +7,24 @@ import * as bcrypt from 'bcryptjs';
 import type { UserRow } from '../../database/schema';
 import { UserResponse } from '../users/dto/user.response';
 import { UsersService } from '../users/users.service';
+import { EmailOtpService } from './email-otp.service';
 import type { LoginDto } from './dto/login.dto';
 import type { RegisterDto } from './dto/register.dto';
 import { OtpService } from './otp.service';
 import { TokenService } from './token.service';
 
 const BCRYPT_ROUNDS = 12;
+const REGISTER_OTP_SCOPE = 'seller-register';
 
 export interface AuthResult {
   user: UserResponse;
   token: string;
+}
+
+interface PendingRegistration {
+  name: string;
+  email: string;
+  passwordHash: string;
 }
 
 /**
@@ -29,19 +37,44 @@ export class AuthService {
     private readonly users: UsersService,
     private readonly tokens: TokenService,
     private readonly otp: OtpService,
+    private readonly emailOtp: EmailOtpService,
   ) {}
 
-  async register(dto: RegisterDto): Promise<AuthResult> {
+  /** Step 1: validate + stash the pending account, email a verification code. */
+  async registerStart(dto: RegisterDto): Promise<{ ok: true }> {
     const existing = await this.users.findByEmail(dto.email);
     if (existing) {
       throw new ConflictException('An account with this email already exists');
     }
     const passwordHash = await bcrypt.hash(dto.password, BCRYPT_ROUNDS);
+    await this.emailOtp.start<PendingRegistration>(
+      REGISTER_OTP_SCOPE,
+      dto.email,
+      { name: dto.name, email: dto.email, passwordHash },
+    );
+    return { ok: true };
+  }
+
+  /** Step 2: verify the code and actually create the account. */
+  async registerVerify(email: string, code: string): Promise<AuthResult> {
+    const pending = this.emailOtp.verify<PendingRegistration>(
+      REGISTER_OTP_SCOPE,
+      email,
+      code,
+    );
+    if (!pending) {
+      throw new UnauthorizedException('Invalid or expired code');
+    }
+    const existing = await this.users.findByEmail(pending.email);
+    if (existing) {
+      throw new ConflictException('An account with this email already exists');
+    }
     const user = await this.users.create({
-      name: dto.name,
-      email: dto.email,
-      passwordHash,
+      name: pending.name,
+      email: pending.email,
+      passwordHash: pending.passwordHash,
       via: 'email',
+      emailVerified: true,
     });
     return this.toAuthResult(user);
   }

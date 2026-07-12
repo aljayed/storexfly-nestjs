@@ -1,0 +1,1 @@
+ALTER TABLE "buyers" ADD COLUMN IF NOT EXISTS "email_verified" boolean DEFAULT false NOT NULL;

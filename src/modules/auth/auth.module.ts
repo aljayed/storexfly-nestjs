@@ -9,6 +9,7 @@ import { AdminAuthService } from './admin-auth.service';
 import { AdminUsersService } from './admin-users.service';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
+import { EmailOtpService } from './email-otp.service';
 import { OtpService } from './otp.service';
 import { PasswordResetService } from './password-reset.service';
 import { TokenService } from './token.service';
@@ -33,12 +34,13 @@ import { PlatformJwtStrategy } from './strategies/platform-jwt.strategy';
     AdminUsersService,
     TokenService,
     OtpService,
+    EmailOtpService,
     PasswordResetService,
     JwtStrategy,
     AdminJwtStrategy,
     PlatformJwtStrategy,
     GoogleStrategy,
   ],
-  exports: [AdminUsersService, TokenService],
+  exports: [AdminUsersService, TokenService, EmailOtpService],
 })
 export class AuthModule {}

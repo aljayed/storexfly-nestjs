@@ -18,6 +18,7 @@ import {
   type NewBuyerRow,
 } from '../../database/schema';
 import { centsToDollars } from '../../common/utils/money.util';
+import { EmailOtpService } from '../auth/email-otp.service';
 import { TokenService } from '../auth/token.service';
 import {
   BuyerAuthResponse,
@@ -32,6 +33,18 @@ import type {
 } from './dto/buyer-overview.dto';
 
 const BCRYPT_ROUNDS = 10;
+const SIGNUP_OTP_SCOPE = 'buyer-signup';
+
+interface PendingBuyerSignup {
+  name: string;
+  email: string;
+  passwordHash: string;
+  phone: string | null;
+  address: string | null;
+  city: string | null;
+  pincode: string | null;
+  geo: NewBuyerRow['geo'];
+}
 
 /** Reduce any BD phone format to the bare 10-digit national number, so numbers
  *  captured as "+8801712…", "01712…" or "1712…" all compare equal. */
@@ -48,6 +61,7 @@ export class BuyerService {
   constructor(
     @Inject(DRIZZLE) private readonly db: DrizzleDB,
     private readonly tokens: TokenService,
+    private readonly emailOtp: EmailOtpService,
   ) {}
 
   async findById(id: string): Promise<BuyerRow | undefined> {
@@ -67,8 +81,9 @@ export class BuyerService {
     });
   }
 
-  async register(dto: BuyerRegisterDto): Promise<BuyerAuthResponse> {
-    if (await this.findByEmail(dto.email)) {
+  /** Throws if the email or (normalized) phone is already taken. */
+  private async assertAvailable(email: string, phone: string | null): Promise<void> {
+    if (await this.findByEmail(email)) {
       throw new ConflictException({
         code: 'EMAIL_TAKEN',
         message: 'An account with this email already exists',
@@ -76,13 +91,24 @@ export class BuyerService {
     }
     // One account per phone number. Checked before insert so the buyer gets a
     // clear "this phone already has an account" message (and a sign-in path).
-    const phone = dto.phone ? normalizePhone(dto.phone) : null;
     if (phone && (await this.findByPhone(phone))) {
       throw new ConflictException({
         code: 'PHONE_TAKEN',
         message: 'This phone number is already associated with another account',
       });
     }
+  }
+
+  /**
+   * Instant, unverified account creation — used only by the "create my
+   * account" checkbox at checkout, after the order has already succeeded.
+   * Deliberately not OTP-gated: it's an optional bonus on top of a completed
+   * purchase, not a security boundary, and blocking it would confuse a buyer
+   * who just finished paying.
+   */
+  async register(dto: BuyerRegisterDto): Promise<BuyerAuthResponse> {
+    const phone = dto.phone ? normalizePhone(dto.phone) : null;
+    await this.assertAvailable(dto.email, phone);
     const passwordHash = await bcrypt.hash(dto.password, BCRYPT_ROUNDS);
     const [row] = await this.db
       .insert(buyers)
@@ -96,6 +122,56 @@ export class BuyerService {
         addressCity: dto.city || null,
         addressPincode: dto.pincode || null,
         geo: dto.geo ?? null,
+      })
+      .returning();
+    return this.issue(row);
+  }
+
+  /**
+   * Step 1 of the explicit "create a buyer account" flow (the auth modal):
+   * validate, stash the pending account, email a verification code. Nothing
+   * is written to the database until the code is verified.
+   */
+  async signupStart(dto: BuyerRegisterDto): Promise<{ ok: true }> {
+    const phone = dto.phone ? normalizePhone(dto.phone) : null;
+    await this.assertAvailable(dto.email, phone);
+    const passwordHash = await bcrypt.hash(dto.password, BCRYPT_ROUNDS);
+    await this.emailOtp.start<PendingBuyerSignup>(SIGNUP_OTP_SCOPE, dto.email, {
+      name: dto.name,
+      email: dto.email,
+      passwordHash,
+      phone,
+      address: dto.address || null,
+      city: dto.city || null,
+      pincode: dto.pincode || null,
+      geo: dto.geo ?? null,
+    });
+    return { ok: true };
+  }
+
+  /** Step 2: verify the code and actually create the (verified) account. */
+  async signupVerify(email: string, code: string): Promise<BuyerAuthResponse> {
+    const pending = this.emailOtp.verify<PendingBuyerSignup>(
+      SIGNUP_OTP_SCOPE,
+      email,
+      code,
+    );
+    if (!pending) {
+      throw new UnauthorizedException('Invalid or expired code');
+    }
+    await this.assertAvailable(pending.email, pending.phone);
+    const [row] = await this.db
+      .insert(buyers)
+      .values({
+        name: pending.name,
+        email: pending.email,
+        passwordHash: pending.passwordHash,
+        phone: pending.phone,
+        addressLine: pending.address,
+        addressCity: pending.city,
+        addressPincode: pending.pincode,
+        geo: pending.geo,
+        emailVerified: true,
       })
       .returning();
     return this.issue(row);
