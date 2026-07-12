@@ -17,6 +17,7 @@ import {
   shops,
   type ShopRow,
 } from '../../database/schema';
+import { BlockedWordsService } from '../blocked-words/blocked-words.service';
 import { ProductResponse } from '../products/dto/product.response';
 import { SubscriptionsService } from '../subscriptions/subscriptions.service';
 import type { CreateShopDto } from './dto/create-shop.dto';
@@ -35,6 +36,7 @@ export class ShopsService {
   constructor(
     @Inject(DRIZZLE) private readonly db: DrizzleDB,
     private readonly subscriptions: SubscriptionsService,
+    private readonly blockedWords: BlockedWordsService,
   ) {}
 
   /** Live handle availability check for the onboarding wizard. */
@@ -63,6 +65,8 @@ export class ShopsService {
       );
     }
     const handle = handleize(dto.handle);
+    await this.blockedWords.assertClean(dto.name);
+    await this.blockedWords.assertClean(handle);
     const taken = await this.db.query.shops.findFirst({
       where: eq(shops.handle, handle),
       columns: { id: true },
@@ -188,6 +192,9 @@ export class ShopsService {
     const shop = await this.requireById(id);
     if (shop.ownerId !== ownerId) {
       throw new ForbiddenException('You do not own this shop');
+    }
+    if (dto.name) {
+      await this.blockedWords.assertClean(dto.name);
     }
     const patch: Partial<ShopRow> = {
       name: dto.name ?? undefined,

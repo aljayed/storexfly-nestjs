@@ -5,6 +5,7 @@ import {
 } from '@nestjs/common';
 import * as bcrypt from 'bcryptjs';
 import type { UserRow } from '../../database/schema';
+import { BlockedWordsService } from '../blocked-words/blocked-words.service';
 import { UserResponse } from '../users/dto/user.response';
 import { UsersService } from '../users/users.service';
 import { EmailOtpService } from './email-otp.service';
@@ -38,6 +39,7 @@ export class AuthService {
     private readonly tokens: TokenService,
     private readonly otp: OtpService,
     private readonly emailOtp: EmailOtpService,
+    private readonly blockedWords: BlockedWordsService,
   ) {}
 
   /** Step 1: validate + stash the pending account, email a verification code. */
@@ -46,6 +48,7 @@ export class AuthService {
     if (existing) {
       throw new ConflictException('An account with this email already exists');
     }
+    await this.blockedWords.assertClean(dto.name);
     const passwordHash = await bcrypt.hash(dto.password, BCRYPT_ROUNDS);
     await this.emailOtp.start<PendingRegistration>(
       REGISTER_OTP_SCOPE,

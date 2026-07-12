@@ -176,6 +176,20 @@
       "when": 1783853687206,
       "tag": "0024_cloudy_mulholland_black",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1783860000000,
+      "tag": "0025_shops_currency_drift_fix",
+      "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1783864571531,
+      "tag": "0026_overrated_bullseye",
+      "breakpoints": true
     }
   ]
 }

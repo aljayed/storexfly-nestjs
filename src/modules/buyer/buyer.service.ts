@@ -18,6 +18,7 @@ import {
   type NewBuyerRow,
 } from '../../database/schema';
 import { centsToDollars } from '../../common/utils/money.util';
+import { BlockedWordsService } from '../blocked-words/blocked-words.service';
 import { EmailOtpService } from '../auth/email-otp.service';
 import { TokenService } from '../auth/token.service';
 import {
@@ -62,6 +63,7 @@ export class BuyerService {
     @Inject(DRIZZLE) private readonly db: DrizzleDB,
     private readonly tokens: TokenService,
     private readonly emailOtp: EmailOtpService,
+    private readonly blockedWords: BlockedWordsService,
   ) {}
 
   async findById(id: string): Promise<BuyerRow | undefined> {
@@ -81,8 +83,13 @@ export class BuyerService {
     });
   }
 
-  /** Throws if the email or (normalized) phone is already taken. */
-  private async assertAvailable(email: string, phone: string | null): Promise<void> {
+  /** Throws if the name contains a blocked word, or the email/(normalized) phone is already taken. */
+  private async assertAvailable(
+    name: string,
+    email: string,
+    phone: string | null,
+  ): Promise<void> {
+    await this.blockedWords.assertClean(name);
     if (await this.findByEmail(email)) {
       throw new ConflictException({
         code: 'EMAIL_TAKEN',
@@ -108,7 +115,7 @@ export class BuyerService {
    */
   async register(dto: BuyerRegisterDto): Promise<BuyerAuthResponse> {
     const phone = dto.phone ? normalizePhone(dto.phone) : null;
-    await this.assertAvailable(dto.email, phone);
+    await this.assertAvailable(dto.name, dto.email, phone);
     const passwordHash = await bcrypt.hash(dto.password, BCRYPT_ROUNDS);
     const [row] = await this.db
       .insert(buyers)
@@ -134,7 +141,7 @@ export class BuyerService {
    */
   async signupStart(dto: BuyerRegisterDto): Promise<{ ok: true }> {
     const phone = dto.phone ? normalizePhone(dto.phone) : null;
-    await this.assertAvailable(dto.email, phone);
+    await this.assertAvailable(dto.name, dto.email, phone);
     const passwordHash = await bcrypt.hash(dto.password, BCRYPT_ROUNDS);
     await this.emailOtp.start<PendingBuyerSignup>(SIGNUP_OTP_SCOPE, dto.email, {
       name: dto.name,
@@ -159,7 +166,7 @@ export class BuyerService {
     if (!pending) {
       throw new UnauthorizedException('Invalid or expired code');
     }
-    await this.assertAvailable(pending.email, pending.phone);
+    await this.assertAvailable(pending.name, pending.email, pending.phone);
     const [row] = await this.db
       .insert(buyers)
       .values({
