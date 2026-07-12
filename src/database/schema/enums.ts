@@ -18,6 +18,10 @@ export const adminRoleEnum = pgEnum('admin_role', [
   'staff',
 ]);
 
+// The storefront UI language buyers land on for this shop. Buyers can still
+// switch languages themselves — this only sets which one they see first.
+export const shopLanguageEnum = pgEnum('shop_language', ['en', 'bn']);
+
 // Broad retail taxonomy so any kind of shop finds a fit, with 'Other' as the
 // catch-all. Postgres enum values are append-only: new categories go at the
 // end; display ordering is handled by SHOP_CATEGORIES below.

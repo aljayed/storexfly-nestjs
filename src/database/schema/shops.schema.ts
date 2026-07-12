@@ -8,7 +8,12 @@ import {
   uuid,
   varchar,
 } from 'drizzle-orm/pg-core';
-import { brandSwatchEnum, kycStatusEnum, shopCategoryEnum } from './enums';
+import {
+  brandSwatchEnum,
+  kycStatusEnum,
+  shopCategoryEnum,
+  shopLanguageEnum,
+} from './enums';
 import { users } from './users.schema';
 import { products } from './products.schema';
 import { orders } from './orders.schema';
@@ -39,6 +44,9 @@ export const shops = pgTable(
     cat: shopCategoryEnum('cat').notNull().default('Other'),
     // ISO 4217 currency code the shop prices in (see SUPPORTED_CURRENCIES).
     currency: varchar('currency', { length: 3 }).notNull().default('BDT'),
+    // Default storefront UI language for buyers landing on this shop. Buyers
+    // can still switch via the storefront's language toggle.
+    language: shopLanguageEnum('language').notNull().default('en'),
     brandId: brandSwatchEnum('brand_id').notNull().default('amber'),
     brand: varchar('brand', { length: 9 }).notNull(),
     brandSoft: varchar('brand_soft', { length: 9 }).notNull(),

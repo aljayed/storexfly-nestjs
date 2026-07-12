@@ -169,6 +169,13 @@
       "when": 1783842320098,
       "tag": "0023_funny_mandroid",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1783853687206,
+      "tag": "0024_cloudy_mulholland_black",
+      "breakpoints": true
     }
   ]
 }

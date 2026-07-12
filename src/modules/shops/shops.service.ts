@@ -194,6 +194,7 @@ export class ShopsService {
       tagline: dto.tagline ?? undefined,
       cat: dto.cat ?? undefined,
       currency: dto.currency ?? undefined,
+      language: dto.language ?? undefined,
     };
     // Support contacts: an empty string clears the saved value.
     if (dto.supportEmail !== undefined) {

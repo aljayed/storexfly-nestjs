@@ -20,9 +20,11 @@ import {
 import {
   brandSwatchEnum,
   shopCategoryEnum,
+  shopLanguageEnum,
 } from '../../../database/schema/enums';
 
 type ShopCategory = (typeof shopCategoryEnum.enumValues)[number];
+type ShopLanguage = (typeof shopLanguageEnum.enumValues)[number];
 
 /** Patch a shop's brand color, tagline, name or category (owner only). */
 export class UpdateShopDto {
@@ -65,6 +67,13 @@ export class UpdateShopDto {
   @IsOptional()
   @IsIn(SUPPORTED_CURRENCIES)
   currency?: CurrencyCode;
+
+  // Default storefront language for buyers landing on this shop. Buyers can
+  // still switch via the storefront's own language toggle.
+  @ApiPropertyOptional({ enum: shopLanguageEnum.enumValues, example: 'en' })
+  @IsOptional()
+  @IsEnum(shopLanguageEnum.enumValues)
+  language?: ShopLanguage;
 
   @ApiPropertyOptional({ enum: brandSwatchEnum.enumValues })
   @IsOptional()

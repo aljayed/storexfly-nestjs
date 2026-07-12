@@ -11,6 +11,7 @@ export class ShopResponse {
   @ApiPropertyOptional() supportPhone?: string;
   @ApiProperty() cat!: string;
   @ApiProperty({ example: 'BDT' }) currency!: string;
+  @ApiProperty({ enum: ['en', 'bn'], example: 'en' }) language!: string;
   @ApiProperty() brandId!: string;
   @ApiProperty({ example: '#e8943a' }) brand!: string;
   @ApiProperty({ example: '#fbeede' }) brandSoft!: string;
@@ -42,6 +43,7 @@ export class ShopResponse {
       supportPhone: row.supportPhone ?? undefined,
       cat: row.cat,
       currency: row.currency,
+      language: row.language,
       brandId: row.brandId,
       brand: row.brand,
       brandSoft: row.brandSoft,
