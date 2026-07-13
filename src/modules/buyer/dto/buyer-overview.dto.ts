@@ -1,4 +1,4 @@
-import { ApiProperty } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
   IsNumber,
   IsOptional,
@@ -18,8 +18,12 @@ export class BuyerGeoDto implements BuyerGeoValue {
   @ApiProperty() @IsString() @MaxLength(500) line!: string;
   @ApiProperty() @IsString() @MaxLength(200) area!: string;
   @ApiProperty() @IsString() @MaxLength(24) pin!: string;
-  @ApiProperty() @IsNumber() x!: number;
-  @ApiProperty() @IsNumber() y!: number;
+  // Exact coordinates from the interactive delivery map.
+  @ApiPropertyOptional() @IsOptional() @IsNumber() lat?: number;
+  @ApiPropertyOptional() @IsOptional() @IsNumber() lng?: number;
+  // Legacy canvas-pin position (percent) — older saved pins only.
+  @ApiPropertyOptional() @IsOptional() @IsNumber() x?: number;
+  @ApiPropertyOptional() @IsOptional() @IsNumber() y?: number;
 }
 
 /**

@@ -11,15 +11,19 @@ import {
 
 /**
  * A pinned map location the buyer saved at checkout. `line`/`area`/`pin` are the
- * human-readable address derived from the drop, `x`/`y` are the pin's position
- * on the map canvas (percent) so the picker can reopen where they left it.
+ * human-readable address for the drop. `lat`/`lng` are the exact geographic
+ * coordinates from the interactive delivery map. `x`/`y` are the legacy canvas
+ * pin position (percent) kept for pins saved before the real map — all four are
+ * optional so either representation validates.
  */
 export interface BuyerGeoValue {
   line: string;
   area: string;
   pin: string;
-  x: number;
-  y: number;
+  lat?: number;
+  lng?: number;
+  x?: number;
+  y?: number;
 }
 
 /**
