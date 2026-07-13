@@ -1,4 +1,11 @@
-import { pgTable, text, timestamp, uuid, varchar } from 'drizzle-orm/pg-core';
+import {
+  integer,
+  pgTable,
+  text,
+  timestamp,
+  uuid,
+  varchar,
+} from 'drizzle-orm/pg-core';
 
 /**
  * Platform-wide settings — a single global row managed from the platform-admin
@@ -25,6 +32,11 @@ export const platformSettings = pgTable('platform_settings', {
   logoDark: text('logo_dark'),
   // Browser-tab icon, stored inline as a data URL. null = the app's default.
   favicon: text('favicon'),
+  // Payment-gateway fee rates in basis points (300 = 3%), editable from the
+  // platform console. Every surface (item form copy, settlement math) reads
+  // these live; paid settlements snapshot the rates they were computed with.
+  mbankFeeBp: integer('mbank_fee_bp').notNull().default(300),
+  cardFeeBp: integer('card_fee_bp').notNull().default(450),
   updatedAt: timestamp('updated_at', { withTimezone: true })
     .notNull()
     .defaultNow()

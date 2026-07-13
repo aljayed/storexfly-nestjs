@@ -17,3 +17,5 @@ export * from './platform-settings.schema';
 export * from './buyers.schema';
 export * from './chat.schema';
 export * from './blocked-words.schema';
+export * from './settlements.schema';
+export * from './notices.schema';

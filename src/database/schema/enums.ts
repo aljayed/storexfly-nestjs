@@ -145,6 +145,14 @@ export const platformPaymentMethodEnum = pgEnum('platform_payment_method', [
   'manual',
 ]);
 
+// Visual tone of a platform-to-seller notice banner.
+export const noticeToneEnum = pgEnum('notice_tone', [
+  'info',
+  'success',
+  'warning',
+  'danger',
+]);
+
 // ── Convenience union types derived from the pg enums ──────────
 export type AuthMethod = (typeof authMethodEnum.enumValues)[number];
 export type AdminRole = (typeof adminRoleEnum.enumValues)[number];
@@ -165,3 +173,4 @@ export type PlatformPaymentType =
   (typeof platformPaymentTypeEnum.enumValues)[number];
 export type PlatformPaymentMethod =
   (typeof platformPaymentMethodEnum.enumValues)[number];
+export type NoticeTone = (typeof noticeToneEnum.enumValues)[number];
