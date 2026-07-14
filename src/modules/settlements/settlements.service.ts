@@ -9,10 +9,16 @@ import { centsToDollars } from '../../common/utils/money.util';
 import { DRIZZLE } from '../../database/database.constants';
 import type { DrizzleDB } from '../../database/drizzle.types';
 import { orders, settlements, shops } from '../../database/schema';
-import type { SettlementRow } from '../../database/schema';
+import type {
+  PaymentMethodRow,
+  SettlementMethodSnapshot,
+  SettlementRow,
+} from '../../database/schema';
 import { ShopsService } from '../shops/shops.service';
-import { FeesService, type FeeRates } from './fees.service';
+import { PaymentMethodsService } from './payment-methods.service';
 import {
+  CARD_FEE_BP,
+  MBANK_FEE_BP,
   SETTLEMENT_WINDOW_END_DAY,
   SETTLEMENT_WINDOW_START_DAY,
   feeCents,
@@ -28,48 +34,57 @@ import type {
   PlatformSettlementTotalResponse,
 } from './dto/platform-settlement.response';
 
-/** Money buckets for one shop-month, all in integer cents. */
+/** Raw money buckets for one shop-month: per method code, all integer cents. */
 interface Buckets {
   ordersCount: number;
   totalCents: number;
-  codCents: number;
-  mbankCents: number;
-  cardCents: number;
-  otherCents: number;
+  /** Orders recorded manually from the console — no payment method. */
+  manualCents: number;
+  byCode: Map<string, number>;
 }
 
-const EMPTY_BUCKETS: Buckets = {
-  ordersCount: 0,
-  totalCents: 0,
-  codCents: 0,
-  mbankCents: 0,
-  cardCents: 0,
-  otherCents: 0,
-};
+/** A month classified against the payment-method catalog. */
+interface MonthCore {
+  ordersCount: number;
+  totalCents: number;
+  codCents: number;
+  otherCents: number;
+  /** Online (fee-carrying) methods, each with its fee applied. */
+  online: SettlementMethodSnapshot[];
+}
+
+type MethodCatalog = Map<string, PaymentMethodRow>;
+
+function emptyBuckets(): Buckets {
+  return { ordersCount: 0, totalCents: 0, manualCents: 0, byCode: new Map() };
+}
 
 /**
  * Monthly payout accounting for prepaid (online) orders.
  *
- * Pending months are always aggregated live from `orders`, so refunds and
- * late-arriving orders are reflected until the moment a platform operator
- * marks the month paid — that writes an immutable snapshot row which is used
- * for display from then on. Only 'Paid' orders count; COD and manually
- * recorded orders are shown for context but never paid out (the seller
- * already holds that money).
+ * Pending months are always aggregated live from `orders` and classified
+ * against the platform's payment-method catalog (each method carries its own
+ * fee rate), so refunds, late orders and fee changes are reflected until the
+ * moment a platform operator marks the month paid — that writes an immutable
+ * per-method snapshot which is used for display from then on. Only 'Paid'
+ * orders count; COD and manually recorded orders are shown for context but
+ * never paid out (the seller already holds that money).
  */
 @Injectable()
 export class SettlementsService {
   constructor(
     @Inject(DRIZZLE) private readonly db: DrizzleDB,
     private readonly shops: ShopsService,
-    private readonly fees: FeesService,
+    private readonly methods: PaymentMethodsService,
   ) {}
 
   /** Shop admin: every earnings month, newest first. */
   async forShop(shopId: string): Promise<ShopSettlementsResponse> {
     await this.shops.requireById(shopId);
-    const rates = await this.fees.getRates();
-    const [rows, paidRows] = await Promise.all([
+    const [catalog, methodViews, banner, rows, paidRows] = await Promise.all([
+      this.methods.byCode(),
+      this.methods.listEnabled(),
+      this.methods.getBanner(),
       this.db.query.orders.findMany({
         where: and(eq(orders.shopId, shopId), eq(orders.pay, 'Paid')),
         columns: { totalCents: true, paymentMethod: true, placedAt: true },
@@ -82,8 +97,8 @@ export class SettlementsService {
     const byPeriod = new Map<string, Buckets>();
     for (const r of rows) {
       const period = periodOf(r.placedAt);
-      const b = byPeriod.get(period) ?? { ...EMPTY_BUCKETS };
-      addOrder(b, r.paymentMethod, r.totalCents);
+      const b = byPeriod.get(period) ?? emptyBuckets();
+      addOrder(b, r.paymentMethod, r.totalCents, 1);
       byPeriod.set(period, b);
     }
     const paidByPeriod = new Map(paidRows.map((s) => [s.period, s]));
@@ -96,23 +111,20 @@ export class SettlementsService {
       const first = allPeriods.sort()[0];
       for (let p = currentPeriod(); p >= first; p = previousPeriod(p)) {
         months.push(
-          this.buildMonth(p, byPeriod.get(p), paidByPeriod.get(p), rates),
+          this.buildMonth(p, byPeriod.get(p), paidByPeriod.get(p), catalog),
         );
       }
     }
-    return {
-      feePercents: { mbank: rates.mbankBp / 100, card: rates.cardBp / 100 },
-      months,
-    };
+    return { methods: methodViews, banner, months };
   }
 
   /** Platform admin: every shop's numbers for one earnings month. */
   async forPlatform(period?: string): Promise<PlatformSettlementsResponse> {
     const selected = period ?? previousPeriod(currentPeriod());
     const [from, end] = monthRange(selected);
-    const rates = await this.fees.getRates();
 
-    const [grouped, paidRows, firstOrder] = await Promise.all([
+    const [catalog, grouped, paidRows, firstOrder] = await Promise.all([
+      this.methods.byCode(),
       this.db
         .select({
           shopId: orders.shopId,
@@ -141,8 +153,8 @@ export class SettlementsService {
 
     const byShop = new Map<string, Buckets>();
     for (const g of grouped) {
-      const b = byShop.get(g.shopId) ?? { ...EMPTY_BUCKETS };
-      addBucket(b, g.method, g.cents, g.count);
+      const b = byShop.get(g.shopId) ?? emptyBuckets();
+      addOrder(b, g.method, g.cents, g.count);
       byShop.set(g.shopId, b);
     }
     const paidByShop = new Map(paidRows.map((s) => [s.shopId, s]));
@@ -165,7 +177,7 @@ export class SettlementsService {
           selected,
           byShop.get(s.id),
           paidByShop.get(s.id),
-          rates,
+          catalog,
         ),
       }))
       // Biggest payouts first — the ones the operator needs to act on.
@@ -186,7 +198,6 @@ export class SettlementsService {
     return {
       period: selected,
       periods: listPeriods(firstOrder[0]?.placedAt),
-      feePercents: { mbank: rates.mbankBp / 100, card: rates.cardBp / 100 },
       rows,
       totals: [...totals.values()],
     };
@@ -219,25 +230,33 @@ export class SettlementsService {
       return this.platformRow(shop, period);
     }
 
-    const rates = await this.fees.getRates();
+    const catalog = await this.methods.byCode();
     const buckets = await this.bucketsFor(shopId, period);
-    const payout = payoutCents(buckets, rates);
+    const core = classify(buckets, catalog);
+    const payout = payoutCents(core);
     if (payout <= 0) {
       throw new BadRequestException(
         'No online payments this month — there is nothing to pay out.',
       );
     }
+    // The mbank/card columns predate dynamic methods; they are still filled
+    // (grouped by method kind) so older tooling keeps reading sane numbers.
+    const kindCents = (kind: 'mbank' | 'card') =>
+      core.online
+        .filter((m) => catalog.get(m.code)?.kind === kind)
+        .reduce((sum, m) => sum + m.cents, 0);
     const snapshot = {
-      ordersCount: buckets.ordersCount,
-      totalCents: buckets.totalCents,
-      codCents: buckets.codCents,
-      mbankCents: buckets.mbankCents,
-      cardCents: buckets.cardCents,
-      otherCents: buckets.otherCents,
-      feeCents: totalFeeCents(buckets, rates),
+      ordersCount: core.ordersCount,
+      totalCents: core.totalCents,
+      codCents: core.codCents,
+      mbankCents: kindCents('mbank'),
+      cardCents: kindCents('card'),
+      otherCents: core.otherCents,
+      feeCents: totalFeeCents(core),
       payoutCents: payout,
-      mbankFeeBp: rates.mbankBp,
-      cardFeeBp: rates.cardBp,
+      mbankFeeBp: catalog.get('mbank')?.feeBp ?? MBANK_FEE_BP,
+      cardFeeBp: catalog.get('card')?.feeBp ?? CARD_FEE_BP,
+      breakdown: core.online,
       note: note?.trim() || null,
       paidAt: new Date(),
     };
@@ -270,7 +289,7 @@ export class SettlementsService {
       shopName: shop.name,
       shopHandle: shop.handle,
       currency: shop.currency,
-      ...this.buildMonth(period, buckets, paidRow, await this.fees.getRates()),
+      ...this.buildMonth(period, buckets, paidRow, await this.methods.byCode()),
     };
   }
 
@@ -286,8 +305,8 @@ export class SettlementsService {
       ),
       columns: { totalCents: true, paymentMethod: true },
     });
-    const b: Buckets = { ...EMPTY_BUCKETS };
-    for (const r of rows) addOrder(b, r.paymentMethod, r.totalCents);
+    const b = emptyBuckets();
+    for (const r of rows) addOrder(b, r.paymentMethod, r.totalCents, 1);
     return b;
   }
 
@@ -296,40 +315,31 @@ export class SettlementsService {
     period: string,
     live: Buckets | undefined,
     paid: SettlementRow | undefined,
-    rates: FeeRates,
+    catalog: MethodCatalog,
   ): SettlementMonthResponse {
     // A paid month renders from its snapshot — amounts *and* the fee rates in
     // force at payment time — so the record never shifts under a rate change.
-    const b: Buckets = paid
-      ? {
-          ordersCount: paid.ordersCount,
-          totalCents: paid.totalCents,
-          codCents: paid.codCents,
-          mbankCents: paid.mbankCents,
-          cardCents: paid.cardCents,
-          otherCents: paid.otherCents,
-        }
-      : (live ?? { ...EMPTY_BUCKETS });
-    const applied = paid
-      ? { mbankBp: paid.mbankFeeBp, cardBp: paid.cardFeeBp }
-      : rates;
-    const mbankFee = feeCents(b.mbankCents, applied.mbankBp);
-    const cardFee = feeCents(b.cardCents, applied.cardBp);
-    const payout = paid ? paid.payoutCents : payoutCents(b, rates);
+    const core: MonthCore = paid
+      ? snapshotCore(paid)
+      : classify(live ?? emptyBuckets(), catalog);
+    const payout = paid ? paid.payoutCents : payoutCents(core);
+    const onlineCents = core.online.reduce((sum, m) => sum + m.cents, 0);
     const window = windowOf(period);
     return {
       period,
-      ordersCount: b.ordersCount,
-      total: centsToDollars(b.totalCents),
-      cod: centsToDollars(b.codCents),
-      mbank: centsToDollars(b.mbankCents),
-      card: centsToDollars(b.cardCents),
-      other: centsToDollars(b.otherCents),
-      fees: {
-        mbank: centsToDollars(mbankFee),
-        card: centsToDollars(cardFee),
-        total: centsToDollars(mbankFee + cardFee),
-      },
+      ordersCount: core.ordersCount,
+      total: centsToDollars(core.totalCents),
+      cod: centsToDollars(core.codCents),
+      online: centsToDollars(onlineCents),
+      other: centsToDollars(core.otherCents),
+      methods: core.online.map((m) => ({
+        code: m.code,
+        title: m.title,
+        amount: centsToDollars(m.cents),
+        feePercent: m.feeBp / 100,
+        fee: centsToDollars(m.feeCents),
+      })),
+      fees: centsToDollars(totalFeeCents(core)),
       payout: centsToDollars(payout),
       status: statusOf(period, !!paid, payout),
       windowFrom: window.from,
@@ -344,36 +354,88 @@ export class SettlementsService {
 
 function addOrder(
   b: Buckets,
-  method: 'mbank' | 'card' | 'cod' | null,
-  cents: number,
-): void {
-  addBucket(b, method, cents, 1);
-}
-
-function addBucket(
-  b: Buckets,
-  method: 'mbank' | 'card' | 'cod' | null,
+  method: string | null,
   cents: number,
   count: number,
 ): void {
   b.ordersCount += count;
   b.totalCents += cents;
-  if (method === 'cod') b.codCents += cents;
-  else if (method === 'mbank') b.mbankCents += cents;
-  else if (method === 'card') b.cardCents += cents;
   // Orders recorded manually from the console have no gateway — the seller
   // was paid directly, so like COD they carry no fee and no payout.
-  else b.otherCents += cents;
+  if (!method) b.manualCents += cents;
+  else b.byCode.set(method, (b.byCode.get(method) ?? 0) + cents);
 }
 
-function totalFeeCents(b: Buckets, rates: FeeRates): number {
-  return (
-    feeCents(b.mbankCents, rates.mbankBp) + feeCents(b.cardCents, rates.cardBp)
-  );
+/**
+ * Splits raw per-code volume into COD / online / other using the method
+ * catalog. Codes the catalog no longer knows (hard-deleted methods) join the
+ * manual bucket — no fee, no payout — so money never silently disappears.
+ */
+function classify(b: Buckets, catalog: MethodCatalog): MonthCore {
+  let codCents = 0;
+  let otherCents = b.manualCents;
+  const online: SettlementMethodSnapshot[] = [];
+  for (const [code, cents] of b.byCode) {
+    const method = catalog.get(code);
+    if (!method) otherCents += cents;
+    else if (method.kind === 'cod') codCents += cents;
+    else {
+      online.push({
+        code,
+        title: method.title,
+        cents,
+        feeBp: method.feeBp,
+        feeCents: feeCents(cents, method.feeBp),
+      });
+    }
+  }
+  online.sort((a, b2) => b2.cents - a.cents);
+  return {
+    ordersCount: b.ordersCount,
+    totalCents: b.totalCents,
+    codCents,
+    otherCents,
+    online,
+  };
 }
 
-function payoutCents(b: Buckets, rates: FeeRates): number {
-  return b.mbankCents + b.cardCents - totalFeeCents(b, rates);
+/** Rebuilds a MonthCore from a paid snapshot row (legacy rows included). */
+function snapshotCore(paid: SettlementRow): MonthCore {
+  // Rows written before per-method snapshots reconstruct their two-bucket
+  // breakdown from the legacy mbank/card columns and their frozen rates.
+  const online: SettlementMethodSnapshot[] =
+    paid.breakdown ??
+    [
+      {
+        code: 'mbank',
+        title: 'Mobile banking',
+        cents: paid.mbankCents,
+        feeBp: paid.mbankFeeBp,
+        feeCents: feeCents(paid.mbankCents, paid.mbankFeeBp),
+      },
+      {
+        code: 'card',
+        title: 'Card',
+        cents: paid.cardCents,
+        feeBp: paid.cardFeeBp,
+        feeCents: feeCents(paid.cardCents, paid.cardFeeBp),
+      },
+    ].filter((m) => m.cents > 0);
+  return {
+    ordersCount: paid.ordersCount,
+    totalCents: paid.totalCents,
+    codCents: paid.codCents,
+    otherCents: paid.otherCents,
+    online,
+  };
+}
+
+function totalFeeCents(core: MonthCore): number {
+  return core.online.reduce((sum, m) => sum + m.feeCents, 0);
+}
+
+function payoutCents(core: MonthCore): number {
+  return core.online.reduce((sum, m) => sum + m.cents - m.feeCents, 0);
 }
 
 /* ── Calendar helpers (server-local months, matching the dashboard) ─ */

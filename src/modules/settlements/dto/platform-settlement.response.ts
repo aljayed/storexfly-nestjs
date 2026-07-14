@@ -26,8 +26,6 @@ export class PlatformSettlementsResponse {
     description: 'Every month with order activity, newest first',
   })
   periods!: string[];
-  @ApiProperty({ example: { mbank: 3, card: 4.5 } })
-  feePercents!: { mbank: number; card: number };
   @ApiProperty({ type: [PlatformSettlementRowResponse] })
   rows!: PlatformSettlementRowResponse[];
   @ApiProperty({ type: [PlatformSettlementTotalResponse] })

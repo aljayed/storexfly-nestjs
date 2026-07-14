@@ -37,7 +37,7 @@ export class OrderResponse {
   @ApiProperty({ enum: ['New', 'Packed', 'Shipped', 'Delivered'] })
   status!: string;
   @ApiProperty({ enum: ['Paid', 'Refunded'] }) pay!: string;
-  @ApiPropertyOptional({ enum: ['mbank', 'card', 'cod'] })
+  @ApiPropertyOptional({ example: 'cod', description: 'Payment-method code' })
   paymentMethod?: string;
   @ApiProperty({ enum: ['Store', 'Instagram', 'WhatsApp'] }) channel!: string;
   @ApiPropertyOptional() address?: DeliveryAddressValue;

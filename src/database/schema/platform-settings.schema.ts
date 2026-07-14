@@ -32,11 +32,14 @@ export const platformSettings = pgTable('platform_settings', {
   logoDark: text('logo_dark'),
   // Browser-tab icon, stored inline as a data URL. null = the app's default.
   favicon: text('favicon'),
-  // Payment-gateway fee rates in basis points (300 = 3%), editable from the
-  // platform console. Every surface (item form copy, settlement math) reads
-  // these live; paid settlements snapshot the rates they were computed with.
+  // Legacy gateway fee rates in basis points. Live rates now live per-method
+  // on `payment_methods`; these only seed that table's first migration and
+  // back old paid-settlement snapshots.
   mbankFeeBp: integer('mbank_fee_bp').notNull().default(300),
   cardFeeBp: integer('card_fee_bp').notNull().default(450),
+  // Operator-editable copy of the info banner on the seller settlements page.
+  // null/empty = the app renders its built-in default explanation.
+  settlementBanner: text('settlement_banner'),
   updatedAt: timestamp('updated_at', { withTimezone: true })
     .notNull()
     .defaultNow()

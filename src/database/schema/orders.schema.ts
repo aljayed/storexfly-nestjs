@@ -12,7 +12,6 @@ import {
 import {
   mobileBankAppEnum,
   orderStatusEnum,
-  paymentMethodEnum,
   paymentStatusEnum,
   salesChannelEnum,
 } from './enums';
@@ -52,7 +51,9 @@ export const orders = pgTable(
     totalCents: integer('total_cents').notNull(),
     status: orderStatusEnum('status').notNull().default('New'),
     pay: paymentStatusEnum('pay').notNull().default('Paid'),
-    paymentMethod: paymentMethodEnum('payment_method'),
+    // Code of the `payment_methods` row the buyer paid with ('cod', 'mbank',
+    // an operator-added slug, …); null for orders recorded manually.
+    paymentMethod: varchar('payment_method', { length: 40 }),
     mobileBankApp: mobileBankAppEnum('mobile_bank_app'),
     channel: salesChannelEnum('channel').notNull().default('Store'),
     address: jsonb('address').$type<DeliveryAddressValue>(),

@@ -2,6 +2,7 @@ import { relations } from 'drizzle-orm';
 import {
   index,
   integer,
+  jsonb,
   pgTable,
   timestamp,
   uniqueIndex,
@@ -9,6 +10,15 @@ import {
   varchar,
 } from 'drizzle-orm/pg-core';
 import { shops } from './shops.schema';
+
+/** One online payment method's snapshotted slice of a paid settlement. */
+export interface SettlementMethodSnapshot {
+  code: string;
+  title: string;
+  cents: number;
+  feeBp: number;
+  feeCents: number;
+}
 
 /**
  * A completed monthly payout of a shop's prepaid (online) order revenue.
@@ -40,6 +50,11 @@ export const settlements = pgTable(
     // platform changes the rates.
     mbankFeeBp: integer('mbank_fee_bp').notNull().default(300),
     cardFeeBp: integer('card_fee_bp').notNull().default(450),
+    // Per-method snapshot of the online volume — one entry per payment method
+    // that had orders, with the fee rate applied to it. Rows recorded before
+    // payment methods became dynamic have null here; their breakdown is
+    // reconstructed from the mbank/card columns above.
+    breakdown: jsonb('breakdown').$type<SettlementMethodSnapshot[]>(),
     // Free-form payment reference (bank transfer id, bKash trx id, …).
     note: varchar('note', { length: 200 }),
     paidAt: timestamp('paid_at', { withTimezone: true }).notNull().defaultNow(),

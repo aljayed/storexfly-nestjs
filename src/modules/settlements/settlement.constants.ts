@@ -7,9 +7,9 @@
  * the seller collects it in cash — so it carries no fee and no payout.
  *
  * Fee rates are stored in basis points so fee math stays in integers. The
- * live rates are platform-configurable and live on the `platform_settings`
- * singleton (see FeesService); the constants below are only the defaults
- * used before that row exists.
+ * live rates are platform-configurable per payment method (see
+ * PaymentMethodsService); the constants below only seed the default
+ * mobile-banking and card methods on a fresh database.
  */
 export const MBANK_FEE_BP = 300; // 3% maintenance charge (bKash, Nagad, Rocket)
 export const CARD_FEE_BP = 450; // 4.5% SSLCommerz processing fee

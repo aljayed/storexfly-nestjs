@@ -12,12 +12,8 @@ import {
   Min,
   ValidateNested,
 } from 'class-validator';
-import {
-  mobileBankAppEnum,
-  paymentMethodEnum,
-} from '../../../database/schema/enums';
+import { mobileBankAppEnum } from '../../../database/schema/enums';
 
-type PaymentMethod = (typeof paymentMethodEnum.enumValues)[number];
 type MobileBankApp = (typeof mobileBankAppEnum.enumValues)[number];
 
 class ContactDto {
@@ -95,9 +91,14 @@ export class CheckoutDto {
   @Type(() => AddressDto)
   address!: AddressDto;
 
-  @ApiProperty({ enum: paymentMethodEnum.enumValues })
-  @IsEnum(paymentMethodEnum.enumValues)
-  paymentMethod!: PaymentMethod;
+  @ApiProperty({
+    example: 'cod',
+    description:
+      'Code of a platform-configured payment method — validated against the live catalog',
+  })
+  @IsString()
+  @MaxLength(40)
+  paymentMethod!: string;
 
   @ApiPropertyOptional({ enum: mobileBankAppEnum.enumValues })
   @IsOptional()

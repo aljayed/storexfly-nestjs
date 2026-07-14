@@ -17,11 +17,9 @@ import {
   shops,
   type OrderRow,
 } from '../../database/schema';
-import type {
-  OrderStatus,
-  SalesChannel,
-} from '../../database/schema/enums';
+import type { OrderStatus, SalesChannel } from '../../database/schema/enums';
 import { CustomersService } from '../customers/customers.service';
+import { PaymentMethodsService } from '../settlements/payment-methods.service';
 import type { CheckoutDto } from './dto/checkout.dto';
 import { CheckoutResultResponse } from './dto/checkout-result.response';
 import { OrderListResponse } from './dto/order-list.response';
@@ -40,6 +38,7 @@ export class OrdersService {
   constructor(
     @Inject(DRIZZLE) private readonly db: DrizzleDB,
     private readonly customers: CustomersService,
+    private readonly paymentMethods: PaymentMethodsService,
   ) {}
 
   /**
@@ -49,6 +48,16 @@ export class OrdersService {
    * line item atomically.
    */
   async checkout(dto: CheckoutDto): Promise<CheckoutResultResponse> {
+    // The catalog is platform-managed: the code must be live right now, so a
+    // method removed by an operator disappears from checkout immediately.
+    const method = await this.paymentMethods.findEnabledByCode(
+      dto.paymentMethod,
+    );
+    if (!method) {
+      throw new BadRequestException(
+        'That payment method is not available — please pick another.',
+      );
+    }
     return this.db.transaction(async (tx) => {
       // A switched-off shop is closed to buyers — no orders either.
       const shop = await tx.query.shops.findFirst({
@@ -78,11 +87,20 @@ export class OrdersService {
       if (product.stock < dto.qty) {
         throw new ConflictException('Not enough stock for this quantity');
       }
+      // Sellers toggle payment *kinds* per product (COD / mobile banking /
+      // card); the picked method must belong to an allowed kind.
+      if (!product.paymentMethods.includes(method.kind)) {
+        throw new BadRequestException(
+          'This item cannot be paid with that method — please pick another.',
+        );
+      }
 
-      const hasLocation = Boolean(
-        dto.address.line?.trim() || dto.address.geo,
-      );
-      if (!dto.contact.name.trim() || !dto.contact.phone.trim() || !hasLocation) {
+      const hasLocation = Boolean(dto.address.line?.trim() || dto.address.geo);
+      if (
+        !dto.contact.name.trim() ||
+        !dto.contact.phone.trim() ||
+        !hasLocation
+      ) {
         throw new BadRequestException(
           'Name, phone and a delivery address (or map pin) are required',
         );
@@ -304,7 +322,11 @@ export class OrdersService {
         .where(eq(orders.id, order.id))
         .returning();
       if (order.customerId) {
-        await this.customers.applyRefund(tx, order.customerId, order.totalCents);
+        await this.customers.applyRefund(
+          tx,
+          order.customerId,
+          order.totalCents,
+        );
       }
       const items = await tx.query.orderItems.findMany({
         where: eq(orderItems.orderId, order.id),
