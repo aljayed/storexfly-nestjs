@@ -27,11 +27,16 @@ import { OrderResponse } from './dto/order.response';
 
 /** Allowed forward transitions for the order pipeline. */
 const STATUS_FLOW: Record<OrderStatus, OrderStatus | null> = {
-  New: 'Packed',
+  New: 'Confirmed',
+  Confirmed: 'Packed',
   Packed: 'Shipped',
   Shipped: 'Delivered',
   Delivered: null,
+  Cancelled: null,
 };
+
+/** Statuses from which an order may still be cancelled (before it's packed). */
+const CANCELLABLE: readonly OrderStatus[] = ['New', 'Confirmed'];
 
 @Injectable()
 export class OrdersService {
@@ -226,8 +231,8 @@ export class OrdersService {
         .groupBy(orders.status),
       this.db
         .select({
-          revenueCents: sql<string>`coalesce(sum(${orders.totalCents}) filter (where ${orders.pay} = 'Paid'), 0)`,
-          paidCount: sql<string>`count(*) filter (where ${orders.pay} = 'Paid')`,
+          revenueCents: sql<string>`coalesce(sum(${orders.totalCents}) filter (where ${orders.pay} = 'Paid' and ${orders.status} <> 'Cancelled'), 0)`,
+          paidCount: sql<string>`count(*) filter (where ${orders.pay} = 'Paid' and ${orders.status} <> 'Cancelled')`,
           refunded: sql<string>`count(*) filter (where ${orders.pay} = 'Refunded')`,
         })
         .from(orders)
@@ -332,6 +337,55 @@ export class OrdersService {
       const items = await tx.query.orderItems.findMany({
         where: eq(orderItems.orderId, order.id),
       });
+      return OrderResponse.fromRow(row, items);
+    });
+  }
+
+  /**
+   * Cancel an unconfirmed/confirmed order the customer never went through with.
+   * Only allowed before packing. Restocks every line item, marks the order
+   * 'Cancelled', and unwinds the order from the customer's lifetime aggregates.
+   */
+  async cancel(shopId: string, id: string): Promise<OrderResponse> {
+    return this.db.transaction(async (tx) => {
+      const order = await tx.query.orders.findFirst({
+        where: this.orderIdFilter(shopId, id),
+      });
+      if (!order) {
+        throw new NotFoundException('Order not found');
+      }
+      if (!CANCELLABLE.includes(order.status)) {
+        throw new BadRequestException(
+          "Only orders that haven't been packed can be cancelled",
+        );
+      }
+
+      const items = await tx.query.orderItems.findMany({
+        where: eq(orderItems.orderId, order.id),
+      });
+      // Put the reserved stock back for every line that still points at a
+      // live product (productId is null once a product has been deleted).
+      for (const item of items) {
+        if (!item.productId) continue;
+        await tx
+          .update(products)
+          .set({ stock: sql`${products.stock} + ${item.qty}` })
+          .where(eq(products.id, item.productId));
+      }
+
+      const [row] = await tx
+        .update(orders)
+        .set({ status: 'Cancelled' })
+        .where(eq(orders.id, order.id))
+        .returning();
+
+      if (order.customerId) {
+        await this.customers.unwindOrder(
+          tx,
+          order.customerId,
+          order.totalCents,
+        );
+      }
       return OrderResponse.fromRow(row, items);
     });
   }

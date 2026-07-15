@@ -95,11 +95,19 @@ export const productTagEnum = pgEnum('product_tag', [
 // sold offline) — buyers read about them and contact the seller directly.
 export const listingTypeEnum = pgEnum('listing_type', ['sale', 'showcase']);
 
+// Fulfilment pipeline. Buyers land on 'New' (awaiting the seller's confirmation
+// call); the seller confirms — 'Confirmed' — before the order is packed and sent
+// out. 'Cancelled' is a terminal state for orders the customer never confirmed.
+// Enum values are append-only in Postgres, so 'Confirmed'/'Cancelled' sit at the
+// end here — the logical order (New → Confirmed → Packed → Shipped → Delivered)
+// is enforced by STATUS_FLOW in the orders service and the UI, not by this list.
 export const orderStatusEnum = pgEnum('order_status', [
   'New',
   'Packed',
   'Shipped',
   'Delivered',
+  'Confirmed',
+  'Cancelled',
 ]);
 
 export const paymentStatusEnum = pgEnum('payment_status', ['Paid', 'Refunded']);

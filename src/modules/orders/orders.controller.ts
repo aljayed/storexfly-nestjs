@@ -78,4 +78,14 @@ export class OrdersController {
   refund(@Param('shopId') shopId: string, @Param('id') id: string) {
     return this.orders.refund(shopId, id);
   }
+
+  @Public()
+  @UseGuards(AdminJwtAuthGuard, ShopScopeGuard)
+  @ApiBearerAuth()
+  @Post('shops/:shopId/orders/:id/cancel')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Admin: cancel an unconfirmed order (restocks items)' })
+  cancel(@Param('shopId') shopId: string, @Param('id') id: string) {
+    return this.orders.cancel(shopId, id);
+  }
 }

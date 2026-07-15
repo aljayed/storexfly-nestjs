@@ -167,6 +167,32 @@ export class CustomersService {
   }
 
   /**
+   * Reverses a whole order from a customer's aggregates when it is cancelled
+   * (unlike `applyRefund`, which only unwinds spend, a cancellation also drops
+   * the order count since the sale never happened).
+   */
+  async unwindOrder(
+    tx: DbExecutor,
+    customerId: string,
+    amountCents: number,
+  ): Promise<void> {
+    const customer = await tx.query.customers.findFirst({
+      where: eq(customers.id, customerId),
+    });
+    if (!customer) return;
+    const ordersCount = Math.max(0, customer.ordersCount - 1);
+    const spentCents = Math.max(0, customer.spentCents - amountCents);
+    await tx
+      .update(customers)
+      .set({
+        ordersCount,
+        spentCents,
+        segment: CustomersService.computeSegment(ordersCount, spentCents),
+      })
+      .where(eq(customers.id, customerId));
+  }
+
+  /**
    * Paginated admin list. `total` counts the filtered set; `stats` are
    * shop-wide aggregates so the header KPIs and segment tab counts stay
    * correct regardless of the active page or filter.

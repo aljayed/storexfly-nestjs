@@ -218,6 +218,13 @@
       "when": 1784134089622,
       "tag": "0030_customer_phone",
       "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1784220489622,
+      "tag": "0031_order_confirmation",
+      "breakpoints": true
     }
   ]
 }
