@@ -211,6 +211,13 @@
       "when": 1783989907190,
       "tag": "0029_payment_methods",
       "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "7",
+      "when": 1784134089622,
+      "tag": "0030_customer_phone",
+      "breakpoints": true
     }
   ]
 }

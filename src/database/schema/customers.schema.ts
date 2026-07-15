@@ -27,6 +27,7 @@ export const customers = pgTable(
       .references(() => shops.id, { onDelete: 'cascade' }),
     name: varchar('name', { length: 160 }).notNull(),
     email: varchar('email', { length: 320 }).notNull(),
+    phone: varchar('phone', { length: 24 }).notNull().default(''),
     city: varchar('city', { length: 120 }).notNull().default(''),
     ordersCount: integer('orders_count').notNull().default(0),
     spentCents: integer('spent_cents').notNull().default(0),

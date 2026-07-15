@@ -120,6 +120,7 @@ export class OrdersService {
         shopId: dto.shopId,
         name: dto.contact.name,
         email: dto.contact.email ?? `${dto.contact.phone}@phone.local`,
+        phone: dto.contact.phone,
         city: dto.address.area,
         amountCents: totalCents,
         placedAt,

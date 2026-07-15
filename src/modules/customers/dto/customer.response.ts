@@ -8,6 +8,8 @@ export class CustomerResponse {
   @ApiProperty() shopId!: string;
   @ApiProperty() name!: string;
   @ApiProperty() email!: string;
+  @ApiProperty({ description: 'From the latest order that carried one' })
+  phone!: string;
   @ApiProperty() city!: string;
   @ApiProperty({ description: 'Lifetime order count' }) orders!: number;
   @ApiProperty({ description: 'Lifetime spend (dollars)' }) spent!: number;
@@ -24,6 +26,7 @@ export class CustomerResponse {
       shopId: row.shopId,
       name: row.name,
       email: row.email,
+      phone: row.phone,
       city: row.city,
       orders: row.ordersCount,
       spent: centsToDollars(row.spentCents),

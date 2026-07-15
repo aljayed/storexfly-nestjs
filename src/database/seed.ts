@@ -86,6 +86,7 @@ const ORDERS: {
 const CUSTOMERS: {
   name: string;
   email: string;
+  phone: string;
   city: string;
   orders: number;
   spent: number;
@@ -93,14 +94,14 @@ const CUSTOMERS: {
   first: string;
   segment: CustomerSegment;
 }[] = [
-  { name: 'Priya Nair', email: 'priya.nair@gmail.com', city: 'Austin, TX', orders: 4, spent: 205, last: '2026-06-08', first: '2026-03-12', segment: 'VIP' },
-  { name: 'Daniel Cho', email: 'dan.cho@outlook.com', city: 'Seattle, WA', orders: 3, spent: 166, last: '2026-06-08', first: '2026-04-02', segment: 'Repeat' },
-  { name: 'Aisha Khan', email: 'aisha.k@gmail.com', city: 'Chicago, IL', orders: 3, spent: 148, last: '2026-06-07', first: '2026-04-20', segment: 'Repeat' },
-  { name: 'Sara Lopez', email: 'sara.lopez@gmail.com', city: 'Miami, FL', orders: 3, spent: 84, last: '2026-06-05', first: '2026-05-01', segment: 'Repeat' },
-  { name: 'Marco Rossi', email: 'marco.r@gmail.com', city: 'Boston, MA', orders: 2, spent: 51, last: '2026-06-07', first: '2026-05-10', segment: 'Repeat' },
-  { name: 'Tomás Vega', email: 'tomas.v@gmail.com', city: 'Denver, CO', orders: 1, spent: 24, last: '2026-06-03', first: '2026-06-03', segment: 'New' },
-  { name: 'Lena Müller', email: 'lena.m@gmail.com', city: 'Portland, OR', orders: 1, spent: 28, last: '2026-05-29', first: '2026-05-29', segment: 'New' },
-  { name: 'Owen Park', email: 'owen.park@gmail.com', city: 'San Jose, CA', orders: 1, spent: 38, last: '2026-05-22', first: '2026-05-22', segment: 'New' },
+  { name: 'Priya Nair', email: 'priya.nair@gmail.com', phone: '+1 512-555-0142', city: 'Austin, TX', orders: 4, spent: 205, last: '2026-06-08', first: '2026-03-12', segment: 'VIP' },
+  { name: 'Daniel Cho', email: 'dan.cho@outlook.com', phone: '+1 206-555-0117', city: 'Seattle, WA', orders: 3, spent: 166, last: '2026-06-08', first: '2026-04-02', segment: 'Repeat' },
+  { name: 'Aisha Khan', email: 'aisha.k@gmail.com', phone: '+1 312-555-0186', city: 'Chicago, IL', orders: 3, spent: 148, last: '2026-06-07', first: '2026-04-20', segment: 'Repeat' },
+  { name: 'Sara Lopez', email: 'sara.lopez@gmail.com', phone: '+1 305-555-0163', city: 'Miami, FL', orders: 3, spent: 84, last: '2026-06-05', first: '2026-05-01', segment: 'Repeat' },
+  { name: 'Marco Rossi', email: 'marco.r@gmail.com', phone: '+1 617-555-0129', city: 'Boston, MA', orders: 2, spent: 51, last: '2026-06-07', first: '2026-05-10', segment: 'Repeat' },
+  { name: 'Tomás Vega', email: 'tomas.v@gmail.com', phone: '+1 720-555-0154', city: 'Denver, CO', orders: 1, spent: 24, last: '2026-06-03', first: '2026-06-03', segment: 'New' },
+  { name: 'Lena Müller', email: 'lena.m@gmail.com', phone: '+1 503-555-0171', city: 'Portland, OR', orders: 1, spent: 28, last: '2026-05-29', first: '2026-05-29', segment: 'New' },
+  { name: 'Owen Park', email: 'owen.park@gmail.com', phone: '+1 408-555-0195', city: 'San Jose, CA', orders: 1, spent: 38, last: '2026-05-22', first: '2026-05-22', segment: 'New' },
 ];
 
 async function seed(): Promise<void> {
@@ -193,6 +194,7 @@ async function seed(): Promise<void> {
           shopId: shop.id,
           name: c.name,
           email: c.email,
+          phone: c.phone,
           city: c.city,
           ordersCount: c.orders,
           spentCents: dollarsToCents(c.spent),
