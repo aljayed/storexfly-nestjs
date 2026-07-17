@@ -17,6 +17,7 @@ import { ChatModule } from './modules/chat/chat.module';
 import { CouponsModule } from './modules/coupons/coupons.module';
 import { CustomersModule } from './modules/customers/customers.module';
 import { HealthModule } from './modules/health/health.module';
+import { StorageModule } from './modules/storage/storage.module';
 import { NoticesModule } from './modules/notices/notices.module';
 import { PlatformModule } from './modules/platform/platform.module';
 import { OrdersModule } from './modules/orders/orders.module';
@@ -64,6 +65,7 @@ import { UsersModule } from './modules/users/users.module';
     ChatModule,
     ReviewsModule,
     HealthModule,
+    StorageModule,
   ],
   providers: [
     // Global seller-JWT guard — routes opt out with @Public().

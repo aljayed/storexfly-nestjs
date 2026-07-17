@@ -82,6 +82,26 @@ export const throttleConfig = registerAs('throttle', () => ({
   limit: parseInt(process.env.THROTTLE_LIMIT ?? '120', 10),
 }));
 
+// S3-compatible object storage (Contabo) for user-uploaded media — product
+// photos, shop banners, review images, brand logos. Images are uploaded to a
+// private bucket and served back through the app's own /media proxy (Nginx
+// caches them), so the bucket needs no public access. When unset, StorageService
+// stays in passthrough mode and images fall back to inline data URLs.
+export const storageConfig = registerAs('storage', () => ({
+  endpoint: process.env.S3_ENDPOINT ?? '',
+  region: process.env.S3_REGION ?? 'eu2',
+  bucket: process.env.S3_BUCKET ?? '',
+  accessKeyId: process.env.S3_ACCESS_KEY ?? '',
+  secretAccessKey: process.env.S3_SECRET_KEY ?? '',
+  // Public path (same-origin) the /media proxy serves objects on.
+  publicPrefix: process.env.S3_PUBLIC_PREFIX ?? '/api/media',
+  get enabled() {
+    return Boolean(
+      this.endpoint && this.bucket && this.accessKeyId && this.secretAccessKey,
+    );
+  },
+}));
+
 export const configurations = [
   appConfig,
   databaseConfig,
@@ -91,4 +111,5 @@ export const configurations = [
   googleConfig,
   mailConfig,
   throttleConfig,
+  storageConfig,
 ];

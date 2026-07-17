@@ -145,6 +145,31 @@ export class EnvironmentVariables {
   @IsOptional()
   @Transform(({ value }) => parseInt(value, 10))
   THROTTLE_LIMIT = 120;
+
+  // ── S3-compatible object storage (optional) ───────────────
+  @IsString()
+  @IsOptional()
+  S3_ENDPOINT = '';
+
+  @IsString()
+  @IsOptional()
+  S3_REGION = 'eu2';
+
+  @IsString()
+  @IsOptional()
+  S3_BUCKET = '';
+
+  @IsString()
+  @IsOptional()
+  S3_ACCESS_KEY = '';
+
+  @IsString()
+  @IsOptional()
+  S3_SECRET_KEY = '';
+
+  @IsString()
+  @IsOptional()
+  S3_PUBLIC_PREFIX = '/api/media';
 }
 
 export function validateEnv(

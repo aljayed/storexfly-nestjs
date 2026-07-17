@@ -17,6 +17,7 @@ import {
 } from '../../database/schema';
 import type { BuyerPrincipal } from '../../common/types/principal';
 import { ShopsService } from '../shops/shops.service';
+import { StorageService } from '../storage/storage.service';
 import { ReviewResponse } from '../products/dto/product-detail.response';
 import {
   CreateReviewDto,
@@ -33,6 +34,7 @@ export class ReviewsService {
   constructor(
     @Inject(DRIZZLE) private readonly db: DrizzleDB,
     private readonly shops: ShopsService,
+    private readonly storage: StorageService,
   ) {}
 
   /** Resolve the product behind a public /shops/:handle/products/:slug URL. */
@@ -125,6 +127,7 @@ export class ReviewsService {
       throw new ConflictException('You have already reviewed this product.');
     }
 
+    const imageUrl = (await this.storage.absorb(dto.image, 'reviews')) ?? null;
     const [row] = await this.db
       .insert(reviews)
       .values({
@@ -133,7 +136,7 @@ export class ReviewsService {
         author: buyer.name,
         rating: dto.rating,
         body: dto.body ?? '',
-        imageUrl: dto.image ?? null,
+        imageUrl,
         verified: true,
       })
       .returning();
@@ -153,12 +156,13 @@ export class ReviewsService {
     const product = await this.resolveProduct(handle, slug);
     await this.requireOwnReview(reviewId, product.id, buyer.id);
 
+    const imageUrl = (await this.storage.absorb(dto.image, 'reviews')) ?? null;
     const [row] = await this.db
       .update(reviews)
       .set({
         rating: dto.rating,
         body: dto.body ?? '',
-        imageUrl: dto.image ?? null,
+        imageUrl,
       })
       .where(eq(reviews.id, reviewId))
       .returning();

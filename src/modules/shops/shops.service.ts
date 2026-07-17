@@ -18,6 +18,7 @@ import {
   type ShopRow,
 } from '../../database/schema';
 import { BlockedWordsService } from '../blocked-words/blocked-words.service';
+import { StorageService } from '../storage/storage.service';
 import { ProductResponse } from '../products/dto/product.response';
 import { SubscriptionsService } from '../subscriptions/subscriptions.service';
 import type { CreateShopDto } from './dto/create-shop.dto';
@@ -37,6 +38,7 @@ export class ShopsService {
     @Inject(DRIZZLE) private readonly db: DrizzleDB,
     private readonly subscriptions: SubscriptionsService,
     private readonly blockedWords: BlockedWordsService,
+    private readonly storage: StorageService,
   ) {}
 
   /** Live handle availability check for the onboarding wizard. */
@@ -217,14 +219,17 @@ export class ShopsService {
       patch.brandSoft = swatch.soft;
     }
     // Banners are replace-all: an empty array clears them; null keeps the column
-    // tidy when there are none left.
+    // tidy when there are none left. Newly-added base64 images are uploaded to
+    // object storage first; existing /media URLs pass through unchanged.
     if (dto.bannerImages !== undefined) {
       const banners = dto.bannerImages.map((b) => b.trim()).filter(Boolean);
-      patch.bannerImages = banners.length ? banners : null;
+      const uploaded = await this.storage.absorbMany(banners, 'shops');
+      patch.bannerImages = uploaded && uploaded.length ? uploaded : null;
     }
     if (dto.floatingImages !== undefined) {
       const floats = dto.floatingImages.map((b) => b.trim()).filter(Boolean);
-      patch.floatingImages = floats.length ? floats : null;
+      const uploaded = await this.storage.absorbMany(floats, 'shops');
+      patch.floatingImages = uploaded && uploaded.length ? uploaded : null;
     }
     const [row] = await this.db
       .update(shops)

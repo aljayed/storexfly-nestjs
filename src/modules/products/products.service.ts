@@ -13,6 +13,7 @@ import {
   reviews,
   type ProductRow,
 } from '../../database/schema';
+import { StorageService } from '../storage/storage.service';
 import { ShopsService } from '../shops/shops.service';
 import type { CreateProductDto } from './dto/create-product.dto';
 import { ProductDetailResponse } from './dto/product-detail.response';
@@ -25,6 +26,7 @@ export class ProductsService {
   constructor(
     @Inject(DRIZZLE) private readonly db: DrizzleDB,
     private readonly shops: ShopsService,
+    private readonly storage: StorageService,
   ) {}
 
   /** Public catalog listing for a storefront, optionally filtered by category. */
@@ -71,6 +73,8 @@ export class ProductsService {
     // Showcase items can't be ordered online, so stock is meaningless for
     // them — pin it to 0 regardless of what the caller sends.
     const listingType = dto.listingType ?? 'sale';
+    // Upload any inline base64 photos to object storage, keeping only the URLs.
+    const images = await this.storage.absorbMany(dto.images, 'products');
     const [row] = await this.db
       .insert(products)
       .values({
@@ -96,7 +100,7 @@ export class ProductsService {
         paymentMethods: dto.paymentMethods ?? undefined,
         rating: dto.rating ?? 0,
         blurb: dto.blurb ?? '',
-        images: dto.images,
+        images: images ?? undefined,
         highlights: dto.highlights,
         videoUrl: dto.videoUrl || null,
       })
@@ -110,6 +114,11 @@ export class ProductsService {
     dto: UpdateProductDto,
   ): Promise<ProductResponse> {
     const current = await this.requireOwned(shopId, id);
+    // Absorb any newly-added base64 photos; existing /media URLs pass through.
+    const images =
+      dto.images === undefined
+        ? undefined
+        : ((await this.storage.absorbMany(dto.images, 'products')) ?? undefined);
     const patch: Partial<ProductRow> = {
       name: dto.name ?? undefined,
       cat: dto.cat ?? undefined,
@@ -122,7 +131,7 @@ export class ProductsService {
       paymentMethods: dto.paymentMethods ?? undefined,
       rating: dto.rating ?? undefined,
       blurb: dto.blurb ?? undefined,
-      images: dto.images ?? undefined,
+      images,
       // Present (incl. empty array) replaces the list; absent leaves it as-is.
       highlights: dto.highlights ?? undefined,
       // Present-but-empty clears the video; absent leaves it unchanged.

@@ -13,6 +13,7 @@ import {
   platformSettings,
   type PlatformSettingsRow,
 } from '../../database/schema';
+import { StorageService } from '../storage/storage.service';
 import {
   BrandingResponse,
   LogoResponse,
@@ -32,7 +33,10 @@ const GALLERY_LIMIT = 12;
 export class BrandingService implements OnModuleInit {
   private readonly logger = new Logger(BrandingService.name);
 
-  constructor(@Inject(DRIZZLE) private readonly db: DrizzleDB) {}
+  constructor(
+    @Inject(DRIZZLE) private readonly db: DrizzleDB,
+    private readonly storage: StorageService,
+  ) {}
 
   async onModuleInit(): Promise<void> {
     try {
@@ -86,9 +90,14 @@ export class BrandingService implements OnModuleInit {
       brandAccent: dto.accent?.length ? dto.accent : null,
     };
     // Only touch a slot when the caller sent the field (null clears it).
-    if (dto.logoLight !== undefined) patch.logoLight = dto.logoLight;
-    if (dto.logoDark !== undefined) patch.logoDark = dto.logoDark;
-    if (dto.favicon !== undefined) patch.favicon = dto.favicon;
+    // Newly-uploaded base64 images are absorbed to object storage; existing
+    // /media URLs and null pass through.
+    if (dto.logoLight !== undefined)
+      patch.logoLight = await this.storage.absorb(dto.logoLight, 'branding');
+    if (dto.logoDark !== undefined)
+      patch.logoDark = await this.storage.absorb(dto.logoDark, 'branding');
+    if (dto.favicon !== undefined)
+      patch.favicon = await this.storage.absorb(dto.favicon, 'branding');
 
     const [row] = await this.db
       .update(platformSettings)
@@ -112,10 +121,12 @@ export class BrandingService implements OnModuleInit {
 
   /** Store an uploaded image and make it the active logo for the given theme. */
   async addLogo(dataUrl: string, theme: LogoTheme): Promise<BrandingResponse> {
-    await this.db.insert(brandLogos).values({ dataUrl });
+    // Absorb once so both the gallery and the active slot hold the /media URL.
+    const stored = (await this.storage.absorb(dataUrl, 'branding')) ?? dataUrl;
+    await this.db.insert(brandLogos).values({ dataUrl: stored });
     return this.update({
       ...(await this.currentText()),
-      ...(theme === 'dark' ? { logoDark: dataUrl } : { logoLight: dataUrl }),
+      ...(theme === 'dark' ? { logoDark: stored } : { logoLight: stored }),
     });
   }
 
