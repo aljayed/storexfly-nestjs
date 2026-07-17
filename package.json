@@ -5,6 +5,7 @@
   "author": "Hoomri",
   "private": true,
   "license": "UNLICENSED",
+  "packageManager": "pnpm@10.20.0",
   "scripts": {
     "build": "nest build",
     "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
@@ -26,7 +27,7 @@
     "db:seed": "ts-node -r tsconfig-paths/register src/database/seed.ts"
   },
   "dependencies": {
-    "@aws-sdk/client-s3": "^3.1089.0",
+    "@aws-sdk/client-s3": "3.1088.0",
     "@nestjs/common": "^11.0.1",
     "@nestjs/config": "^4.0.2",
     "@nestjs/core": "^11.0.1",
