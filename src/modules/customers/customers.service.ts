@@ -50,8 +50,7 @@ export interface RecordOrderInput {
 }
 
 /** Segment thresholds (derived server-side — never trusted from the client). */
-const VIP_MIN_ORDERS = 4;
-const VIP_MIN_SPEND_CENTS = 20_000; // $200
+const VIP_MIN_ORDERS = 20;
 const REPEAT_MIN_ORDERS = 2;
 
 const MONTH_LABELS = [
@@ -68,9 +67,9 @@ function monthKey(d: Date): string {
 export class CustomersService {
   constructor(@Inject(DRIZZLE) private readonly db: DrizzleDB) {}
 
-  /** Lifetime-aggregate driven segmentation. */
-  static computeSegment(ordersCount: number, spentCents: number): CustomerSegment {
-    if (ordersCount >= VIP_MIN_ORDERS || spentCents >= VIP_MIN_SPEND_CENTS) {
+  /** Lifetime-aggregate driven segmentation (order count only). */
+  static computeSegment(ordersCount: number): CustomerSegment {
+    if (ordersCount >= VIP_MIN_ORDERS) {
       return 'VIP';
     }
     if (ordersCount >= REPEAT_MIN_ORDERS) {
@@ -97,7 +96,7 @@ export class CustomersService {
     });
 
     if (!existing) {
-      const segment = CustomersService.computeSegment(1, input.amountCents);
+      const segment = CustomersService.computeSegment(1);
       const [row] = await tx
         .insert(customers)
         .values({
@@ -137,7 +136,7 @@ export class CustomersService {
         spentCents,
         lastOrderAt,
         firstOrderAt,
-        segment: CustomersService.computeSegment(ordersCount, spentCents),
+        segment: CustomersService.computeSegment(ordersCount),
       })
       .where(eq(customers.id, existing.id));
     return existing.id;
@@ -154,15 +153,10 @@ export class CustomersService {
     });
     if (!customer) return;
     const spentCents = Math.max(0, customer.spentCents - amountCents);
+    // Segment is order-count driven, so a refund (spend-only) can't change it.
     await tx
       .update(customers)
-      .set({
-        spentCents,
-        segment: CustomersService.computeSegment(
-          customer.ordersCount,
-          spentCents,
-        ),
-      })
+      .set({ spentCents })
       .where(eq(customers.id, customerId));
   }
 
@@ -187,7 +181,7 @@ export class CustomersService {
       .set({
         ordersCount,
         spentCents,
-        segment: CustomersService.computeSegment(ordersCount, spentCents),
+        segment: CustomersService.computeSegment(ordersCount),
       })
       .where(eq(customers.id, customerId));
   }

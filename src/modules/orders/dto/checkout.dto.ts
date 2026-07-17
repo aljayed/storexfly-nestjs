@@ -17,7 +17,7 @@ import { mobileBankAppEnum } from '../../../database/schema/enums';
 type MobileBankApp = (typeof mobileBankAppEnum.enumValues)[number];
 
 class ContactDto {
-  @ApiProperty({ example: 'Aarav Sharma' })
+  @ApiProperty({ example: 'Arif Hossain' })
   @IsString()
   @MaxLength(160)
   name!: string;

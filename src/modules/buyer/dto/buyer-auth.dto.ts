@@ -17,7 +17,7 @@ const trim = ({ value }: { value: unknown }) =>
   typeof value === 'string' ? value.trim() : value;
 
 export class BuyerRegisterDto {
-  @ApiProperty({ example: 'Aarav Sharma' })
+  @ApiProperty({ example: 'Arif Hossain' })
   @IsString()
   @Transform(trim)
   @MinLength(1)

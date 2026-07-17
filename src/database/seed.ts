@@ -69,16 +69,16 @@ const ORDERS: {
   pay: PaymentStatus;
   channel: SalesChannel;
 }[] = [
-  { ref: '#1042', customer: 'Priya Nair', email: 'priya.nair@gmail.com', items: [['Alphonso Mango Box', 1], ['Mango Lassi Kit', 1]], qty: 2, total: 54, status: 'New', date: '2026-06-08', pay: 'Paid', channel: 'Instagram' },
+  { ref: '#1042', customer: 'Nusrat Jahan', email: 'nusrat.jahan@gmail.com', items: [['Alphonso Mango Box', 1], ['Mango Lassi Kit', 1]], qty: 2, total: 54, status: 'New', date: '2026-06-08', pay: 'Paid', channel: 'Instagram' },
   { ref: '#1041', customer: 'Daniel Cho', email: 'dan.cho@outlook.com', items: [['Mango Gift Hamper', 1]], qty: 1, total: 64, status: 'Packed', date: '2026-06-08', pay: 'Paid', channel: 'Store' },
   { ref: '#1040', customer: 'Aisha Khan', email: 'aisha.k@gmail.com', items: [['Kesar Mango Box', 2]], qty: 2, total: 64, status: 'New', date: '2026-06-07', pay: 'Paid', channel: 'WhatsApp' },
   { ref: '#1039', customer: 'Marco Rossi', email: 'marco.r@gmail.com', items: [['Dried Mango Slices', 2], ['Mango Pickle', 1]], qty: 3, total: 25, status: 'Shipped', date: '2026-06-07', pay: 'Paid', channel: 'Store' },
-  { ref: '#1038', customer: 'Priya Nair', email: 'priya.nair@gmail.com', items: [['Tender Coconut', 4]], qty: 4, total: 24, status: 'Delivered', date: '2026-06-05', pay: 'Paid', channel: 'Store' },
+  { ref: '#1038', customer: 'Nusrat Jahan', email: 'nusrat.jahan@gmail.com', items: [['Tender Coconut', 4]], qty: 4, total: 24, status: 'Delivered', date: '2026-06-05', pay: 'Paid', channel: 'Store' },
   { ref: '#1037', customer: 'Sara Lopez', email: 'sara.lopez@gmail.com', items: [['Fresh Lychees', 2]], qty: 2, total: 28, status: 'Delivered', date: '2026-06-05', pay: 'Paid', channel: 'Instagram' },
   { ref: '#1036', customer: 'Daniel Cho', email: 'dan.cho@outlook.com', items: [['Alphonso Mango Box', 1]], qty: 1, total: 38, status: 'Delivered', date: '2026-06-04', pay: 'Paid', channel: 'Store' },
   { ref: '#1035', customer: 'Tomás Vega', email: 'tomas.v@gmail.com', items: [['Mango Pulp Tin', 3]], qty: 3, total: 24, status: 'Delivered', date: '2026-06-03', pay: 'Refunded', channel: 'WhatsApp' },
   { ref: '#1034', customer: 'Aisha Khan', email: 'aisha.k@gmail.com', items: [['Seasonal Fruit Basket', 1]], qty: 1, total: 42, status: 'Delivered', date: '2026-06-02', pay: 'Paid', channel: 'Store' },
-  { ref: '#1033', customer: 'Priya Nair', email: 'priya.nair@gmail.com', items: [['Mango Gift Hamper', 1], ['Dried Mango Slices', 1]], qty: 2, total: 73, status: 'Delivered', date: '2026-05-30', pay: 'Paid', channel: 'Store' },
+  { ref: '#1033', customer: 'Nusrat Jahan', email: 'nusrat.jahan@gmail.com', items: [['Mango Gift Hamper', 1], ['Dried Mango Slices', 1]], qty: 2, total: 73, status: 'Delivered', date: '2026-05-30', pay: 'Paid', channel: 'Store' },
   { ref: '#1032', customer: 'Lena Müller', email: 'lena.m@gmail.com', items: [['Banganapalli Mango', 1]], qty: 1, total: 28, status: 'Delivered', date: '2026-05-29', pay: 'Paid', channel: 'Instagram' },
   { ref: '#1031', customer: 'Sara Lopez', email: 'sara.lopez@gmail.com', items: [['Mango Lassi Kit', 1], ['Tender Coconut', 2]], qty: 3, total: 28, status: 'Delivered', date: '2026-05-27', pay: 'Paid', channel: 'Store' },
 ];
@@ -94,7 +94,7 @@ const CUSTOMERS: {
   first: string;
   segment: CustomerSegment;
 }[] = [
-  { name: 'Priya Nair', email: 'priya.nair@gmail.com', phone: '+1 512-555-0142', city: 'Austin, TX', orders: 4, spent: 205, last: '2026-06-08', first: '2026-03-12', segment: 'VIP' },
+  { name: 'Nusrat Jahan', email: 'nusrat.jahan@gmail.com', phone: '+1 512-555-0142', city: 'Austin, TX', orders: 4, spent: 205, last: '2026-06-08', first: '2026-03-12', segment: 'Repeat' },
   { name: 'Daniel Cho', email: 'dan.cho@outlook.com', phone: '+1 206-555-0117', city: 'Seattle, WA', orders: 3, spent: 166, last: '2026-06-08', first: '2026-04-02', segment: 'Repeat' },
   { name: 'Aisha Khan', email: 'aisha.k@gmail.com', phone: '+1 312-555-0186', city: 'Chicago, IL', orders: 3, spent: 148, last: '2026-06-07', first: '2026-04-20', segment: 'Repeat' },
   { name: 'Sara Lopez', email: 'sara.lopez@gmail.com', phone: '+1 305-555-0163', city: 'Miami, FL', orders: 3, spent: 84, last: '2026-06-05', first: '2026-05-01', segment: 'Repeat' },
@@ -129,7 +129,7 @@ async function seed(): Promise<void> {
     const [owner] = await db
       .insert(schema.users)
       .values({
-        name: 'Maya Kapoor',
+        name: 'Maya Rahman',
         email: 'maya@mango-shop.com',
         passwordHash,
         via: 'email',
@@ -180,7 +180,7 @@ async function seed(): Promise<void> {
     console.log('Creating reviews for the bestseller…');
     const hero = productByName.get('Alphonso Mango Box')!;
     await db.insert(schema.reviews).values([
-      { productId: hero.id, author: 'Priya Nair', rating: 5, body: 'Best mangoes I have had outside India. Perfectly ripe.', verified: true },
+      { productId: hero.id, author: 'Nusrat Jahan', rating: 5, body: 'Best mangoes I have had outside India. Perfectly ripe.', verified: true },
       { productId: hero.id, author: 'Daniel Cho', rating: 5, body: 'Arrived next day, beautifully packed.', verified: true },
       { productId: hero.id, author: 'Marco Rossi', rating: 4, body: 'Delicious, a couple were a touch soft.', verified: false },
     ]);
@@ -283,7 +283,7 @@ async function seed(): Promise<void> {
     const totpSecret = authenticator.generateSecret();
     const adminPasswordHash = await bcrypt.hash('admin12345', 12);
     await db.insert(schema.adminUsers).values({
-      name: 'Maya Kapoor',
+      name: 'Maya Rahman',
       email: 'maya@mango-shop.com',
       passwordHash: adminPasswordHash,
       role: 'owner',

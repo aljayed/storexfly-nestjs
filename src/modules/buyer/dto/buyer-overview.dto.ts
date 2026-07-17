@@ -32,7 +32,7 @@ export class BuyerGeoDto implements BuyerGeoValue {
  * (e.g. just the name, or just the saved address).
  */
 export class UpdateBuyerProfileDto {
-  @ApiProperty({ example: 'Aarav Sharma', required: false })
+  @ApiProperty({ example: 'Arif Hossain', required: false })
   @IsOptional()
   @IsString()
   @Transform(trim)

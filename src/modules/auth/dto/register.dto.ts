@@ -8,7 +8,7 @@ import {
 
 /** Seller registration (email path). Validation mirrors the prototype's form. */
 export class RegisterDto {
-  @ApiProperty({ example: 'Maya Kapoor' })
+  @ApiProperty({ example: 'Maya Rahman' })
   @IsString()
   @MinLength(2, { message: 'Name must be at least 2 characters' })
   @MaxLength(160)
