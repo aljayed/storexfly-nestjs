@@ -1,8 +1,9 @@
-import { ApiPropertyOptional } from '@nestjs/swagger';
-import { Transform } from 'class-transformer';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { Transform, Type } from 'class-transformer';
 import {
   ArrayMaxSize,
   IsArray,
+  IsBoolean,
   IsEmail,
   IsEnum,
   IsIn,
@@ -11,7 +12,15 @@ import {
   MaxLength,
   MinLength,
   ValidateIf,
+  ValidateNested,
 } from 'class-validator';
+import {
+  MAX_TRUST_BADGES,
+  TRUST_BADGE_ICONS,
+  TRUST_BADGE_SUBTITLE_MAX,
+  TRUST_BADGE_TITLE_MAX,
+  type TrustBadgeIcon,
+} from '../../../common/constants/trust-badges';
 import type { BrandSwatchId } from '../../../common/constants/brand-swatches';
 import {
   SUPPORTED_CURRENCIES,
@@ -25,6 +34,30 @@ import {
 
 type ShopCategory = (typeof shopCategoryEnum.enumValues)[number];
 type ShopLanguage = (typeof shopLanguageEnum.enumValues)[number];
+
+/** One product-page "why buy" badge (packed fresh, fast delivery, …). */
+export class TrustBadgeDto {
+  @ApiProperty({ enum: TRUST_BADGE_ICONS, example: 'truck' })
+  @IsIn(TRUST_BADGE_ICONS)
+  icon!: TrustBadgeIcon;
+
+  @ApiProperty({ example: 'Fast delivery' })
+  @IsString()
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  @MinLength(1)
+  @MaxLength(TRUST_BADGE_TITLE_MAX)
+  title!: string;
+
+  @ApiProperty({ example: '1–2 days inside Dhaka' })
+  @IsString()
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  @MaxLength(TRUST_BADGE_SUBTITLE_MAX)
+  subtitle!: string;
+
+  @ApiProperty({ example: true })
+  @IsBoolean()
+  enabled!: boolean;
+}
 
 /** Patch a shop's brand color, tagline, name or category (owner only). */
 export class UpdateShopDto {
@@ -106,4 +139,17 @@ export class UpdateShopDto {
   @IsString({ each: true })
   @MaxLength(3_000_000, { each: true })
   floatingImages?: string[];
+
+  // Product-page trust badges. Replace-all: an empty array clears them (the
+  // storefront then hides the strip entirely); omit to leave unchanged.
+  @ApiPropertyOptional({
+    type: [TrustBadgeDto],
+    description: 'Product-page "why buy" badges. Replaces the full set.',
+  })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(MAX_TRUST_BADGES)
+  @ValidateNested({ each: true })
+  @Type(() => TrustBadgeDto)
+  trustBadges?: TrustBadgeDto[];
 }

@@ -1,5 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import type { ShopRow } from '../../../database/schema';
+import type { TrustBadge } from '../../../common/constants/trust-badges';
 
 /** Public-facing shop shape (the `Shop` interface from the design handoff). */
 export class ShopResponse {
@@ -27,6 +28,10 @@ export class ShopResponse {
     description: 'Decorative images floating over the hero (data URLs)',
   })
   floatingImages?: string[];
+  @ApiPropertyOptional({
+    description: 'Product-page "why buy" badges; omitted when never customised',
+  })
+  trustBadges?: TrustBadge[];
   // Business-verification state only — the trade licence itself stays on the
   // owner-only KYC endpoint and is never exposed here.
   @ApiProperty({ enum: ['unsubmitted', 'pending', 'verified', 'rejected'] })
@@ -51,6 +56,7 @@ export class ShopResponse {
       live: row.live,
       bannerImages: row.bannerImages ?? undefined,
       floatingImages: row.floatingImages ?? undefined,
+      trustBadges: row.trustBadges ?? undefined,
       kycStatus: row.kycStatus,
       createdAt: row.createdAt.toISOString(),
     };

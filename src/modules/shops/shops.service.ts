@@ -231,6 +231,19 @@ export class ShopsService {
       const uploaded = await this.storage.absorbMany(floats, 'shops');
       patch.floatingImages = uploaded && uploaded.length ? uploaded : null;
     }
+    // Trust badges are replace-all too: normalise text and drop empty-title
+    // rows; an empty result stores null so the row stays tidy.
+    if (dto.trustBadges !== undefined) {
+      const badges = dto.trustBadges
+        .map((b) => ({
+          icon: b.icon,
+          title: b.title.trim(),
+          subtitle: b.subtitle.trim(),
+          enabled: b.enabled,
+        }))
+        .filter((b) => b.title.length > 0);
+      patch.trustBadges = badges.length ? badges : null;
+    }
     const [row] = await this.db
       .update(shops)
       .set(patch)

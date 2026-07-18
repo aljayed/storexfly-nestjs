@@ -1,6 +1,7 @@
 import { relations } from 'drizzle-orm';
 import {
   boolean,
+  jsonb,
   pgTable,
   text,
   timestamp,
@@ -8,6 +9,7 @@ import {
   uuid,
   varchar,
 } from 'drizzle-orm/pg-core';
+import type { TrustBadge } from '../../common/constants/trust-badges';
 import {
   brandSwatchEnum,
   kycStatusEnum,
@@ -41,6 +43,10 @@ export const shops = pgTable(
     // Decorative images that float over the hero banner (replace the default
     // product-emoji bubbles). Also inline data URLs, in display order.
     floatingImages: text('floating_images').array(),
+    // Seller-managed "why buy" strip on the product page (packed fresh, fast
+    // delivery, …). Null means the seller never touched it — the storefront
+    // then shows its translated defaults. See constants/trust-badges.ts.
+    trustBadges: jsonb('trust_badges').$type<TrustBadge[]>(),
     cat: shopCategoryEnum('cat').notNull().default('Other'),
     // ISO 4217 currency code the shop prices in (see SUPPORTED_CURRENCIES).
     currency: varchar('currency', { length: 3 }).notNull().default('BDT'),
