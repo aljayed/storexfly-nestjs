@@ -225,6 +225,13 @@
       "when": 1784220489622,
       "tag": "0031_order_confirmation",
       "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "7",
+      "when": 1784995200000,
+      "tag": "0035_drop_product_pages",
+      "breakpoints": true
     }
   ]
 }
