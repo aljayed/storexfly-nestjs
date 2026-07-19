@@ -11,6 +11,7 @@ import { centsToDollars } from '../../common/utils/money.util';
 import { DRIZZLE } from '../../database/database.constants';
 import type { DrizzleDB } from '../../database/drizzle.types';
 import {
+  combos,
   orderItems,
   orders,
   products,
@@ -38,6 +39,26 @@ const STATUS_FLOW: Record<OrderStatus, OrderStatus | null> = {
 /** Statuses from which an order may still be cancelled (before it's packed). */
 const CANCELLABLE: readonly OrderStatus[] = ['New', 'Confirmed'];
 
+/** The transaction handle used inside `checkout`. */
+type OrdersTx = Parameters<Parameters<DrizzleDB['transaction']>[0]>[0];
+
+/** Priced line items + stock deductions computed for one checkout. */
+interface CheckoutCart {
+  /** Order total in cents (line totals always sum to this). */
+  totalCents: number;
+  /** Physical units leaving stock — shown as the order's qty. */
+  totalUnits: number;
+  /** Per-product stock decrements to apply. */
+  deductions: { productId: string; units: number }[];
+  lines: {
+    productId: string | null;
+    name: string;
+    qty: number;
+    unitPriceCents: number;
+    variant: string | null;
+  }[];
+}
+
 @Injectable()
 export class OrdersService {
   constructor(
@@ -47,10 +68,11 @@ export class OrdersService {
   ) {}
 
   /**
-   * Inline product-page checkout. Runs in a transaction: validates stock,
-   * computes totals server-side, allocates a per-shop reference, decrements
-   * stock, rolls the customer aggregates forward, and persists the order +
-   * line item atomically.
+   * Inline product-page checkout — a single product (with optional variant
+   * selection and multi-buy pack) or a combo offer. Runs in a transaction:
+   * validates stock, computes totals server-side, allocates a per-shop
+   * reference, decrements stock, rolls the customer aggregates forward, and
+   * persists the order + line items atomically.
    */
   async checkout(dto: CheckoutDto): Promise<CheckoutResultResponse> {
     // The catalog is platform-managed: the code must be live right now, so a
@@ -63,6 +85,11 @@ export class OrdersService {
         'That payment method is not available — please pick another.',
       );
     }
+    if (!dto.productId === !dto.comboId) {
+      throw new BadRequestException(
+        'Provide either a product or a combo to order.',
+      );
+    }
     return this.db.transaction(async (tx) => {
       // A switched-off shop is closed to buyers — no orders either.
       const shop = await tx.query.shops.findFirst({
@@ -71,33 +98,6 @@ export class OrdersService {
       });
       if (!shop?.live) {
         throw new ForbiddenException('This shop is currently offline.');
-      }
-
-      const product = await tx.query.products.findFirst({
-        where: and(
-          eq(products.id, dto.productId),
-          eq(products.shopId, dto.shopId),
-        ),
-      });
-      if (!product) {
-        throw new NotFoundException('Product not found in this shop');
-      }
-      // Showcase items are advertised only — the sale happens offline, so
-      // online checkout is never allowed for them.
-      if (product.listingType === 'showcase') {
-        throw new ConflictException(
-          'This item cannot be ordered online — please contact the seller.',
-        );
-      }
-      if (product.stock < dto.qty) {
-        throw new ConflictException('Not enough stock for this quantity');
-      }
-      // Sellers toggle payment *kinds* per product (COD / mobile banking /
-      // card); the picked method must belong to an allowed kind.
-      if (!product.paymentMethods.includes(method.kind)) {
-        throw new BadRequestException(
-          'This item cannot be paid with that method — please pick another.',
-        );
       }
 
       const hasLocation = Boolean(dto.address.line?.trim() || dto.address.geo);
@@ -111,15 +111,20 @@ export class OrdersService {
         );
       }
 
-      const totalCents = product.priceCents * dto.qty;
-      const placedAt = new Date();
+      // Build the priced line items + stock deductions for either flow.
+      const cart = dto.comboId
+        ? await this.buildComboCart(tx, dto, method.kind)
+        : await this.buildProductCart(tx, dto, method.kind);
 
+      const placedAt = new Date();
       const reference = await this.nextReference(tx, dto.shopId);
 
-      await tx
-        .update(products)
-        .set({ stock: product.stock - dto.qty })
-        .where(eq(products.id, product.id));
+      for (const d of cart.deductions) {
+        await tx
+          .update(products)
+          .set({ stock: sql`${products.stock} - ${d.units}` })
+          .where(eq(products.id, d.productId));
+      }
 
       const customerId = await this.customers.recordOrder(tx, {
         shopId: dto.shopId,
@@ -127,7 +132,7 @@ export class OrdersService {
         email: dto.contact.email ?? `${dto.contact.phone}@phone.local`,
         phone: dto.contact.phone,
         city: dto.address.area,
-        amountCents: totalCents,
+        amountCents: cart.totalCents,
         placedAt,
       });
 
@@ -140,8 +145,8 @@ export class OrdersService {
           customerName: dto.contact.name,
           email: dto.contact.email ?? `${dto.contact.phone}@phone.local`,
           phone: dto.contact.phone,
-          qty: dto.qty,
-          totalCents,
+          qty: cart.totalUnits,
+          totalCents: cart.totalCents,
           status: 'New',
           pay: 'Paid',
           paymentMethod: dto.paymentMethod,
@@ -157,22 +162,184 @@ export class OrdersService {
         })
         .returning();
 
-      await tx.insert(orderItems).values({
-        orderId: order.id,
-        productId: product.id,
-        name: product.name,
-        qty: dto.qty,
-        unitPriceCents: product.priceCents,
-      });
+      await tx.insert(orderItems).values(
+        cart.lines.map((line) => ({
+          orderId: order.id,
+          productId: line.productId,
+          name: line.name,
+          qty: line.qty,
+          unitPriceCents: line.unitPriceCents,
+          variant: line.variant,
+        })),
+      );
 
       return {
         orderId: order.reference,
-        total: totalCents / 100,
+        total: cart.totalCents / 100,
         paymentMethod: dto.paymentMethod,
         qty: dto.qty,
         eta: 'Tomorrow, by 7 PM',
       };
     });
+  }
+
+  /**
+   * Single-product checkout: resolves the variant selection (one option per
+   * group the product defines) and an optional multi-buy pack into a priced
+   * line. Deltas apply per unit, so a pack of N carries N × delta on top of
+   * the pack price.
+   */
+  private async buildProductCart(
+    tx: OrdersTx,
+    dto: CheckoutDto,
+    payKind: string,
+  ): Promise<CheckoutCart> {
+    const product = await tx.query.products.findFirst({
+      where: and(
+        eq(products.id, dto.productId!),
+        eq(products.shopId, dto.shopId),
+      ),
+    });
+    if (!product) {
+      throw new NotFoundException('Product not found in this shop');
+    }
+    // Showcase items are advertised only — the sale happens offline, so
+    // online checkout is never allowed for them.
+    if (product.listingType === 'showcase') {
+      throw new ConflictException(
+        'This item cannot be ordered online — please contact the seller.',
+      );
+    }
+    // Sellers toggle payment *kinds* per product (COD / mobile banking /
+    // card); the picked method must belong to an allowed kind.
+    if (!product.paymentMethods.includes(payKind as never)) {
+      throw new BadRequestException(
+        'This item cannot be paid with that method — please pick another.',
+      );
+    }
+
+    // One option per variant group is mandatory once a product defines groups.
+    const parts: string[] = [];
+    let deltaCents = 0;
+    for (const group of product.variantGroups ?? []) {
+      const option = group.options.find(
+        (o) => o.id === dto.variant?.[group.id],
+      );
+      if (!option) {
+        throw new BadRequestException(
+          `Please choose an option for “${group.name}”`,
+        );
+      }
+      deltaCents += option.priceDeltaCents;
+      parts.push(`${group.name}: ${option.label}`);
+    }
+
+    // A pack re-prices the line: qty counts packs, each consuming pack.units.
+    let unitsPerPick = 1;
+    let unitPriceCents = Math.max(0, product.priceCents + deltaCents);
+    if (dto.packId) {
+      const pack = (product.packs ?? []).find((p) => p.id === dto.packId);
+      if (!pack) {
+        throw new BadRequestException(
+          'That pack is no longer available — please reload and pick again.',
+        );
+      }
+      unitsPerPick = pack.units;
+      unitPriceCents = Math.max(0, pack.priceCents + pack.units * deltaCents);
+      parts.push(pack.label.trim() || `Pack of ${pack.units}`);
+    }
+
+    const totalUnits = unitsPerPick * dto.qty;
+    if (product.stock < totalUnits) {
+      throw new ConflictException('Not enough stock for this quantity');
+    }
+
+    return {
+      totalCents: unitPriceCents * dto.qty,
+      totalUnits,
+      deductions: [{ productId: product.id, units: totalUnits }],
+      lines: [
+        {
+          productId: product.id,
+          name: product.name,
+          qty: dto.qty,
+          unitPriceCents,
+          variant: parts.length ? parts.join(' · ').slice(0, 240) : null,
+        },
+      ],
+    };
+  }
+
+  /**
+   * Combo checkout: every member is validated + decremented individually and
+   * written as a full-price line (so cancel-restock and reporting keep
+   * working), with one final negative "combo discount" line bringing the sum
+   * down to the combo price.
+   */
+  private async buildComboCart(
+    tx: OrdersTx,
+    dto: CheckoutDto,
+    payKind: string,
+  ): Promise<CheckoutCart> {
+    const combo = await tx.query.combos.findFirst({
+      where: and(eq(combos.id, dto.comboId!), eq(combos.shopId, dto.shopId)),
+      with: { items: { with: { product: true } } },
+    });
+    if (!combo || !combo.active || combo.items.length < 2) {
+      throw new NotFoundException('This combo offer is no longer available.');
+    }
+
+    let membersValueCents = 0;
+    let totalUnits = 0;
+    const deductions: CheckoutCart['deductions'] = [];
+    const lines: CheckoutCart['lines'] = [];
+    for (const item of combo.items) {
+      const product = item.product;
+      if (product.listingType !== 'sale') {
+        throw new ConflictException('This combo offer is no longer available.');
+      }
+      // A member that disallows the picked payment kind restricts the combo.
+      if (!product.paymentMethods.includes(payKind as never)) {
+        throw new BadRequestException(
+          'This combo cannot be paid with that method — please pick another.',
+        );
+      }
+      const units = item.qty * dto.qty;
+      if (product.stock < units) {
+        throw new ConflictException(
+          `Not enough stock of ${product.name} for this quantity`,
+        );
+      }
+      membersValueCents += product.priceCents * units;
+      totalUnits += units;
+      deductions.push({ productId: product.id, units });
+      lines.push({
+        productId: product.id,
+        name: product.name,
+        qty: units,
+        unitPriceCents: product.priceCents,
+        variant: `Combo: ${combo.name}`.slice(0, 240),
+      });
+    }
+
+    // One adjustment line reconciles the full-price member lines with the
+    // combo price, so line totals always sum to the order total.
+    const totalCents = combo.priceCents * dto.qty;
+    const adjustCents = totalCents - membersValueCents;
+    if (adjustCents !== 0) {
+      lines.push({
+        productId: null,
+        name: `Combo ${adjustCents < 0 ? 'discount' : 'adjustment'} — ${combo.name}`.slice(
+          0,
+          200,
+        ),
+        qty: 1,
+        unitPriceCents: adjustCents,
+        variant: null,
+      });
+    }
+
+    return { totalCents, totalUnits, deductions, lines };
   }
 
   /**

@@ -27,6 +27,41 @@ export interface ProductHighlight {
 }
 
 /**
+ * One choice inside a variant group (e.g. "Large"). `priceDeltaCents` adjusts
+ * the base unit price when this option is picked (can be negative). Ids are
+ * short random slugs assigned by the API on save, so a buyer's selection stays
+ * valid even if the seller re-labels an option.
+ */
+export interface ProductVariantOption {
+  id: string;
+  label: string;
+  priceDeltaCents: number;
+}
+
+/**
+ * A buyer-facing option group (e.g. "Size" or "Color"). A product carries at
+ * most 2 groups; the buyer picks exactly one option per group and the deltas
+ * add onto the base unit price. Stock stays product-level (total units).
+ */
+export interface ProductVariantGroup {
+  id: string;
+  name: string;
+  options: ProductVariantOption[];
+}
+
+/**
+ * A multi-buy bundle: `units` units sold together for `priceCents` total
+ * (usually below units × base price — the storefront shows the savings).
+ * The single unit at base price is always offered alongside the packs.
+ */
+export interface ProductPack {
+  id: string;
+  label: string;
+  units: number;
+  priceCents: number;
+}
+
+/**
  * A catalog item within a shop. Maps to `Product` in the design handoff.
  * Money is stored as integer cents (`priceCents`) to avoid floating-point
  * drift; the API layer exposes it as a decimal `price`.
@@ -74,6 +109,14 @@ export const products = pgTable(
     // Optional product video — a YouTube watch/share/embed URL. Rendered as an
     // embedded player on the storefront product page.
     videoUrl: text('video_url'),
+    // Buyer-facing option groups (Size, Color, …) — at most 2, deltas on the
+    // base price. Empty = the product has no variants.
+    variantGroups: jsonb('variant_groups')
+      .$type<ProductVariantGroup[]>()
+      .notNull()
+      .default([]),
+    // Multi-buy bundles ("Pack of 3 — ৳270"). Empty = only singles are sold.
+    packs: jsonb('packs').$type<ProductPack[]>().notNull().default([]),
     createdAt: timestamp('created_at', { withTimezone: true })
       .notNull()
       .defaultNow(),

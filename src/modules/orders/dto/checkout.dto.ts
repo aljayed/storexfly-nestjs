@@ -5,6 +5,7 @@ import {
   IsEnum,
   IsInt,
   IsNotEmptyObject,
+  IsObject,
   IsOptional,
   IsString,
   Matches,
@@ -69,15 +70,45 @@ export class CheckoutDto {
   @IsString()
   shopId!: string;
 
-  @ApiProperty()
+  @ApiPropertyOptional({
+    description: 'The product being ordered. Exactly one of productId/comboId.',
+  })
+  @IsOptional()
   @IsString()
-  productId!: string;
+  productId?: string;
 
-  @ApiProperty({ example: 1, minimum: 1 })
+  @ApiPropertyOptional({
+    description: 'A combo offer being ordered instead of a single product.',
+  })
+  @IsOptional()
+  @IsString()
+  comboId?: string;
+
+  @ApiProperty({
+    example: 1,
+    minimum: 1,
+    description: 'Units, packs, or combo sets — whichever was picked.',
+  })
   @Type(() => Number)
   @IsInt()
   @Min(1)
   qty!: number;
+
+  @ApiPropertyOptional({
+    description:
+      'Chosen variant options, keyed by group id → option id. Required for every group the product defines.',
+  })
+  @IsOptional()
+  @IsObject()
+  variant?: Record<string, string>;
+
+  @ApiPropertyOptional({
+    description: 'A multi-buy pack id — qty then counts packs, not units.',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(24)
+  packId?: string;
 
   @ApiProperty({ type: ContactDto })
   @IsNotEmptyObject()

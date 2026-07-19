@@ -84,7 +84,9 @@ export class OrdersController {
   @ApiBearerAuth()
   @Post('shops/:shopId/orders/:id/cancel')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Admin: cancel an unconfirmed order (restocks items)' })
+  @ApiOperation({
+    summary: 'Admin: cancel an unconfirmed order (restocks items)',
+  })
   cancel(@Param('shopId') shopId: string, @Param('id') id: string) {
     return this.orders.cancel(shopId, id);
   }

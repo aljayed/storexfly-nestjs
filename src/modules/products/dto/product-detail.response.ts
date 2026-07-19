@@ -1,5 +1,6 @@
 import { ApiProperty } from '@nestjs/swagger';
 import type { ProductRow, ReviewRow } from '../../../database/schema';
+import { ComboResponse } from '../../combos/dto/combo.response';
 import { ProductResponse } from './product.response';
 
 export class ReviewResponse {
@@ -41,9 +42,16 @@ export class ProductDetailResponse extends ProductResponse {
   @ApiProperty({ description: 'Count of reviews per star (1..5)' })
   ratingDistribution!: RatingDistribution;
 
+  @ApiProperty({
+    type: [ComboResponse],
+    description: 'Live combo offers that include this product',
+  })
+  combos!: ComboResponse[];
+
   static fromRows(
     product: ProductRow,
     reviews: ReviewRow[],
+    combos: ComboResponse[] = [],
   ): ProductDetailResponse {
     const base = ProductResponse.fromRow(product);
     const distribution: RatingDistribution = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
@@ -55,6 +63,7 @@ export class ProductDetailResponse extends ProductResponse {
       ...base,
       reviewList: reviews.map(ReviewResponse.fromRow),
       ratingDistribution: distribution,
+      combos,
     };
   }
 }

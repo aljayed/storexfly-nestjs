@@ -1,8 +1,5 @@
-import {
-  Inject,
-  Injectable,
-  NotFoundException,
-} from '@nestjs/common';
+import { Inject, Injectable, NotFoundException } from '@nestjs/common';
+import { randomUUID } from 'crypto';
 import { and, asc, desc, eq } from 'drizzle-orm';
 import { dollarsToCents } from '../../common/utils/money.util';
 import { handleize } from '../../common/utils/slug.util';
@@ -11,15 +8,26 @@ import type { DrizzleDB } from '../../database/drizzle.types';
 import {
   products,
   reviews,
+  type ProductPack,
   type ProductRow,
+  type ProductVariantGroup,
 } from '../../database/schema';
 import { StorageService } from '../storage/storage.service';
 import { ShopsService } from '../shops/shops.service';
-import type { CreateProductDto } from './dto/create-product.dto';
+import { CombosService } from '../combos/combos.service';
+import { ComboResponse } from '../combos/dto/combo.response';
+import type {
+  CreateProductDto,
+  PackDto,
+  VariantGroupDto,
+} from './dto/create-product.dto';
 import { ProductDetailResponse } from './dto/product-detail.response';
 import { ProductResponse } from './dto/product.response';
 import { ShopResponse } from '../shops/dto/shop.response';
 import type { UpdateProductDto } from './dto/update-product.dto';
+
+/** Short random id for variant groups/options/packs inside a product row. */
+const shortId = () => randomUUID().replace(/-/g, '').slice(0, 10);
 
 @Injectable()
 export class ProductsService {
@@ -27,24 +35,61 @@ export class ProductsService {
     @Inject(DRIZZLE) private readonly db: DrizzleDB,
     private readonly shops: ShopsService,
     private readonly storage: StorageService,
+    private readonly combos: CombosService,
   ) {}
+
+  /** Normalize variant-group DTOs to storage shape, assigning stable ids. */
+  private toVariantGroups(
+    dtos?: VariantGroupDto[],
+  ): ProductVariantGroup[] | undefined {
+    if (dtos === undefined) return undefined;
+    return dtos.map((g) => ({
+      id: g.id || shortId(),
+      name: g.name.trim(),
+      options: g.options.map((o) => ({
+        id: o.id || shortId(),
+        label: o.label.trim(),
+        priceDeltaCents:
+          o.priceDelta !== undefined ? dollarsToCents(o.priceDelta) : 0,
+      })),
+    }));
+  }
+
+  /** Normalize pack DTOs to storage shape, assigning stable ids. */
+  private toPacks(dtos?: PackDto[]): ProductPack[] | undefined {
+    if (dtos === undefined) return undefined;
+    return dtos.map((p) => ({
+      id: p.id || shortId(),
+      label: p.label?.trim() ?? '',
+      units: p.units,
+      priceCents: dollarsToCents(p.price),
+    }));
+  }
 
   /** Public catalog listing for a storefront, optionally filtered by category. */
   async listByHandle(
     handle: string,
     cat?: string,
-  ): Promise<{ shop: ShopResponse; products: ProductResponse[] }> {
+  ): Promise<{
+    shop: ShopResponse;
+    products: ProductResponse[];
+    combos: ComboResponse[];
+  }> {
     const shop = await this.shops.requireLiveByHandle(handle);
     const filterByCat = cat && cat.toLowerCase() !== 'all';
-    const rows = await this.db.query.products.findMany({
-      where: filterByCat
-        ? and(eq(products.shopId, shop.id), eq(products.cat, cat))
-        : eq(products.shopId, shop.id),
-      orderBy: [desc(products.createdAt)],
-    });
+    const [rows, shopCombos] = await Promise.all([
+      this.db.query.products.findMany({
+        where: filterByCat
+          ? and(eq(products.shopId, shop.id), eq(products.cat, cat))
+          : eq(products.shopId, shop.id),
+        orderBy: [desc(products.createdAt)],
+      }),
+      this.combos.publicForShop(shop.id),
+    ]);
     return {
       shop: ShopResponse.fromRow(shop),
       products: rows.map(ProductResponse.fromRow),
+      combos: shopCombos,
     };
   }
 
@@ -60,14 +105,24 @@ export class ProductsService {
     if (!product) {
       throw new NotFoundException('Product not found');
     }
-    const productReviews = await this.db.query.reviews.findMany({
-      where: eq(reviews.productId, product.id),
-      orderBy: [desc(reviews.createdAt)],
-    });
-    return ProductDetailResponse.fromRows(product, productReviews);
+    const [productReviews, productCombos] = await Promise.all([
+      this.db.query.reviews.findMany({
+        where: eq(reviews.productId, product.id),
+        orderBy: [desc(reviews.createdAt)],
+      }),
+      this.combos.publicForProduct(shop.id, product.id),
+    ]);
+    return ProductDetailResponse.fromRows(
+      product,
+      productReviews,
+      productCombos,
+    );
   }
 
-  async create(shopId: string, dto: CreateProductDto): Promise<ProductResponse> {
+  async create(
+    shopId: string,
+    dto: CreateProductDto,
+  ): Promise<ProductResponse> {
     await this.shops.requireById(shopId);
     const slug = await this.uniqueSlug(shopId, dto.name);
     // Showcase items can't be ordered online, so stock is meaningless for
@@ -103,6 +158,8 @@ export class ProductsService {
         images: images ?? undefined,
         highlights: dto.highlights,
         videoUrl: dto.videoUrl || null,
+        variantGroups: this.toVariantGroups(dto.variantGroups),
+        packs: this.toPacks(dto.packs),
       })
       .returning();
     return ProductResponse.fromRow(row);
@@ -118,7 +175,8 @@ export class ProductsService {
     const images =
       dto.images === undefined
         ? undefined
-        : ((await this.storage.absorbMany(dto.images, 'products')) ?? undefined);
+        : ((await this.storage.absorbMany(dto.images, 'products')) ??
+          undefined);
     const patch: Partial<ProductRow> = {
       name: dto.name ?? undefined,
       cat: dto.cat ?? undefined,
@@ -136,6 +194,9 @@ export class ProductsService {
       highlights: dto.highlights ?? undefined,
       // Present-but-empty clears the video; absent leaves it unchanged.
       videoUrl: dto.videoUrl === undefined ? undefined : dto.videoUrl || null,
+      // Same replace-on-present semantics as highlights.
+      variantGroups: this.toVariantGroups(dto.variantGroups),
+      packs: this.toPacks(dto.packs),
     };
     if (dto.price !== undefined) {
       patch.priceCents = dollarsToCents(dto.price);

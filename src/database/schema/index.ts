@@ -11,6 +11,7 @@ export * from './products.schema';
 export * from './reviews.schema';
 export * from './customers.schema';
 export * from './orders.schema';
+export * from './combos.schema';
 export * from './subscriptions.schema';
 export * from './coupons.schema';
 export * from './platform-settings.schema';

@@ -11,6 +11,10 @@ export class OrderItemResponse {
   @ApiProperty() name!: string;
   @ApiProperty() qty!: number;
   @ApiProperty({ description: 'Unit price (dollars)' }) unitPrice!: number;
+  @ApiPropertyOptional({
+    description: 'What was picked at purchase time ("Size: L · Pack of 3")',
+  })
+  variant?: string;
 
   static fromRow(row: OrderItemRow): OrderItemResponse {
     return {
@@ -18,6 +22,7 @@ export class OrderItemResponse {
       name: row.name,
       qty: row.qty,
       unitPrice: centsToDollars(row.unitPriceCents),
+      variant: row.variant ?? undefined,
     };
   }
 }

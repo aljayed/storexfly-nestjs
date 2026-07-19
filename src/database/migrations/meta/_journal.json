@@ -239,6 +239,13 @@
       "when": 1784995300000,
       "tag": "0036_shop_trust_badges",
       "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1785081600000,
+      "tag": "0037_variants_packs_combos",
+      "breakpoints": true
     }
   ]
 }

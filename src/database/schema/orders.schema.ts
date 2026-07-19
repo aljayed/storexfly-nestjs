@@ -93,6 +93,9 @@ export const orderItems = pgTable(
     name: varchar('name', { length: 200 }).notNull(),
     qty: integer('qty').notNull(),
     unitPriceCents: integer('unit_price_cents').notNull(),
+    // Human-readable snapshot of what was picked at purchase time
+    // ("Size: L · Red · Pack of 3") — survives later catalog edits.
+    variant: varchar('variant', { length: 240 }),
   },
   (table) => [index('order_items_order_idx').on(table.orderId)],
 );
