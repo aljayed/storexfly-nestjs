@@ -18,7 +18,11 @@ export const appConfig = registerAs('app', () => {
     corsOrigins,
     // Public origin of the Vue app — used to build links emailed to users
     // (e.g. the password-reset page). Defaults to the first CORS origin.
-    webUrl: process.env.PUBLIC_WEB_URL ?? corsOrigins[0] ?? 'http://localhost:5173',
+    webUrl:
+      process.env.PUBLIC_WEB_URL ?? corsOrigins[0] ?? 'http://localhost:5173',
+    // Public origin of this API — bKash needs an absolute callback URL that
+    // its servers redirect the buyer's browser to.
+    apiUrl: process.env.PUBLIC_API_URL ?? 'http://localhost:3000',
   };
 });
 

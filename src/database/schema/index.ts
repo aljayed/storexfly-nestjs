@@ -22,3 +22,5 @@ export * from './blocked-words.schema';
 export * from './settlements.schema';
 export * from './notices.schema';
 export * from './payment-methods.schema';
+export * from './gateway-payments.schema';
+export * from './buyer-notifications.schema';

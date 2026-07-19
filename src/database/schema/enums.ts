@@ -114,7 +114,26 @@ export const orderStatusEnum = pgEnum('order_status', [
   'Cancelled',
 ]);
 
-export const paymentStatusEnum = pgEnum('payment_status', ['Paid', 'Refunded']);
+// 'Paid' = money confirmed received (gateway-verified or seller-confirmed).
+// 'Due' = order accepted, money not yet in hand (COD before delivery, or a
+// direct wallet transfer the seller hasn't confirmed). 'Pending' = a gateway
+// payment is in flight (buyer redirected to bKash but not returned yet) —
+// pending orders are hidden from the seller pipeline and auto-expire.
+// Enum values are append-only in Postgres, so the new states sit last.
+export const paymentStatusEnum = pgEnum('payment_status', [
+  'Paid',
+  'Refunded',
+  'Due',
+  'Pending',
+]);
+
+// Shop pricing tier. 'free' = no subscription: 1 product, ৳5,000 lifetime
+// sales cap, deactivated at the cap until upgraded. 'paid' = ৳1,199/month.
+export const shopPlanEnum = pgEnum('shop_plan', ['free', 'paid']);
+
+// Which payment gateway (if any) collects a checkout method's money. 'none'
+// = trust-based (COD, or a direct wallet transfer the platform never holds).
+export const paymentGatewayEnum = pgEnum('payment_gateway', ['none', 'bkash']);
 
 export const paymentMethodEnum = pgEnum('payment_method', [
   'mbank',
@@ -186,3 +205,5 @@ export type PlatformPaymentType =
 export type PlatformPaymentMethod =
   (typeof platformPaymentMethodEnum.enumValues)[number];
 export type NoticeTone = (typeof noticeToneEnum.enumValues)[number];
+export type ShopPlan = (typeof shopPlanEnum.enumValues)[number];
+export type PaymentGateway = (typeof paymentGatewayEnum.enumValues)[number];

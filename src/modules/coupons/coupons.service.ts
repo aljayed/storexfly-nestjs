@@ -13,7 +13,7 @@ import {
 } from '../../common/constants/billing';
 import { isUniqueViolation } from '../../common/utils/postgres-error.util';
 import { DRIZZLE } from '../../database/database.constants';
-import type { DrizzleDB } from '../../database/drizzle.types';
+import type { DbExecutor, DrizzleDB } from '../../database/drizzle.types';
 import { coupons, orders, shops, type CouponRow } from '../../database/schema';
 import type { CreateCouponDto } from './dto/create-coupon.dto';
 import { CouponPreviewResponse, CouponResponse } from './dto/coupon.response';
@@ -178,10 +178,7 @@ export class CouponsService implements OnModuleInit {
       )
       .groupBy(orders.shopId)
       .having(
-        gte(
-          sql`sum(${orders.totalCents})`,
-          sql`${HIGH_SALES_THRESHOLD_CENTS}`,
-        ),
+        gte(sql`sum(${orders.totalCents})`, sql`${HIGH_SALES_THRESHOLD_CENTS}`),
       )
       .limit(1);
     if (highSalesShop.length > 0) return { ok: false, reason: 'high_sales' };
@@ -230,16 +227,16 @@ export class CouponsService implements OnModuleInit {
   }
 
   /** Count a successful redemption against the coupon's global cap. */
-  async markRedeemed(couponId: string): Promise<void> {
-    await this.db
+  async markRedeemed(couponId: string, executor?: DbExecutor): Promise<void> {
+    await (executor ?? this.db)
       .update(coupons)
       .set({ redemptions: sql`${coupons.redemptions} + 1` })
       .where(eq(coupons.id, couponId));
   }
 
   /** Give back a redemption when a pending (not yet charged) coupon is removed. */
-  async release(couponId: string): Promise<void> {
-    await this.db
+  async release(couponId: string, executor?: DbExecutor): Promise<void> {
+    await (executor ?? this.db)
       .update(coupons)
       .set({
         redemptions: sql`greatest(${coupons.redemptions} - 1, 0)`,

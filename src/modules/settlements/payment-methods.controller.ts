@@ -50,6 +50,12 @@ export class PaymentMethodResponse {
   feePercent!: number;
   @ApiProperty({ description: 'true only for the built-in COD method' })
   locked!: boolean;
+  @ApiProperty({
+    enum: ['none', 'bkash'],
+    description:
+      "'bkash' = platform-collected via the gateway (fee + payout); 'none' = direct/COD",
+  })
+  gateway!: 'none' | 'bkash';
 }
 
 export class PaymentConfigResponse {
@@ -104,6 +110,11 @@ export class UpdatePaymentMethodDto {
   @Min(0)
   @Max(25)
   feePercent?: number;
+
+  @ApiPropertyOptional({ enum: ['none', 'bkash'] })
+  @IsOptional()
+  @IsIn(['none', 'bkash'])
+  gateway?: 'none' | 'bkash';
 }
 
 export class UpdateSettlementBannerDto {

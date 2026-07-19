@@ -20,7 +20,9 @@ export class PlatformKycQueryDto extends PaginationQueryDto {
   @IsIn(['all', 'pending', 'verified', 'rejected', 'unsubmitted'])
   status?: KycStatusFilter;
 
-  @ApiPropertyOptional({ description: 'Search by shop name / handle / legal name' })
+  @ApiPropertyOptional({
+    description: 'Search by shop name / handle / legal name',
+  })
   @IsOptional()
   @IsString()
   @MaxLength(120)

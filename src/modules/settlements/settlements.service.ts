@@ -368,8 +368,11 @@ function addOrder(
 
 /**
  * Splits raw per-code volume into COD / online / other using the method
- * catalog. Codes the catalog no longer knows (hard-deleted methods) join the
- * manual bucket — no fee, no payout — so money never silently disappears.
+ * catalog. Only *gateway-collected* methods (bKash etc.) are money the
+ * platform actually holds — those carry the fee and the payout. Direct-
+ * transfer methods (the seller's own wallet number) and codes the catalog
+ * no longer knows join the no-fee/no-payout buckets, so money the platform
+ * never touched is never "paid out".
  */
 function classify(b: Buckets, catalog: MethodCatalog): MonthCore {
   let codCents = 0;
@@ -379,6 +382,7 @@ function classify(b: Buckets, catalog: MethodCatalog): MonthCore {
     const method = catalog.get(code);
     if (!method) otherCents += cents;
     else if (method.kind === 'cod') codCents += cents;
+    else if (method.gateway === 'none') otherCents += cents;
     else {
       online.push({
         code,

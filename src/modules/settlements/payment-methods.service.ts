@@ -27,6 +27,8 @@ export interface PaymentMethodView {
   subtitle: string | null;
   feePercent: number;
   locked: boolean;
+  /** 'bkash' = platform-collected via the gateway; 'none' = direct/COD. */
+  gateway: 'none' | 'bkash';
 }
 
 /**
@@ -86,7 +88,12 @@ export class PaymentMethodsService {
 
   async update(
     id: string,
-    patch: { title?: string; subtitle?: string | null; feePercent?: number },
+    patch: {
+      title?: string;
+      subtitle?: string | null;
+      feePercent?: number;
+      gateway?: 'none' | 'bkash';
+    },
   ): Promise<PaymentMethodView> {
     const row = await this.requireById(id);
     const set: Partial<PaymentMethodRow> = {};
@@ -103,6 +110,14 @@ export class PaymentMethodsService {
         throw new BadRequestException('Cash on Delivery is always free.');
       }
       set.feeBp = row.locked ? 0 : toBp(patch.feePercent);
+    }
+    if (patch.gateway !== undefined) {
+      if (row.kind === 'cod' && patch.gateway !== 'none') {
+        throw new BadRequestException(
+          'Cash on Delivery cannot run through a gateway.',
+        );
+      }
+      set.gateway = patch.gateway;
     }
     const [updated] = await this.db
       .update(paymentMethods)
@@ -253,5 +268,6 @@ function view(m: PaymentMethodRow): PaymentMethodView {
     subtitle: m.subtitle,
     feePercent: m.feeBp / 100,
     locked: m.locked,
+    gateway: m.gateway,
   };
 }

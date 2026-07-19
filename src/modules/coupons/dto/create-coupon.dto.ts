@@ -31,7 +31,9 @@ export class CreateCouponDto {
   @MaxLength(200)
   description?: string;
 
-  @ApiPropertyOptional({ description: 'Global redemption cap; omit = unlimited' })
+  @ApiPropertyOptional({
+    description: 'Global redemption cap; omit = unlimited',
+  })
   @IsOptional()
   @IsInt()
   @Min(1)

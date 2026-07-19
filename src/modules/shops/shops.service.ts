@@ -51,8 +51,21 @@ export class ShopsService {
   }
 
   async create(ownerId: string, dto: CreateShopDto): Promise<ShopResponse> {
-    // Every shop costs ৳1,199 up front — refuse until the fee is paid.
-    if (!(await this.subscriptions.hasUnconsumedCredit(ownerId))) {
+    const plan = dto.plan ?? 'paid';
+    if (plan === 'free') {
+      // One free shop per seller — the tier exists to try the product, not
+      // to run a fleet of capped shops.
+      const existingFree = await this.db.query.shops.findFirst({
+        where: and(eq(shops.ownerId, ownerId), eq(shops.plan, 'free')),
+        columns: { id: true },
+      });
+      if (existingFree) {
+        throw new ForbiddenException(
+          'You already have a free shop. Upgrade it, or create this one on the paid plan.',
+        );
+      }
+    } else if (!(await this.subscriptions.hasUnconsumedCredit(ownerId))) {
+      // Every paid shop costs ৳1,199 up front — refuse until the fee is paid.
       throw new HttpException(
         {
           statusCode: HttpStatus.PAYMENT_REQUIRED,
@@ -84,13 +97,17 @@ export class ShopsService {
         brand: swatch.c,
         brandSoft: swatch.soft,
         ownerId,
+        plan,
         // Optional KYC supplied during onboarding — skipped sellers start
         // 'unsubmitted' (the column default).
         ...this.kycPatch(dto.kyc),
       })
       .returning();
-    // Consume the paid credit and open the monthly subscription.
-    await this.subscriptions.activateForNewShop(ownerId, row.id);
+    // Paid plan: consume the paid credit and open the monthly subscription.
+    // Free shops have no subscription until they upgrade.
+    if (plan === 'paid') {
+      await this.subscriptions.activateForNewShop(ownerId, row.id);
+    }
     return ShopResponse.fromRow(row);
   }
 

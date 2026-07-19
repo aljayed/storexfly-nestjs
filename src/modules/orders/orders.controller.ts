@@ -97,4 +97,44 @@ export class OrdersController {
   cancel(@Param('shopId') shopId: string, @Param('id') id: string) {
     return this.orders.cancel(shopId, id);
   }
+
+  @Public()
+  @UseGuards(AdminJwtAuthGuard, ShopScopeGuard, RolesGuard)
+  @RequirePerm('orders.manage')
+  @ApiBearerAuth()
+  @Post('shops/:shopId/orders/:id/mark-paid')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary:
+      'Admin: confirm a direct-transfer payment was received (Due → Paid)',
+  })
+  markPaid(@Param('shopId') shopId: string, @Param('id') id: string) {
+    return this.orders.markPaid(shopId, id);
+  }
+
+  // ── Steadfast courier ────────────────────────────────────────
+  @Public()
+  @UseGuards(AdminJwtAuthGuard, ShopScopeGuard, RolesGuard)
+  @RequirePerm('orders.manage')
+  @ApiBearerAuth()
+  @Post('shops/:shopId/orders/:id/courier')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Admin: book a Steadfast parcel (COD amount auto-set)',
+  })
+  bookCourier(@Param('shopId') shopId: string, @Param('id') id: string) {
+    return this.orders.bookCourier(shopId, id);
+  }
+
+  @Public()
+  @UseGuards(AdminJwtAuthGuard, ShopScopeGuard, RolesGuard)
+  @RequirePerm('orders.manage')
+  @ApiBearerAuth()
+  @Get('shops/:shopId/orders/:id/courier')
+  @ApiOperation({
+    summary: 'Admin: refresh the Steadfast delivery status for an order',
+  })
+  refreshCourier(@Param('shopId') shopId: string, @Param('id') id: string) {
+    return this.orders.refreshCourier(shopId, id);
+  }
 }

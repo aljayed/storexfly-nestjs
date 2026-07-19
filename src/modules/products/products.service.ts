@@ -1,6 +1,12 @@
-import { Inject, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  ForbiddenException,
+  Inject,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { randomUUID } from 'crypto';
-import { and, asc, desc, eq } from 'drizzle-orm';
+import { and, asc, count, desc, eq } from 'drizzle-orm';
+import { FREE_MAX_PRODUCTS } from '../../common/constants/billing';
 import { dollarsToCents } from '../../common/utils/money.util';
 import { handleize } from '../../common/utils/slug.util';
 import { DRIZZLE } from '../../database/database.constants';
@@ -123,7 +129,19 @@ export class ProductsService {
     shopId: string,
     dto: CreateProductDto,
   ): Promise<ProductResponse> {
-    await this.shops.requireById(shopId);
+    const shop = await this.shops.requireById(shopId);
+    // Free-plan shops carry a hard catalog limit until they subscribe.
+    if (shop.plan === 'free') {
+      const [{ n }] = await this.db
+        .select({ n: count() })
+        .from(products)
+        .where(eq(products.shopId, shopId));
+      if (Number(n) >= FREE_MAX_PRODUCTS) {
+        throw new ForbiddenException(
+          `The free plan allows ${FREE_MAX_PRODUCTS} product — subscribe to add more.`,
+        );
+      }
+    }
     const slug = await this.uniqueSlug(shopId, dto.name);
     // Showcase items can't be ordered online, so stock is meaningless for
     // them — pin it to 0 regardless of what the caller sends.

@@ -12,17 +12,23 @@ export class PlatformKycResponse {
   @ApiProperty({ example: 'Maya Kitchen' }) shopName!: string;
   @ApiProperty({ example: 'maya-kitchen' }) shopHandle!: string;
   @ApiProperty({ description: 'Shop owner display name' }) ownerName!: string;
-  @ApiPropertyOptional({ description: 'Owner email (login)' }) ownerEmail?: string;
+  @ApiPropertyOptional({ description: 'Owner email (login)' })
+  ownerEmail?: string;
   @ApiPropertyOptional({ description: 'Owner phone, or shop support phone' })
   ownerPhone?: string;
   @ApiProperty({ enum: ['unsubmitted', 'pending', 'verified', 'rejected'] })
   status!: KycStatus;
-  @ApiPropertyOptional({ description: 'Registered business name on the licence' })
+  @ApiPropertyOptional({
+    description: 'Registered business name on the licence',
+  })
   legalName?: string;
-  @ApiPropertyOptional({ description: 'Trade licence number' }) licenseNo?: string;
+  @ApiPropertyOptional({ description: 'Trade licence number' })
+  licenseNo?: string;
   @ApiProperty({ description: 'A trade licence document is on file' })
   hasDocument!: boolean;
-  @ApiPropertyOptional({ description: 'When the seller last submitted for review' })
+  @ApiPropertyOptional({
+    description: 'When the seller last submitted for review',
+  })
   submittedAt?: string;
 }
 

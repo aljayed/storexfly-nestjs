@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   HttpException,
   HttpStatus,
@@ -10,17 +11,23 @@ import {
   type OnModuleDestroy,
   type OnModuleInit,
 } from '@nestjs/common';
-import { and, asc, desc, eq, isNull, lte } from 'drizzle-orm';
+import { and, asc, count, desc, eq, isNull, lte, sql } from 'drizzle-orm';
 import {
+  FREE_MAX_PRODUCTS,
+  FREE_SALES_CAP_CENTS,
+  FREE_TIER_LIMIT_MESSAGE,
   MONTHLY_FEE_CENTS,
   PLATFORM_CURRENCY,
 } from '../../common/constants/billing';
 import { DRIZZLE } from '../../database/database.constants';
 import type { DrizzleDB } from '../../database/drizzle.types';
 import {
+  orders,
+  products,
   shops,
   subscriptionPayments,
   subscriptions,
+  type ShopRow,
   type SubscriptionPaymentRow,
   type SubscriptionRow,
 } from '../../database/schema';
@@ -34,6 +41,12 @@ export { MONTHLY_FEE_CENTS, PLATFORM_CURRENCY };
 
 /** How often the background billing sweep looks for due subscriptions. */
 const BILLING_SWEEP_INTERVAL_MS = 60 * 60 * 1000;
+
+/**
+ * How long a past_due subscription keeps its storefront live. After the
+ * grace period the shop is forced offline until the seller pays.
+ */
+const PAST_DUE_GRACE_MS = 7 * 24 * 60 * 60 * 1000;
 
 /**
  * One calendar month after `from`, keeping the subscription's anchor
@@ -194,10 +207,77 @@ export class SubscriptionsService implements OnModuleInit, OnModuleDestroy {
 
   // ── Subscription lifecycle ─────────────────────────────────────
 
-  /** Console view: subscription + payment history, settled up to now. */
+  /**
+   * Console view. A paid shop settles + returns its subscription; a free
+   * shop has none — it returns the free-tier card (limits + usage) instead.
+   */
   async getForShop(shopId: string): Promise<SubscriptionResponse> {
+    const shop = await this.requireShop(shopId);
+    if (shop.plan === 'free') {
+      return this.freeTierResponse(shop);
+    }
     const sub = await this.settle(await this.requireByShop(shopId));
     return this.toResponse(sub);
+  }
+
+  /**
+   * Upgrade a free shop: consumes the seller's paid shop credit (the same
+   * ৳1,199 payment used at shop creation) and opens the monthly
+   * subscription. Also lifts a free-tier deactivation so the seller can go
+   * live again immediately.
+   */
+  async activateForExistingShop(shopId: string): Promise<SubscriptionResponse> {
+    const shop = await this.requireShop(shopId);
+    if (shop.plan !== 'free') {
+      return this.getForShop(shopId);
+    }
+    const sub = await this.activateForNewShop(shop.ownerId, shopId);
+    await this.db
+      .update(shops)
+      .set({ plan: 'paid', live: true })
+      .where(eq(shops.id, shopId));
+    return this.toResponse(sub);
+  }
+
+  /** Free-tier usage numbers for one shop (products used, sales vs cap). */
+  private async freeTierUsage(shopId: string): Promise<{
+    salesCents: number;
+    productsCount: number;
+  }> {
+    const [[{ cents }], [{ n }]] = await Promise.all([
+      this.db
+        .select({
+          cents: sql<string>`coalesce(sum(${orders.totalCents}) filter (where ${orders.status} <> 'Cancelled'), 0)`,
+        })
+        .from(orders)
+        .where(eq(orders.shopId, shopId)),
+      this.db
+        .select({ n: count() })
+        .from(products)
+        .where(eq(products.shopId, shopId)),
+    ]);
+    return { salesCents: Number(cents), productsCount: Number(n) };
+  }
+
+  private async freeTierResponse(shop: ShopRow): Promise<SubscriptionResponse> {
+    const usage = await this.freeTierUsage(shop.id);
+    return SubscriptionResponse.freeTier(shop, {
+      salesCents: usage.salesCents,
+      salesCapCents: FREE_SALES_CAP_CENTS,
+      productsCount: usage.productsCount,
+      maxProducts: FREE_MAX_PRODUCTS,
+      monthlyFeeCents: MONTHLY_FEE_CENTS,
+    });
+  }
+
+  private async requireShop(shopId: string): Promise<ShopRow> {
+    const shop = await this.db.query.shops.findFirst({
+      where: eq(shops.id, shopId),
+    });
+    if (!shop) {
+      throw new NotFoundException('Shop not found');
+    }
+    return shop;
   }
 
   /**
@@ -206,7 +286,7 @@ export class SubscriptionsService implements OnModuleInit, OnModuleDestroy {
    * keeps its original anchor no matter how late the payment is made.
    */
   async payNow(shopId: string): Promise<SubscriptionResponse> {
-    let sub = await this.settle(await this.requireByShop(shopId));
+    const sub = await this.settle(await this.requireByShop(shopId));
     if (sub.status === 'cancelled') {
       throw new ForbiddenException(
         'This subscription is cancelled. Resume it before paying.',
@@ -219,6 +299,30 @@ export class SubscriptionsService implements OnModuleInit, OnModuleDestroy {
     const anchorDay = sub.startedAt.getDate();
     const periodStart = sub.nextBillingAt;
     const periodEnd = addOneMonth(periodStart, anchorDay);
+    // Guarded like `settle`: a double-submitted "Pay now" charges once.
+    const [updated] = await this.db
+      .update(subscriptions)
+      .set({
+        nextBillingAt: periodEnd,
+        // Still behind by more than a full period? Stay past_due.
+        status: periodEnd > now ? 'active' : 'past_due',
+        // The pending coupon covered this payment.
+        pendingCouponId: null,
+        pendingCouponCode: null,
+        pendingDiscountCents: 0,
+      })
+      .where(
+        and(
+          eq(subscriptions.id, sub.id),
+          eq(subscriptions.nextBillingAt, sub.nextBillingAt),
+        ),
+      )
+      .returning();
+    if (!updated) {
+      throw new ConflictException(
+        'This renewal was just paid — refresh to see the latest state.',
+      );
+    }
     await this.db.insert(subscriptionPayments).values({
       userId: sub.ownerId,
       subscriptionId: sub.id,
@@ -234,21 +338,7 @@ export class SubscriptionsService implements OnModuleInit, OnModuleDestroy {
       periodEnd,
       paidAt: now,
     });
-    const [updated] = await this.db
-      .update(subscriptions)
-      .set({
-        nextBillingAt: periodEnd,
-        // Still behind by more than a full period? Stay past_due.
-        status: periodEnd > now ? 'active' : 'past_due',
-        // The pending coupon covered this payment.
-        pendingCouponId: null,
-        pendingCouponCode: null,
-        pendingDiscountCents: 0,
-      })
-      .where(eq(subscriptions.id, sub.id))
-      .returning();
-    sub = updated;
-    return this.toResponse(sub);
+    return this.toResponse(updated);
   }
 
   /** Cancel: stops billing and forces the shop offline immediately. */
@@ -324,19 +414,24 @@ export class SubscriptionsService implements OnModuleInit, OnModuleDestroy {
         this.coupons.rejectionMessage(check.reason),
       );
     }
-    const [updated] = await this.db
-      .update(subscriptions)
-      .set({
-        pendingCouponId: check.coupon.id,
-        pendingCouponCode: check.coupon.code,
-        pendingDiscountCents: check.discountCents,
-      })
-      .where(eq(subscriptions.id, sub.id))
-      .returning();
-    await this.coupons.markRedeemed(check.coupon.id);
-    if (sub.pendingCouponId) {
-      await this.coupons.release(sub.pendingCouponId);
-    }
+    // One transaction: attach the new coupon, take its redemption, release
+    // the replaced one — a failure part-way leaks nothing.
+    const updated = await this.db.transaction(async (tx) => {
+      const [row] = await tx
+        .update(subscriptions)
+        .set({
+          pendingCouponId: check.coupon.id,
+          pendingCouponCode: check.coupon.code,
+          pendingDiscountCents: check.discountCents,
+        })
+        .where(eq(subscriptions.id, sub.id))
+        .returning();
+      await this.coupons.markRedeemed(check.coupon.id, tx);
+      if (sub.pendingCouponId) {
+        await this.coupons.release(sub.pendingCouponId, tx);
+      }
+      return row;
+    });
     return this.toResponse(updated);
   }
 
@@ -363,14 +458,25 @@ export class SubscriptionsService implements OnModuleInit, OnModuleDestroy {
 
   // ── Shop live toggle ───────────────────────────────────────────
 
-  /** Turn the storefront on/off. Going live requires a non-cancelled sub. */
+  /**
+   * Turn the storefront on/off. Going live requires a non-cancelled sub
+   * (paid plan) or headroom under the sales cap (free plan).
+   */
   async setShopLive(shopId: string, live: boolean): Promise<{ live: boolean }> {
     if (live) {
-      const sub = await this.requireByShop(shopId);
-      if (sub.status === 'cancelled') {
-        throw new ForbiddenException(
-          'Your subscription is cancelled — resume it to make the shop live.',
-        );
+      const shop = await this.requireShop(shopId);
+      if (shop.plan === 'free') {
+        const usage = await this.freeTierUsage(shopId);
+        if (usage.salesCents >= FREE_SALES_CAP_CENTS) {
+          throw new ForbiddenException(FREE_TIER_LIMIT_MESSAGE);
+        }
+      } else {
+        const sub = await this.requireByShop(shopId);
+        if (sub.status === 'cancelled') {
+          throw new ForbiddenException(
+            'Your subscription is cancelled — resume it to make the shop live.',
+          );
+        }
       }
     }
     const [row] = await this.db
@@ -412,8 +518,50 @@ export class SubscriptionsService implements OnModuleInit, OnModuleDestroy {
       next = periodEnd;
       status = 'active';
     }
+
+    // A shop unpaid beyond the grace period goes offline until the dues clear.
+    if (
+      status === 'past_due' &&
+      now.getTime() - sub.nextBillingAt.getTime() > PAST_DUE_GRACE_MS
+    ) {
+      await this.db
+        .update(shops)
+        .set({ live: false })
+        .where(and(eq(shops.id, sub.shopId), eq(shops.live, true)));
+    }
+
     if (status === sub.status && collected.length === 0) {
       return sub;
+    }
+
+    // Optimistic guard: the update only wins while `nextBillingAt` is still
+    // what we based the charges on. If the hourly sweep and a console read
+    // settle concurrently, exactly one records the renewals — the loser
+    // simply reloads, instead of double-charging the seller.
+    const [updated] = await this.db
+      .update(subscriptions)
+      .set({
+        nextBillingAt: next,
+        status,
+        ...(collected.length > 0 && {
+          pendingCouponId: null,
+          pendingCouponCode: null,
+          pendingDiscountCents: 0,
+        }),
+      })
+      .where(
+        and(
+          eq(subscriptions.id, sub.id),
+          eq(subscriptions.nextBillingAt, sub.nextBillingAt),
+          eq(subscriptions.status, sub.status),
+        ),
+      )
+      .returning();
+    if (!updated) {
+      const fresh = await this.db.query.subscriptions.findFirst({
+        where: eq(subscriptions.id, sub.id),
+      });
+      return fresh ?? sub;
     }
 
     if (collected.length > 0) {
@@ -440,19 +588,6 @@ export class SubscriptionsService implements OnModuleInit, OnModuleDestroy {
         `Auto-debited ${collected.length} renewal(s) for subscription ${sub.id}`,
       );
     }
-    const [updated] = await this.db
-      .update(subscriptions)
-      .set({
-        nextBillingAt: next,
-        status,
-        ...(collected.length > 0 && {
-          pendingCouponId: null,
-          pendingCouponCode: null,
-          pendingDiscountCents: 0,
-        }),
-      })
-      .where(eq(subscriptions.id, sub.id))
-      .returning();
     return updated;
   }
 
@@ -492,6 +627,12 @@ export class SubscriptionsService implements OnModuleInit, OnModuleDestroy {
     });
     if (!shop) {
       throw new NotFoundException('Shop not found');
+    }
+    // Free shops have no subscription to act on — they upgrade first.
+    if (shop.plan === 'free') {
+      throw new ForbiddenException(
+        'This shop is on the free plan — subscribe to use billing features.',
+      );
     }
     const startedAt = shop.createdAt;
     const anchorDay = startedAt.getDate();

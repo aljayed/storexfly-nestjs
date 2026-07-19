@@ -21,7 +21,9 @@ export class PlatformAuthController {
   @Public()
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @Post('login')
-  @ApiOperation({ summary: 'Platform admin: sign in with the operator credentials' })
+  @ApiOperation({
+    summary: 'Platform admin: sign in with the operator credentials',
+  })
   login(@Body() dto: PlatformLoginDto) {
     return this.auth.login(dto);
   }
