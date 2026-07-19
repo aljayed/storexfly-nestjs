@@ -19,7 +19,7 @@ export class GoogleOAuthGuard extends AuthGuard('google') {
   canActivate(context: ExecutionContext) {
     const enabled = Boolean(
       this.config.get<string>('google.clientId') &&
-        this.config.get<string>('google.clientSecret'),
+      this.config.get<string>('google.clientSecret'),
     );
     if (!enabled) {
       throw new ServiceUnavailableException(

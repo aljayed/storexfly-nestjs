@@ -18,6 +18,7 @@ import {
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { Public } from '../../common/decorators/public.decorator';
 import { AdminJwtAuthGuard } from '../../common/guards/admin-jwt-auth.guard';
+import { RequirePerm } from '../../common/decorators/roles.decorator';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { ShopScopeGuard } from '../../common/guards/shop-scope.guard';
 import type { SellerPrincipal } from '../../common/types/principal';
@@ -77,6 +78,7 @@ export class SubscriptionsController {
   // ── Admin console (Subscription page) ─────────────────────────
   @Public()
   @UseGuards(AdminJwtAuthGuard, ShopScopeGuard, RolesGuard)
+  @RequirePerm('subscription.manage')
   @ApiBearerAuth()
   @Get('shops/:shopId/subscription')
   @ApiOperation({ summary: 'Admin: subscription status + payment history' })
@@ -87,6 +89,7 @@ export class SubscriptionsController {
 
   @Public()
   @UseGuards(AdminJwtAuthGuard, ShopScopeGuard, RolesGuard)
+  @RequirePerm('subscription.manage')
   @ApiBearerAuth()
   @Post('shops/:shopId/subscription/pay')
   @ApiOperation({ summary: 'Admin: manually pay an overdue renewal' })
@@ -97,6 +100,7 @@ export class SubscriptionsController {
 
   @Public()
   @UseGuards(AdminJwtAuthGuard, ShopScopeGuard, RolesGuard)
+  @RequirePerm('subscription.manage')
   @ApiBearerAuth()
   @Post('shops/:shopId/subscription/cancel')
   @ApiOperation({ summary: 'Admin: cancel the subscription (shop goes off)' })
@@ -107,6 +111,7 @@ export class SubscriptionsController {
 
   @Public()
   @UseGuards(AdminJwtAuthGuard, ShopScopeGuard, RolesGuard)
+  @RequirePerm('subscription.manage')
   @ApiBearerAuth()
   @Post('shops/:shopId/subscription/resume')
   @ApiOperation({ summary: 'Admin: resume a cancelled subscription' })
@@ -117,6 +122,7 @@ export class SubscriptionsController {
 
   @Public()
   @UseGuards(AdminJwtAuthGuard, ShopScopeGuard, RolesGuard)
+  @RequirePerm('subscription.manage')
   @ApiBearerAuth()
   @Post('shops/:shopId/subscription/coupon')
   @ApiOperation({ summary: 'Admin: apply a coupon to the next renewal' })
@@ -127,6 +133,7 @@ export class SubscriptionsController {
 
   @Public()
   @UseGuards(AdminJwtAuthGuard, ShopScopeGuard, RolesGuard)
+  @RequirePerm('subscription.manage')
   @ApiBearerAuth()
   @Delete('shops/:shopId/subscription/coupon')
   @ApiOperation({ summary: 'Admin: remove the pending renewal coupon' })
@@ -137,6 +144,7 @@ export class SubscriptionsController {
 
   @Public()
   @UseGuards(AdminJwtAuthGuard, ShopScopeGuard, RolesGuard)
+  @RequirePerm('subscription.manage')
   @ApiBearerAuth()
   @Patch('shops/:shopId/subscription/auto-debit')
   @ApiOperation({ summary: 'Admin: toggle automatic monthly debit' })
@@ -147,6 +155,7 @@ export class SubscriptionsController {
 
   @Public()
   @UseGuards(AdminJwtAuthGuard, ShopScopeGuard, RolesGuard)
+  @RequirePerm('subscription.manage')
   @ApiBearerAuth()
   @Patch('shops/:shopId/live')
   @ApiOperation({ summary: 'Admin: turn the storefront on or off' })

@@ -13,8 +13,13 @@ import {
   ApiOperation,
   ApiTags,
 } from '@nestjs/swagger';
+import { UseGuards } from '@nestjs/common';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { Public } from '../../common/decorators/public.decorator';
+import { RequirePerm } from '../../common/decorators/roles.decorator';
+import { AdminJwtAuthGuard } from '../../common/guards/admin-jwt-auth.guard';
+import { RolesGuard } from '../../common/guards/roles.guard';
+import { ShopScopeGuard } from '../../common/guards/shop-scope.guard';
 import { SHOP_CATEGORIES } from '../../database/schema/enums';
 import type { SellerPrincipal } from '../../common/types/principal';
 import { CheckHandleQuery } from './dto/check-handle.query';
@@ -49,7 +54,9 @@ export class ShopsController {
   // Declared before `:handle` so "discover" never resolves as a shop.
   @Public()
   @Get('discover')
-  @ApiOperation({ summary: 'Public marketplace feed (live shops + newest products)' })
+  @ApiOperation({
+    summary: 'Public marketplace feed (live shops + newest products)',
+  })
   @ApiOkResponse({ type: DiscoverResponse })
   discover() {
     return this.shops.discover();
@@ -90,9 +97,34 @@ export class ShopsController {
     return this.shops.submitKyc(user.id, id, dto);
   }
 
+  // ── Admin console (admin JWT — works for invited staff who have no
+  //    seller session; ShopScopeGuard pins access to the token's shop) ──
+  @Public()
+  @UseGuards(AdminJwtAuthGuard, ShopScopeGuard, RolesGuard)
+  @ApiBearerAuth()
+  @Get(':shopId/console')
+  @ApiOperation({ summary: 'Admin: the shop the console session is scoped to' })
+  @ApiOkResponse({ type: ShopResponse })
+  consoleShop(@Param('shopId') shopId: string) {
+    return this.shops.getById(shopId);
+  }
+
+  @Public()
+  @UseGuards(AdminJwtAuthGuard, ShopScopeGuard, RolesGuard)
+  @RequirePerm('settings.manage')
+  @ApiBearerAuth()
+  @Patch(':shopId/console')
+  @ApiOperation({ summary: 'Admin: update shop settings (full access only)' })
+  @ApiOkResponse({ type: ShopResponse })
+  consoleUpdate(@Param('shopId') shopId: string, @Body() dto: UpdateShopDto) {
+    return this.shops.updateFromConsole(shopId, dto);
+  }
+
   @Public()
   @Get(':handle')
-  @ApiOperation({ summary: 'Public storefront load (shop + featured products)' })
+  @ApiOperation({
+    summary: 'Public storefront load (shop + featured products)',
+  })
   getByHandle(@Param('handle') handle: string) {
     return this.shops.getByHandle(handle);
   }

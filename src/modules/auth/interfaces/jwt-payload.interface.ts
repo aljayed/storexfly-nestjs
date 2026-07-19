@@ -1,3 +1,5 @@
+import type { AdminRole } from '../../../database/schema/enums';
+
 /** Claims carried by the seller-session JWT. */
 export interface SellerJwtPayload {
   sub: string; // user id
@@ -20,7 +22,7 @@ export interface AdminJwtPayload {
   sub: string; // admin user id
   email: string;
   name: string;
-  role: 'owner' | 'manager' | 'staff';
+  role: AdminRole;
   shopId: string;
   twoFactorVerified: boolean;
   typ: 'admin';

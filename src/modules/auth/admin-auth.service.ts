@@ -10,15 +10,17 @@ import { eq } from 'drizzle-orm';
 import { authenticator } from 'otplib';
 import { DRIZZLE } from '../../database/database.constants';
 import type { DrizzleDB } from '../../database/drizzle.types';
+import {
+  permissionsForRole,
+  type AdminPermission,
+} from '../../common/auth/admin-permissions';
 import { shops, type AdminUserRow } from '../../database/schema';
+import type { AdminRole } from '../../database/schema/enums';
 import { handleize } from '../../common/utils/slug.util';
 import { ShopsService } from '../shops/shops.service';
 import { UsersService } from '../users/users.service';
 import { AdminUsersService } from './admin-users.service';
-import type {
-  AdminLoginDto,
-  AdminTwoFactorDto,
-} from './dto/admin-login.dto';
+import type { AdminLoginDto, AdminTwoFactorDto } from './dto/admin-login.dto';
 import { TokenService } from './token.service';
 
 export interface AdminLoginResult {
@@ -38,6 +40,8 @@ export interface AdminUserView {
   name: string;
   email: string;
   role: AdminUserRow['role'];
+  /** Resolved capability strings for `role` — drives the console UI gating. */
+  permissions: readonly AdminPermission[];
   shopId: string;
   twoFactorEnabled: boolean;
 }
@@ -119,12 +123,18 @@ export class AdminAuthService {
       return { twoFactorRequired: true, ticket };
     }
 
-    // No second factor configured — issue the console token directly.
+    // No second factor configured — issue the console token directly. A
+    // seller signing into a workspace they own is 'owner' there even if their
+    // staff row is pinned to another shop.
     await this.adminUsers.markLogin(admin.id);
-    const token = await this.issueAdminToken(admin, shop.id);
+    const role: AdminRole =
+      shop.ownerId === seller?.id && admin.shopId !== shop.id
+        ? 'owner'
+        : admin.role;
+    const token = await this.issueAdminToken(admin, shop.id, role);
     return {
       twoFactorRequired: false,
-      adminUser: this.toView(admin, shop.id),
+      adminUser: this.toView(admin, shop.id, role),
       token,
     };
   }
@@ -142,10 +152,20 @@ export class AdminAuthService {
     }
     await this.adminUsers.markLogin(admin.id);
     // Scope to the shop captured at stage 1, falling back to the admin's home
-    // shop for older tickets that predate multi-shop.
+    // shop for older tickets that predate multi-shop. Mirror stage 1's role
+    // resolution: signing into a workspace you own makes the session 'owner'
+    // even when the staff row is pinned to a different shop.
     const shopId = ticket.shopId ?? admin.shopId;
-    const token = await this.issueAdminToken(admin, shopId);
-    return { adminUser: this.toView(admin, shopId), token };
+    let role: AdminRole = admin.role;
+    if (shopId !== admin.shopId) {
+      const shop = await this.db.query.shops.findFirst({
+        where: eq(shops.id, shopId),
+      });
+      const seller = await this.users.findByEmail(admin.email);
+      role = shop && seller && shop.ownerId === seller.id ? 'owner' : role;
+    }
+    const token = await this.issueAdminToken(admin, shopId, role);
+    return { adminUser: this.toView(admin, shopId, role), token };
   }
 
   /**
@@ -194,30 +214,39 @@ export class AdminAuthService {
     }
 
     await this.adminUsers.markLogin(admin.id);
-    const token = await this.issueAdminToken(admin, activeShop.id);
-    return { adminUser: this.toView(admin, activeShop.id), token };
+    // Ownership of `activeShop` was just verified, so the session is 'owner'
+    // regardless of the role their staff row carries for some other shop
+    // (e.g. a seller who was also invited to a friend's shop as staff).
+    const token = await this.issueAdminToken(admin, activeShop.id, 'owner');
+    return { adminUser: this.toView(admin, activeShop.id, 'owner'), token };
   }
 
   private async issueAdminToken(
     admin: AdminUserRow,
     shopId: string = admin.shopId,
+    role: AdminRole = admin.role,
   ): Promise<string> {
     return this.tokens.signAdminToken({
       sub: admin.id,
       email: admin.email,
       name: admin.name,
-      role: admin.role,
+      role,
       shopId,
       twoFactorVerified: true,
     });
   }
 
-  private toView(admin: AdminUserRow, shopId: string = admin.shopId): AdminUserView {
+  private toView(
+    admin: AdminUserRow,
+    shopId: string = admin.shopId,
+    role: AdminRole = admin.role,
+  ): AdminUserView {
     return {
       id: admin.id,
       name: admin.name,
       email: admin.email,
-      role: admin.role,
+      role,
+      permissions: permissionsForRole(role),
       shopId,
       twoFactorEnabled: admin.twoFactorEnabled,
     };

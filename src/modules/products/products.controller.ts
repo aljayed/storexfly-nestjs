@@ -12,6 +12,7 @@ import {
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Public } from '../../common/decorators/public.decorator';
 import { AdminJwtAuthGuard } from '../../common/guards/admin-jwt-auth.guard';
+import { RequirePerm } from '../../common/decorators/roles.decorator';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { ShopScopeGuard } from '../../common/guards/shop-scope.guard';
 import { CreateProductDto } from './dto/create-product.dto';
@@ -43,6 +44,7 @@ export class ProductsController {
   @Public()
   @UseGuards(AdminJwtAuthGuard, ShopScopeGuard, RolesGuard)
   @ApiBearerAuth()
+  @RequirePerm('items.view')
   @Get('shops/:shopId/items')
   @ApiOperation({ summary: 'Admin: list every item in the shop' })
   listForShop(@Param('shopId') shopId: string) {
@@ -52,6 +54,7 @@ export class ProductsController {
   @Public()
   @UseGuards(AdminJwtAuthGuard, ShopScopeGuard, RolesGuard)
   @ApiBearerAuth()
+  @RequirePerm('items.add')
   @Post('shops/:shopId/products')
   @ApiOperation({ summary: 'Admin: create a product' })
   create(@Param('shopId') shopId: string, @Body() dto: CreateProductDto) {
@@ -61,6 +64,7 @@ export class ProductsController {
   @Public()
   @UseGuards(AdminJwtAuthGuard, ShopScopeGuard, RolesGuard)
   @ApiBearerAuth()
+  @RequirePerm('items.edit')
   @Patch('shops/:shopId/products/:id')
   @ApiOperation({ summary: 'Admin: update a product (price, stock, …)' })
   update(
@@ -74,6 +78,7 @@ export class ProductsController {
   @Public()
   @UseGuards(AdminJwtAuthGuard, ShopScopeGuard, RolesGuard)
   @ApiBearerAuth()
+  @RequirePerm('items.delete')
   @Delete('shops/:shopId/products/:id')
   @ApiOperation({ summary: 'Admin: delete a product' })
   remove(@Param('shopId') shopId: string, @Param('id') id: string) {

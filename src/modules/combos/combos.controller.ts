@@ -11,6 +11,7 @@ import {
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Public } from '../../common/decorators/public.decorator';
 import { AdminJwtAuthGuard } from '../../common/guards/admin-jwt-auth.guard';
+import { RequirePerm } from '../../common/decorators/roles.decorator';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { ShopScopeGuard } from '../../common/guards/shop-scope.guard';
 import { CombosService } from './combos.service';
@@ -23,6 +24,7 @@ export class CombosController {
 
   @Public()
   @UseGuards(AdminJwtAuthGuard, ShopScopeGuard, RolesGuard)
+  @RequirePerm('combos.manage')
   @ApiBearerAuth()
   @Get('shops/:shopId/combos')
   @ApiOperation({ summary: 'Admin: list every combo offer of the shop' })
@@ -32,6 +34,7 @@ export class CombosController {
 
   @Public()
   @UseGuards(AdminJwtAuthGuard, ShopScopeGuard, RolesGuard)
+  @RequirePerm('combos.manage')
   @ApiBearerAuth()
   @Post('shops/:shopId/combos')
   @ApiOperation({ summary: 'Admin: create a combo offer' })
@@ -41,6 +44,7 @@ export class CombosController {
 
   @Public()
   @UseGuards(AdminJwtAuthGuard, ShopScopeGuard, RolesGuard)
+  @RequirePerm('combos.manage')
   @ApiBearerAuth()
   @Patch('shops/:shopId/combos/:id')
   @ApiOperation({ summary: 'Admin: update a combo offer (price, members, …)' })
@@ -54,6 +58,7 @@ export class CombosController {
 
   @Public()
   @UseGuards(AdminJwtAuthGuard, ShopScopeGuard, RolesGuard)
+  @RequirePerm('combos.manage')
   @ApiBearerAuth()
   @Delete('shops/:shopId/combos/:id')
   @ApiOperation({ summary: 'Admin: delete a combo offer' })

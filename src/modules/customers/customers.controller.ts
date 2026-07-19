@@ -1,6 +1,8 @@
 import { Controller, Get, Param, Query, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Public } from '../../common/decorators/public.decorator';
+import { RequirePerm } from '../../common/decorators/roles.decorator';
+import { RolesGuard } from '../../common/guards/roles.guard';
 import { AdminJwtAuthGuard } from '../../common/guards/admin-jwt-auth.guard';
 import { ShopScopeGuard } from '../../common/guards/shop-scope.guard';
 import { CustomersService } from './customers.service';
@@ -10,7 +12,8 @@ import { MonthlyActivityQueryDto } from './dto/monthly-activity-query.dto';
 @ApiTags('customers')
 @Controller('shops/:shopId/customers')
 @Public()
-@UseGuards(AdminJwtAuthGuard, ShopScopeGuard)
+@UseGuards(AdminJwtAuthGuard, ShopScopeGuard, RolesGuard)
+@RequirePerm('customers.view')
 @ApiBearerAuth()
 export class CustomersController {
   constructor(private readonly customers: CustomersService) {}

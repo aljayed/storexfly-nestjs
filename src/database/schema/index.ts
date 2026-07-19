@@ -7,6 +7,7 @@ export * from './enums';
 export * from './users.schema';
 export * from './shops.schema';
 export * from './admin-users.schema';
+export * from './admin-invites.schema';
 export * from './products.schema';
 export * from './reviews.schema';
 export * from './customers.schema';

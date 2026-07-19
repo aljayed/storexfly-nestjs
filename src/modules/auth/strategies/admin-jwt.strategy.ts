@@ -31,17 +31,24 @@ export class AdminJwtStrategy extends PassportStrategy(Strategy, 'admin-jwt') {
     if (!admin) {
       throw new UnauthorizedException('Admin account no longer exists');
     }
+    // The active shop comes from the token, not the admin row: an owner can
+    // manage several shops and switch between them, each switch minting a
+    // fresh token whose shop ownership was verified at issue time. Fall back
+    // to the admin's home shop for older tokens that predate multi-shop.
+    const shopId = payload.shopId ?? admin.shopId;
     return {
       kind: 'admin',
       id: admin.id,
       email: admin.email,
       name: admin.name,
-      role: admin.role,
-      // The active shop comes from the token, not the admin row: an owner can
-      // manage several shops and switch between them, each switch minting a
-      // fresh token whose shop ownership was verified at issue time. Fall back
-      // to the admin's home shop for older tokens that predate multi-shop.
-      shopId: payload.shopId ?? admin.shopId,
+      // For the home shop, the live DB role wins so a role change (or a
+      // pending removal) applies to existing sessions immediately. When the
+      // token is scoped to a *different* shop, the row's role is meaningless
+      // there — trust the claim, which was set after verifying the seller
+      // owns that shop (an invited staffer of shop A stays 'owner' on their
+      // own shop B, and vice versa).
+      role: shopId === admin.shopId ? admin.role : payload.role,
+      shopId,
       twoFactorVerified: payload.twoFactorVerified === true,
     };
   }

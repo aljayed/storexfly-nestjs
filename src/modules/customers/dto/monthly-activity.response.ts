@@ -43,7 +43,8 @@ export class ActivityMonthTotalsResponse {
   @ApiProperty({ description: 'Distinct buying customers that month' })
   customers!: number;
   @ApiProperty() orders!: number;
-  @ApiProperty({ description: 'Revenue that month (dollars)' }) revenue!: number;
+  @ApiProperty({ description: 'Revenue that month (dollars)' })
+  revenue!: number;
 }
 
 /** Paginated month-wise activity matrix for the admin Customers page. */

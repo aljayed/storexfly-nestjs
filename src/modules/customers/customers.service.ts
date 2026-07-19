@@ -1,8 +1,4 @@
-import {
-  Inject,
-  Injectable,
-  NotFoundException,
-} from '@nestjs/common';
+import { Inject, Injectable, NotFoundException } from '@nestjs/common';
 import {
   and,
   count,
@@ -21,11 +17,7 @@ import {
 import { centsToDollars } from '../../common/utils/money.util';
 import { DRIZZLE } from '../../database/database.constants';
 import type { DbExecutor, DrizzleDB } from '../../database/drizzle.types';
-import {
-  customers,
-  orders,
-  type CustomerRow,
-} from '../../database/schema';
+import { customers, orders, type CustomerRow } from '../../database/schema';
 import type { CustomerSegment } from '../../database/schema/enums';
 import { OrderResponse } from '../orders/dto/order.response';
 import { CustomerListResponse } from './dto/customer-list.response';
@@ -54,8 +46,18 @@ const VIP_MIN_ORDERS = 20;
 const REPEAT_MIN_ORDERS = 2;
 
 const MONTH_LABELS = [
-  'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-  'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+  'Jan',
+  'Feb',
+  'Mar',
+  'Apr',
+  'May',
+  'Jun',
+  'Jul',
+  'Aug',
+  'Sep',
+  'Oct',
+  'Nov',
+  'Dec',
 ];
 
 /** Local calendar month bucket key, "YYYY-MM" (same convention as reports). */
@@ -83,10 +85,7 @@ export class CustomersService {
    * aggregates forward. Runs against whichever executor is passed so it can
    * participate in the checkout transaction. Returns the customer id.
    */
-  async recordOrder(
-    tx: DbExecutor,
-    input: RecordOrderInput,
-  ): Promise<string> {
+  async recordOrder(tx: DbExecutor, input: RecordOrderInput): Promise<string> {
     const email = input.email.toLowerCase();
     const existing = await tx.query.customers.findFirst({
       where: and(
@@ -286,7 +285,11 @@ export class CustomersService {
 
     const months: ActivityMonthResponse[] = [];
     for (let i = 0; i < query.months; i++) {
-      const d = new Date(windowStart.getFullYear(), windowStart.getMonth() + i, 1);
+      const d = new Date(
+        windowStart.getFullYear(),
+        windowStart.getMonth() + i,
+        1,
+      );
       months.push({
         key: monthKey(d),
         label: MONTH_LABELS[d.getMonth()],
@@ -344,7 +347,10 @@ export class CustomersService {
         .where(where),
       // Shop-wide (unfiltered) window orders for the per-month footer totals.
       this.db.query.orders.findMany({
-        where: and(eq(orders.shopId, shopId), gte(orders.placedAt, windowStart)),
+        where: and(
+          eq(orders.shopId, shopId),
+          gte(orders.placedAt, windowStart),
+        ),
         columns: { customerId: true, totalCents: true, placedAt: true },
       }),
     ]);
@@ -368,7 +374,11 @@ export class CustomersService {
       : [[], []];
 
     // Bucket the page's orders into customer × month cells.
-    type CellAcc = { orders: number; spentCents: number; products: Map<string, number> };
+    type CellAcc = {
+      orders: number;
+      spentCents: number;
+      products: Map<string, number>;
+    };
     const cellsByCustomer = new Map<string, Map<string, CellAcc>>();
     for (const o of pageOrders) {
       if (!o.customerId) continue;
@@ -377,7 +387,10 @@ export class CustomersService {
       if (!byMonth) cellsByCustomer.set(o.customerId, (byMonth = new Map()));
       let cell = byMonth.get(key);
       if (!cell) {
-        byMonth.set(key, (cell = { orders: 0, spentCents: 0, products: new Map() }));
+        byMonth.set(
+          key,
+          (cell = { orders: 0, spentCents: 0, products: new Map() }),
+        );
       }
       cell.orders += 1;
       cell.spentCents += o.totalCents;
@@ -414,7 +427,12 @@ export class CustomersService {
     const totalsAcc = new Map<
       string,
       { customers: Set<string>; orders: number; revenueCents: number }
-    >(months.map((m) => [m.key, { customers: new Set(), orders: 0, revenueCents: 0 }]));
+    >(
+      months.map((m) => [
+        m.key,
+        { customers: new Set(), orders: 0, revenueCents: 0 },
+      ]),
+    );
     for (const o of allWindow) {
       const t = totalsAcc.get(monthKey(o.placedAt));
       if (!t) continue;
@@ -457,10 +475,7 @@ export class CustomersService {
     };
   }
 
-  private async requireOwned(
-    shopId: string,
-    id: string,
-  ): Promise<CustomerRow> {
+  private async requireOwned(shopId: string, id: string): Promise<CustomerRow> {
     const customer = await this.db.query.customers.findFirst({
       where: and(eq(customers.id, id), eq(customers.shopId, shopId)),
     });

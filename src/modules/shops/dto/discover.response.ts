@@ -24,7 +24,10 @@ export class DiscoverProductResponse {
       "'sale' = online checkout; 'showcase' = advertise-only, contact the seller to buy.",
   })
   listingType!: ListingType;
-  @ApiProperty({ description: 'Unit price in the shop currency (0 on a showcase item = "contact for price")' })
+  @ApiProperty({
+    description:
+      'Unit price in the shop currency (0 on a showcase item = "contact for price")',
+  })
   price!: number;
   @ApiProperty() unit!: string;
   @ApiProperty() stock!: number;

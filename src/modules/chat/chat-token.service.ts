@@ -5,6 +5,7 @@ import type {
   AdminJwtPayload,
   BuyerJwtPayload,
 } from '../auth/interfaces/jwt-payload.interface';
+import { roleHasPermission } from '../../common/auth/admin-permissions';
 import type { ChatActor } from './chat-actor';
 
 /**
@@ -56,7 +57,9 @@ export class ChatTokenService {
       if (
         payload.typ === 'admin' &&
         payload.twoFactorVerified === true &&
-        payload.shopId
+        payload.shopId &&
+        // Limited staff tiers (items + reports only) have no inbox access.
+        roleHasPermission(payload.role, 'chat.manage')
       ) {
         return {
           role: 'seller',

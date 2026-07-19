@@ -131,7 +131,8 @@ export class UpdateShopDto {
   // Decorative images floating over the hero. Same replace-all + size rules.
   @ApiPropertyOptional({
     type: [String],
-    description: 'Storefront floating hero images (data URLs). Replaces the set.',
+    description:
+      'Storefront floating hero images (data URLs). Replaces the set.',
   })
   @IsOptional()
   @IsArray()

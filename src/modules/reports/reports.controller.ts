@@ -10,6 +10,8 @@ import {
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import type { Response } from 'express';
 import { Public } from '../../common/decorators/public.decorator';
+import { RequirePerm } from '../../common/decorators/roles.decorator';
+import { RolesGuard } from '../../common/guards/roles.guard';
 import { AdminJwtAuthGuard } from '../../common/guards/admin-jwt-auth.guard';
 import { ShopScopeGuard } from '../../common/guards/shop-scope.guard';
 import { DashboardQuery } from './dto/dashboard-query.dto';
@@ -18,7 +20,8 @@ import { ReportsService } from './reports.service';
 @ApiTags('reports')
 @Controller('shops/:shopId')
 @Public()
-@UseGuards(AdminJwtAuthGuard, ShopScopeGuard)
+@UseGuards(AdminJwtAuthGuard, ShopScopeGuard, RolesGuard)
+@RequirePerm('reports.view')
 @ApiBearerAuth()
 export class ReportsController {
   constructor(private readonly reports: ReportsService) {}

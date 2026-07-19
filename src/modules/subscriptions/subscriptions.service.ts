@@ -93,10 +93,7 @@ export class SubscriptionsService implements OnModuleInit, OnModuleDestroy {
     let coupon: { id: string; code: string } | undefined;
     let discountCents = 0;
     if (couponCode?.trim()) {
-      const check = await this.coupons.checkForShopCreation(
-        couponCode,
-        userId,
-      );
+      const check = await this.coupons.checkForShopCreation(couponCode, userId);
       if (!check.ok) {
         throw new BadRequestException(
           this.coupons.rejectionMessage(check.reason),
@@ -130,7 +127,11 @@ export class SubscriptionsService implements OnModuleInit, OnModuleDestroy {
     const existing = await this.findUnconsumedCredit(userId);
     return existing
       ? ShopCreditResponse.fromRow(existing)
-      : { paid: false, amount: MONTHLY_FEE_CENTS / 100, currency: PLATFORM_CURRENCY };
+      : {
+          paid: false,
+          amount: MONTHLY_FEE_CENTS / 100,
+          currency: PLATFORM_CURRENCY,
+        };
   }
 
   /**
@@ -319,7 +320,9 @@ export class SubscriptionsService implements OnModuleInit, OnModuleDestroy {
     }
     const check = await this.coupons.check(code, sub.ownerId, sub.amountCents);
     if (!check.ok) {
-      throw new BadRequestException(this.coupons.rejectionMessage(check.reason));
+      throw new BadRequestException(
+        this.coupons.rejectionMessage(check.reason),
+      );
     }
     const [updated] = await this.db
       .update(subscriptions)
@@ -361,10 +364,7 @@ export class SubscriptionsService implements OnModuleInit, OnModuleDestroy {
   // ── Shop live toggle ───────────────────────────────────────────
 
   /** Turn the storefront on/off. Going live requires a non-cancelled sub. */
-  async setShopLive(
-    shopId: string,
-    live: boolean,
-  ): Promise<{ live: boolean }> {
+  async setShopLive(shopId: string, live: boolean): Promise<{ live: boolean }> {
     if (live) {
       const sub = await this.requireByShop(shopId);
       if (sub.status === 'cancelled') {

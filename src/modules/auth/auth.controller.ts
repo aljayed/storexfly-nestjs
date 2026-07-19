@@ -29,10 +29,7 @@ import { UserResponse } from '../users/dto/user.response';
 import { AuthService } from './auth.service';
 import { EmailOtpVerifyDto } from './dto/email-otp-verify.dto';
 import { LoginDto } from './dto/login.dto';
-import {
-  ForgotPasswordDto,
-  ResetPasswordDto,
-} from './dto/password-reset.dto';
+import { ForgotPasswordDto, ResetPasswordDto } from './dto/password-reset.dto';
 import { PhoneStartDto, PhoneVerifyDto } from './dto/phone.dto';
 import { RegisterDto } from './dto/register.dto';
 import { GoogleOAuthGuard } from './guards/google-oauth.guard';
@@ -51,7 +48,9 @@ export class AuthController {
   @Throttle({ default: { limit: 5, ttl: 60_000 } })
   @Post('register')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Start seller registration (email): sends a verification code' })
+  @ApiOperation({
+    summary: 'Start seller registration (email): sends a verification code',
+  })
   registerStart(@Body() dto: RegisterDto) {
     return this.auth.registerStart(dto);
   }
@@ -117,13 +116,14 @@ export class AuthController {
   @Get('google')
   @UseGuards(GoogleOAuthGuard)
   @ApiOperation({ summary: 'Begin Google OAuth (302 → Google)' })
-  // eslint-disable-next-line @typescript-eslint/no-empty-function
   googleAuth(): void {}
 
   @Public()
   @Get('google/callback')
   @UseGuards(GoogleOAuthGuard)
-  @ApiOperation({ summary: 'Google OAuth callback → redirect to Vue with token' })
+  @ApiOperation({
+    summary: 'Google OAuth callback → redirect to Vue with token',
+  })
   async googleCallback(
     @Req() req: RequestWithPrincipal,
     @Res() res: Response,

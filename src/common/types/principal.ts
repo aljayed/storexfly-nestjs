@@ -1,4 +1,5 @@
 import type { Request } from 'express';
+import type { AdminRole } from '../../database/schema/enums';
 
 /** Authenticated seller/buyer, attached to `req.user` by the JWT strategy. */
 export interface SellerPrincipal {
@@ -18,7 +19,7 @@ export interface AdminPrincipal {
   id: string;
   email: string;
   name: string;
-  role: 'owner' | 'manager' | 'staff';
+  role: AdminRole;
   shopId: string;
   twoFactorVerified: boolean;
 }
@@ -46,7 +47,8 @@ export type Principal =
   | PlatformPrincipal
   | BuyerPrincipal;
 
-export interface RequestWithPrincipal<P extends Principal = Principal>
-  extends Request {
+export interface RequestWithPrincipal<
+  P extends Principal = Principal,
+> extends Request {
   user: P;
 }

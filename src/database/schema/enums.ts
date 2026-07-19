@@ -12,10 +12,14 @@ export const authMethodEnum = pgEnum('auth_method', [
   'phone',
 ]);
 
+// Console access tiers. Postgres enum values are append-only, so 'editor'
+// (reports + full item CRUD — between 'manager' and 'staff') sits last here;
+// what each role can do is defined in common/auth/admin-permissions.ts.
 export const adminRoleEnum = pgEnum('admin_role', [
   'owner',
   'manager',
   'staff',
+  'editor',
 ]);
 
 // The storefront UI language buyers land on for this shop. Buyers can still

@@ -9,10 +9,14 @@ import {
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
+import { permissionsForRole } from '../../common/auth/admin-permissions';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { Public } from '../../common/decorators/public.decorator';
 import { AdminJwtAuthGuard } from '../../common/guards/admin-jwt-auth.guard';
-import type { AdminPrincipal, SellerPrincipal } from '../../common/types/principal';
+import type {
+  AdminPrincipal,
+  SellerPrincipal,
+} from '../../common/types/principal';
 import { AdminAuthService } from './admin-auth.service';
 import {
   AdminLoginDto,
@@ -53,7 +57,7 @@ export class AdminAuthController {
   @Get('me')
   @ApiOperation({ summary: 'Hydrate the current admin principal' })
   me(@CurrentUser() admin: AdminPrincipal) {
-    return admin;
+    return { ...admin, permissions: permissionsForRole(admin.role) };
   }
 
   /**

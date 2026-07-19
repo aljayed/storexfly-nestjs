@@ -12,11 +12,7 @@ import { centsToDollars } from '../../common/utils/money.util';
 import { handleize } from '../../common/utils/slug.util';
 import { DRIZZLE } from '../../database/database.constants';
 import type { DrizzleDB } from '../../database/drizzle.types';
-import {
-  products,
-  shops,
-  type ShopRow,
-} from '../../database/schema';
+import { products, shops, type ShopRow } from '../../database/schema';
 import { BlockedWordsService } from '../blocked-words/blocked-words.service';
 import { StorageService } from '../storage/storage.service';
 import { ProductResponse } from '../products/dto/product.response';
@@ -195,6 +191,26 @@ export class ShopsService {
     if (shop.ownerId !== ownerId) {
       throw new ForbiddenException('You do not own this shop');
     }
+    return this.applyUpdate(id, dto);
+  }
+
+  /**
+   * Console-path update — no owner check. Callers must have verified access
+   * already (admin JWT scoped to this shop + the `settings.manage`
+   * permission), which lets invited full-access managers edit settings.
+   */
+  async updateFromConsole(
+    id: string,
+    dto: UpdateShopDto,
+  ): Promise<ShopResponse> {
+    await this.requireById(id);
+    return this.applyUpdate(id, dto);
+  }
+
+  private async applyUpdate(
+    id: string,
+    dto: UpdateShopDto,
+  ): Promise<ShopResponse> {
     if (dto.name) {
       await this.blockedWords.assertClean(dto.name);
     }

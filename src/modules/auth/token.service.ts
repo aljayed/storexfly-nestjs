@@ -39,9 +39,7 @@ export class TokenService {
    * Buyer-session token. Shares the seller JWT secret but carries `typ: 'buyer'`
    * so the buyer and seller strategies can't accept each other's tokens.
    */
-  async signBuyerToken(
-    payload: Omit<BuyerJwtPayload, 'typ'>,
-  ): Promise<string> {
+  async signBuyerToken(payload: Omit<BuyerJwtPayload, 'typ'>): Promise<string> {
     return this.jwt.signAsync(
       { ...payload, typ: 'buyer' } satisfies BuyerJwtPayload,
       {
@@ -63,7 +61,11 @@ export class TokenService {
 
   async signPlatformToken(email: string): Promise<string> {
     return this.jwt.signAsync(
-      { sub: 'platform-admin', email, typ: 'platform' } satisfies PlatformJwtPayload,
+      {
+        sub: 'platform-admin',
+        email,
+        typ: 'platform',
+      } satisfies PlatformJwtPayload,
       {
         secret: this.config.getOrThrow<string>('platformAdmin.jwtSecret'),
         expiresIn: this.config.getOrThrow<string>('platformAdmin.jwtExpiresIn'),
@@ -89,9 +91,12 @@ export class TokenService {
 
   async verifyTwoFactorTicket(token: string): Promise<TwoFactorTicketPayload> {
     try {
-      const payload = await this.jwt.verifyAsync<TwoFactorTicketPayload>(token, {
-        secret: this.config.getOrThrow<string>('adminAuth.ticketSecret'),
-      });
+      const payload = await this.jwt.verifyAsync<TwoFactorTicketPayload>(
+        token,
+        {
+          secret: this.config.getOrThrow<string>('adminAuth.ticketSecret'),
+        },
+      );
       if (payload.typ !== 'admin-2fa-ticket') {
         throw new Error('wrong token type');
       }

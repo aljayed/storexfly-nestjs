@@ -5,12 +5,15 @@ import {
   Injectable,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
-import { AdminRole, ROLES_KEY } from '../decorators/roles.decorator';
+import type { AdminPermission } from '../auth/admin-permissions';
+import { roleHasPermission } from '../auth/admin-permissions';
+import { AdminRole, PERMS_KEY, ROLES_KEY } from '../decorators/roles.decorator';
 import type { AdminPrincipal, RequestWithPrincipal } from '../types/principal';
 
 /**
- * Enforces `@Roles(...)` on admin routes. Must run after `AdminJwtAuthGuard`
- * so `req.user` is populated. No `@Roles` metadata = any authenticated admin.
+ * Enforces `@Roles(...)` and `@RequirePerm(...)` on admin routes. Must run
+ * after `AdminJwtAuthGuard` so `req.user` is populated. No metadata = any
+ * authenticated admin.
  */
 @Injectable()
 export class RolesGuard implements CanActivate {
@@ -21,16 +24,28 @@ export class RolesGuard implements CanActivate {
       context.getHandler(),
       context.getClass(),
     ]);
-    if (!required || required.length === 0) {
+    const perms = this.reflector.getAllAndOverride<AdminPermission[]>(
+      PERMS_KEY,
+      [context.getHandler(), context.getClass()],
+    );
+    if (!required?.length && !perms?.length) {
       return true;
     }
     const request = context
       .switchToHttp()
       .getRequest<RequestWithPrincipal<AdminPrincipal>>();
     const user = request.user;
-    if (!user || !required.includes(user.role)) {
+    if (!user) {
+      throw new ForbiddenException('Not authenticated as an admin');
+    }
+    if (required?.length && !required.includes(user.role)) {
       throw new ForbiddenException(
         `Requires one of roles: ${required.join(', ')}`,
+      );
+    }
+    if (perms?.length && !perms.every((p) => roleHasPermission(user.role, p))) {
+      throw new ForbiddenException(
+        'Your access level does not allow this action',
       );
     }
     return true;

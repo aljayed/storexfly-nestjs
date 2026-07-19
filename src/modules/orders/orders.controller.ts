@@ -13,6 +13,8 @@ import {
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 import { Public } from '../../common/decorators/public.decorator';
+import { RequirePerm } from '../../common/decorators/roles.decorator';
+import { RolesGuard } from '../../common/guards/roles.guard';
 import { AdminJwtAuthGuard } from '../../common/guards/admin-jwt-auth.guard';
 import { ShopScopeGuard } from '../../common/guards/shop-scope.guard';
 import { CheckoutDto } from './dto/checkout.dto';
@@ -37,7 +39,8 @@ export class OrdersController {
 
   // ── Admin order pipeline ─────────────────────────────────────
   @Public()
-  @UseGuards(AdminJwtAuthGuard, ShopScopeGuard)
+  @UseGuards(AdminJwtAuthGuard, ShopScopeGuard, RolesGuard)
+  @RequirePerm('orders.manage')
   @ApiBearerAuth()
   @Get('shops/:shopId/orders')
   @ApiOperation({
@@ -48,7 +51,8 @@ export class OrdersController {
   }
 
   @Public()
-  @UseGuards(AdminJwtAuthGuard, ShopScopeGuard)
+  @UseGuards(AdminJwtAuthGuard, ShopScopeGuard, RolesGuard)
+  @RequirePerm('orders.manage')
   @ApiBearerAuth()
   @Get('shops/:shopId/orders/:id')
   @ApiOperation({ summary: 'Admin: get one order' })
@@ -57,7 +61,8 @@ export class OrdersController {
   }
 
   @Public()
-  @UseGuards(AdminJwtAuthGuard, ShopScopeGuard)
+  @UseGuards(AdminJwtAuthGuard, ShopScopeGuard, RolesGuard)
+  @RequirePerm('orders.manage')
   @ApiBearerAuth()
   @Patch('shops/:shopId/orders/:id/status')
   @ApiOperation({ summary: 'Admin: advance order status' })
@@ -70,7 +75,8 @@ export class OrdersController {
   }
 
   @Public()
-  @UseGuards(AdminJwtAuthGuard, ShopScopeGuard)
+  @UseGuards(AdminJwtAuthGuard, ShopScopeGuard, RolesGuard)
+  @RequirePerm('orders.manage')
   @ApiBearerAuth()
   @Post('shops/:shopId/orders/:id/refund')
   @HttpCode(HttpStatus.OK)
@@ -80,7 +86,8 @@ export class OrdersController {
   }
 
   @Public()
-  @UseGuards(AdminJwtAuthGuard, ShopScopeGuard)
+  @UseGuards(AdminJwtAuthGuard, ShopScopeGuard, RolesGuard)
+  @RequirePerm('orders.manage')
   @ApiBearerAuth()
   @Post('shops/:shopId/orders/:id/cancel')
   @HttpCode(HttpStatus.OK)
