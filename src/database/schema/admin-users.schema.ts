@@ -39,9 +39,7 @@ export const adminUsers = pgTable(
       .defaultNow()
       .$onUpdate(() => new Date()),
   },
-  (table) => [
-    uniqueIndex('admin_users_email_unique_idx').on(table.email),
-  ],
+  (table) => [uniqueIndex('admin_users_email_unique_idx').on(table.email)],
 );
 
 export const adminUsersRelations = relations(adminUsers, ({ one }) => ({

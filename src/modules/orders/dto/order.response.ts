@@ -47,6 +47,16 @@ export class OrderResponse {
   @ApiProperty({ enum: ['Store', 'Instagram', 'WhatsApp'] }) channel!: string;
   @ApiPropertyOptional() address?: DeliveryAddressValue;
   @ApiProperty({ description: 'ISO order date' }) date!: string;
+  @ApiProperty({ description: 'Delivery charge included in the total' })
+  delivery!: number;
+  @ApiPropertyOptional({ description: 'Steadfast consignment id' })
+  courierConsignmentId?: string;
+  @ApiPropertyOptional({ description: 'Steadfast tracking code' })
+  courierTrackingCode?: string;
+  @ApiPropertyOptional({
+    description: "Courier delivery status ('pending', 'delivered', …)",
+  })
+  courierStatus?: string;
 
   static fromRow(row: OrderRow, items: OrderItemRow[]): OrderResponse {
     return {
@@ -65,6 +75,10 @@ export class OrderResponse {
       channel: row.channel,
       address: row.address ?? undefined,
       date: row.placedAt.toISOString(),
+      delivery: centsToDollars(row.deliveryCents),
+      courierConsignmentId: row.courierConsignmentId ?? undefined,
+      courierTrackingCode: row.courierTrackingCode ?? undefined,
+      courierStatus: row.courierStatus ?? undefined,
     };
   }
 }

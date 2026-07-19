@@ -1,4 +1,5 @@
 import {
+  boolean,
   integer,
   pgTable,
   text,
@@ -40,6 +41,19 @@ export const platformSettings = pgTable('platform_settings', {
   // Operator-editable copy of the info banner on the seller settlements page.
   // null/empty = the app renders its built-in default explanation.
   settlementBanner: text('settlement_banner'),
+  // ── bKash merchant credentials (Tokenized Checkout) ─────────────
+  // Set from the platform-admin console; secrets never leave the API in
+  // readable form. Sandbox mode targets bKash's test environment.
+  bkashEnabled: boolean('bkash_enabled').notNull().default(false),
+  bkashSandbox: boolean('bkash_sandbox').notNull().default(true),
+  bkashAppKey: text('bkash_app_key'),
+  bkashAppSecret: text('bkash_app_secret'),
+  bkashUsername: text('bkash_username'),
+  bkashPassword: text('bkash_password'),
+  // ── Steadfast courier credentials ───────────────────────────────
+  steadfastEnabled: boolean('steadfast_enabled').notNull().default(false),
+  steadfastApiKey: text('steadfast_api_key'),
+  steadfastSecretKey: text('steadfast_secret_key'),
   updatedAt: timestamp('updated_at', { withTimezone: true })
     .notNull()
     .defaultNow()

@@ -15,6 +15,7 @@ import {
   kycStatusEnum,
   shopCategoryEnum,
   shopLanguageEnum,
+  shopPlanEnum,
 } from './enums';
 import { users } from './users.schema';
 import { products } from './products.schema';
@@ -63,6 +64,10 @@ export const shops = pgTable(
     // and checkout endpoints all refuse to serve the shop. Forced off when
     // the platform subscription is cancelled.
     live: boolean('live').notNull().default(true),
+    // Pricing tier. Free shops carry hard limits (1 product, ৳5,000 lifetime
+    // sales) and are deactivated at the sales cap until they subscribe.
+    // Existing shops predate the free tier and stay 'paid'.
+    plan: shopPlanEnum('plan').notNull().default('paid'),
     // ── Business verification (trade-license KYC) ──────────────────
     // All optional: a shop can be created and go live without any of this,
     // and the seller can complete or update it later from the console.

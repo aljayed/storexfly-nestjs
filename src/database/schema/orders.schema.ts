@@ -49,6 +49,8 @@ export const orders = pgTable(
     phone: varchar('phone', { length: 24 }),
     qty: integer('qty').notNull(),
     totalCents: integer('total_cents').notNull(),
+    // Delivery charge included in `totalCents` (also present as a line item).
+    deliveryCents: integer('delivery_cents').notNull().default(0),
     status: orderStatusEnum('status').notNull().default('New'),
     pay: paymentStatusEnum('pay').notNull().default('Paid'),
     // Code of the `payment_methods` row the buyer paid with ('cod', 'mbank',
@@ -57,6 +59,11 @@ export const orders = pgTable(
     mobileBankApp: mobileBankAppEnum('mobile_bank_app'),
     channel: salesChannelEnum('channel').notNull().default('Store'),
     address: jsonb('address').$type<DeliveryAddressValue>(),
+    // ── Steadfast courier consignment (set when the seller books) ──
+    courierConsignmentId: varchar('courier_consignment_id', { length: 40 }),
+    courierTrackingCode: varchar('courier_tracking_code', { length: 40 }),
+    // Raw delivery_status from Steadfast ('pending', 'delivered', …).
+    courierStatus: varchar('courier_status', { length: 40 }),
     placedAt: timestamp('placed_at', { withTimezone: true })
       .notNull()
       .defaultNow(),

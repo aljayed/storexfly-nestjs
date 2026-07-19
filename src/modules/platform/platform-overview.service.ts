@@ -153,7 +153,7 @@ export class PlatformOverviewService {
     const statusWhere =
       status === 'all'
         ? ne(shops.kycStatus, 'unsubmitted')
-        : eq(shops.kycStatus, status as KycStatus);
+        : eq(shops.kycStatus, status);
     const search = q
       ? or(
           ilike(shops.name, `%${q}%`),

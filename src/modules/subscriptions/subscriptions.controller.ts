@@ -102,6 +102,20 @@ export class SubscriptionsController {
   @UseGuards(AdminJwtAuthGuard, ShopScopeGuard, RolesGuard)
   @RequirePerm('subscription.manage')
   @ApiBearerAuth()
+  @Post('shops/:shopId/subscription/activate')
+  @ApiOperation({
+    summary:
+      'Admin: upgrade a free shop to the paid plan (consumes the paid shop credit)',
+  })
+  @ApiOkResponse({ type: SubscriptionResponse })
+  activate(@Param('shopId') shopId: string) {
+    return this.subscriptions.activateForExistingShop(shopId);
+  }
+
+  @Public()
+  @UseGuards(AdminJwtAuthGuard, ShopScopeGuard, RolesGuard)
+  @RequirePerm('subscription.manage')
+  @ApiBearerAuth()
   @Post('shops/:shopId/subscription/cancel')
   @ApiOperation({ summary: 'Admin: cancel the subscription (shop goes off)' })
   @ApiOkResponse({ type: SubscriptionResponse })

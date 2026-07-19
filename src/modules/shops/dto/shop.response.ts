@@ -18,6 +18,7 @@ export class ShopResponse {
   @ApiProperty({ example: '#fbeede' }) brandSoft!: string;
   @ApiProperty() ownerId!: string;
   @ApiProperty() live!: boolean;
+  @ApiProperty({ enum: ['free', 'paid'] }) plan!: string;
   @ApiPropertyOptional({
     type: [String],
     description: 'Storefront hero banner images (data URLs), in display order',
@@ -54,6 +55,7 @@ export class ShopResponse {
       brandSoft: row.brandSoft,
       ownerId: row.ownerId,
       live: row.live,
+      plan: row.plan,
       bannerImages: row.bannerImages ?? undefined,
       floatingImages: row.floatingImages ?? undefined,
       trustBadges: row.trustBadges ?? undefined,

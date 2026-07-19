@@ -253,6 +253,13 @@
       "when": 1786060800000,
       "tag": "0038_admin_access_invites",
       "breakpoints": true
+    },
+    {
+      "idx": 39,
+      "version": "7",
+      "when": 1789084800000,
+      "tag": "0039_bkash_courier_free_tier",
+      "breakpoints": true
     }
   ]
 }

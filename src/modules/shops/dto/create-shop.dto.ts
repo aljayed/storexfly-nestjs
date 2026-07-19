@@ -27,6 +27,15 @@ export class CreateShopDto {
   @MaxLength(160)
   name!: string;
 
+  @ApiPropertyOptional({
+    enum: ['free', 'paid'],
+    description:
+      "Pricing tier. 'free' skips the ৳1,199 fee but limits the shop to 1 product and ৳5,000 of lifetime sales (one free shop per seller).",
+  })
+  @IsOptional()
+  @IsEnum(['free', 'paid'])
+  plan?: 'free' | 'paid';
+
   @ApiProperty({ example: 'mango-shop', description: 'URL handle' })
   @IsString()
   @Matches(/^[a-z0-9-]+$/, {

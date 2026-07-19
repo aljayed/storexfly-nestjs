@@ -1,5 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import type {
+  ShopRow,
   SubscriptionPaymentRow,
   SubscriptionRow,
 } from '../../../database/schema';
@@ -33,11 +34,28 @@ export class SubscriptionPaymentResponse {
   }
 }
 
+/** Free-plan usage numbers rendered on the Subscription page. */
+export class FreeTierUsageResponse {
+  @ApiProperty({ example: 3250, description: 'Lifetime sales so far (৳)' })
+  salesUsed!: number;
+  @ApiProperty({ example: 5000, description: 'Lifetime sales cap (৳)' })
+  salesCap!: number;
+  @ApiProperty({ example: 1 }) productsUsed!: number;
+  @ApiProperty({ example: 1 }) maxProducts!: number;
+}
+
 /** Admin-console subscription view (the Subscription page). */
 export class SubscriptionResponse {
   @ApiProperty() id!: string;
   @ApiProperty() shopId!: string;
-  @ApiProperty({ enum: ['active', 'past_due', 'cancelled'] }) status!: string;
+  @ApiProperty({ enum: ['free', 'paid'] }) plan!: string;
+  @ApiPropertyOptional({
+    type: FreeTierUsageResponse,
+    description: 'Present only on the free plan',
+  })
+  freeTier?: FreeTierUsageResponse;
+  @ApiProperty({ enum: ['active', 'past_due', 'cancelled', 'free'] })
+  status!: string;
   @ApiProperty({ example: 1199 }) amount!: number;
   @ApiProperty({ example: 'BDT' }) currency!: string;
   @ApiProperty() autoDebit!: boolean;
@@ -62,6 +80,7 @@ export class SubscriptionResponse {
     return {
       id: sub.id,
       shopId: sub.shopId,
+      plan: 'paid',
       status: sub.status,
       amount: sub.amountCents / 100,
       currency: sub.currency,
@@ -77,6 +96,40 @@ export class SubscriptionResponse {
       dueNow: sub.status !== 'cancelled' && sub.nextBillingAt <= new Date(),
       shopLive,
       payments: payments.map(SubscriptionPaymentResponse.fromRow),
+    };
+  }
+
+  /** The free-plan card: no subscription row, just limits + usage. */
+  static freeTier(
+    shop: ShopRow,
+    usage: {
+      salesCents: number;
+      salesCapCents: number;
+      productsCount: number;
+      maxProducts: number;
+      monthlyFeeCents: number;
+    },
+  ): SubscriptionResponse {
+    return {
+      id: shop.id,
+      shopId: shop.id,
+      plan: 'free',
+      freeTier: {
+        salesUsed: usage.salesCents / 100,
+        salesCap: usage.salesCapCents / 100,
+        productsUsed: usage.productsCount,
+        maxProducts: usage.maxProducts,
+      },
+      status: 'free',
+      amount: usage.monthlyFeeCents / 100,
+      currency: shop.currency,
+      autoDebit: false,
+      nextAmount: usage.monthlyFeeCents / 100,
+      startedAt: shop.createdAt.toISOString(),
+      nextBillingAt: shop.createdAt.toISOString(),
+      dueNow: false,
+      shopLive: shop.live,
+      payments: [],
     };
   }
 }

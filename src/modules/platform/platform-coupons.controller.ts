@@ -50,10 +50,7 @@ export class PlatformCouponsController {
   @Patch(':id')
   @ApiOperation({ summary: 'Platform admin: activate/deactivate a coupon' })
   @ApiOkResponse({ type: CouponResponse })
-  update(
-    @Param('id', ParseUUIDPipe) id: string,
-    @Body() dto: UpdateCouponDto,
-  ) {
+  update(@Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdateCouponDto) {
     return this.coupons.setActive(id, dto.active ?? true);
   }
 
