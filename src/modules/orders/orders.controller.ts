@@ -17,6 +17,7 @@ import { RequirePerm } from '../../common/decorators/roles.decorator';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { AdminJwtAuthGuard } from '../../common/guards/admin-jwt-auth.guard';
 import { ShopScopeGuard } from '../../common/guards/shop-scope.guard';
+import { BookCourierDto } from './dto/book-courier.dto';
 import { CheckoutDto } from './dto/checkout.dto';
 import { OrderQueryDto } from './dto/order-query.dto';
 import { UpdateOrderStatusDto } from './dto/update-order-status.dto';
@@ -112,7 +113,7 @@ export class OrdersController {
     return this.orders.markPaid(shopId, id);
   }
 
-  // ── Steadfast courier ────────────────────────────────────────
+  // ── Courier (whichever provider the shop enabled) ────────────
   @Public()
   @UseGuards(AdminJwtAuthGuard, ShopScopeGuard, RolesGuard)
   @RequirePerm('orders.manage')
@@ -120,10 +121,15 @@ export class OrdersController {
   @Post('shops/:shopId/orders/:id/courier')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
-    summary: 'Admin: book a Steadfast parcel (COD amount auto-set)',
+    summary:
+      "Admin: book a parcel with the shop's courier (COD amount auto-set; Pathao needs cityId/zoneId)",
   })
-  bookCourier(@Param('shopId') shopId: string, @Param('id') id: string) {
-    return this.orders.bookCourier(shopId, id);
+  bookCourier(
+    @Param('shopId') shopId: string,
+    @Param('id') id: string,
+    @Body() dto: BookCourierDto,
+  ) {
+    return this.orders.bookCourier(shopId, id, dto);
   }
 
   @Public()
@@ -132,7 +138,7 @@ export class OrdersController {
   @ApiBearerAuth()
   @Get('shops/:shopId/orders/:id/courier')
   @ApiOperation({
-    summary: 'Admin: refresh the Steadfast delivery status for an order',
+    summary: 'Admin: refresh the courier delivery status for an order',
   })
   refreshCourier(@Param('shopId') shopId: string, @Param('id') id: string) {
     return this.orders.refreshCourier(shopId, id);

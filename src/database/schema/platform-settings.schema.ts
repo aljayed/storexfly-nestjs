@@ -50,7 +50,9 @@ export const platformSettings = pgTable('platform_settings', {
   bkashAppSecret: text('bkash_app_secret'),
   bkashUsername: text('bkash_username'),
   bkashPassword: text('bkash_password'),
-  // ── Steadfast courier credentials ───────────────────────────────
+  // ── Steadfast courier credentials (LEGACY, no longer read) ──────
+  // Couriers moved to per-shop credentials in `shop_couriers`; these
+  // columns only preserve what the operator had entered before that.
   steadfastEnabled: boolean('steadfast_enabled').notNull().default(false),
   steadfastApiKey: text('steadfast_api_key'),
   steadfastSecretKey: text('steadfast_secret_key'),

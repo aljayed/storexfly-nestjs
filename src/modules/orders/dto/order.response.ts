@@ -49,9 +49,14 @@ export class OrderResponse {
   @ApiProperty({ description: 'ISO order date' }) date!: string;
   @ApiProperty({ description: 'Delivery charge included in the total' })
   delivery!: number;
-  @ApiPropertyOptional({ description: 'Steadfast consignment id' })
+  @ApiPropertyOptional({
+    enum: ['steadfast', 'pathao'],
+    description: 'Courier that booked the parcel (absent = none yet)',
+  })
+  courierProvider?: string;
+  @ApiPropertyOptional({ description: 'Courier consignment id' })
   courierConsignmentId?: string;
-  @ApiPropertyOptional({ description: 'Steadfast tracking code' })
+  @ApiPropertyOptional({ description: 'Courier tracking code' })
   courierTrackingCode?: string;
   @ApiPropertyOptional({
     description: "Courier delivery status ('pending', 'delivered', …)",
@@ -76,6 +81,9 @@ export class OrderResponse {
       address: row.address ?? undefined,
       date: row.placedAt.toISOString(),
       delivery: centsToDollars(row.deliveryCents),
+      courierProvider:
+        row.courierProvider ??
+        (row.courierConsignmentId ? 'steadfast' : undefined),
       courierConsignmentId: row.courierConsignmentId ?? undefined,
       courierTrackingCode: row.courierTrackingCode ?? undefined,
       courierStatus: row.courierStatus ?? undefined,

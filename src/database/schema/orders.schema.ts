@@ -59,10 +59,13 @@ export const orders = pgTable(
     mobileBankApp: mobileBankAppEnum('mobile_bank_app'),
     channel: salesChannelEnum('channel').notNull().default('Store'),
     address: jsonb('address').$type<DeliveryAddressValue>(),
-    // ── Steadfast courier consignment (set when the seller books) ──
+    // ── Courier consignment (set when the seller books) ────────────
+    // Which provider booked it ('steadfast' | 'pathao'); null on legacy
+    // rows booked before per-shop couriers, which were all Steadfast.
+    courierProvider: varchar('courier_provider', { length: 20 }),
     courierConsignmentId: varchar('courier_consignment_id', { length: 40 }),
     courierTrackingCode: varchar('courier_tracking_code', { length: 40 }),
-    // Raw delivery_status from Steadfast ('pending', 'delivered', …).
+    // Raw delivery status from the provider ('pending', 'delivered', …).
     courierStatus: varchar('courier_status', { length: 40 }),
     placedAt: timestamp('placed_at', { withTimezone: true })
       .notNull()

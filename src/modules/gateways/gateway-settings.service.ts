@@ -16,12 +16,6 @@ export interface BkashConfig {
   password: string;
 }
 
-export interface SteadfastConfig {
-  enabled: boolean;
-  apiKey: string;
-  secretKey: string;
-}
-
 /** What the platform console sees: everything except the secret values. */
 export interface GatewaySettingsView {
   bkash: {
@@ -33,18 +27,13 @@ export interface GatewaySettingsView {
     hasPassword: boolean;
     configured: boolean;
   };
-  steadfast: {
-    enabled: boolean;
-    apiKey: string | null;
-    hasSecret: boolean;
-    configured: boolean;
-  };
 }
 
 /**
- * bKash + Steadfast merchant credentials, stored on the platform-settings
- * singleton and managed from the platform-admin console. Secrets are write-
- * only through the API: reads expose only whether one is set.
+ * bKash merchant credentials, stored on the platform-settings singleton and
+ * managed from the platform-admin console. Secrets are write-only through
+ * the API: reads expose only whether one is set. (Couriers are per-shop —
+ * see ShopCourierSettingsService.)
  */
 @Injectable()
 export class GatewaySettingsService {
@@ -88,22 +77,6 @@ export class GatewaySettingsService {
     };
   }
 
-  async steadfastConfig(): Promise<SteadfastConfig | null> {
-    const row = await this.row();
-    if (
-      !row?.steadfastEnabled ||
-      !row.steadfastApiKey ||
-      !row.steadfastSecretKey
-    ) {
-      return null;
-    }
-    return {
-      enabled: true,
-      apiKey: row.steadfastApiKey,
-      secretKey: row.steadfastSecretKey,
-    };
-  }
-
   async view(): Promise<GatewaySettingsView> {
     const row = await this.row();
     return {
@@ -120,12 +93,6 @@ export class GatewaySettingsService {
           row.bkashUsername &&
           row.bkashPassword
         ),
-      },
-      steadfast: {
-        enabled: row?.steadfastEnabled ?? false,
-        apiKey: row?.steadfastApiKey ?? null,
-        hasSecret: !!row?.steadfastSecretKey,
-        configured: !!(row?.steadfastApiKey && row.steadfastSecretKey),
       },
     };
   }
@@ -156,28 +123,6 @@ export class GatewaySettingsService {
         }),
         ...(patch.password !== undefined && {
           bkashPassword: patch.password.trim() || null,
-        }),
-      })
-      .where(eq(platformSettings.id, row.id));
-    return this.view();
-  }
-
-  /** Patch Steadfast settings; an omitted secret keeps its stored value. */
-  async updateSteadfast(patch: {
-    enabled?: boolean;
-    apiKey?: string;
-    secretKey?: string;
-  }): Promise<GatewaySettingsView> {
-    const row = await this.requireRow();
-    await this.db
-      .update(platformSettings)
-      .set({
-        ...(patch.enabled !== undefined && { steadfastEnabled: patch.enabled }),
-        ...(patch.apiKey !== undefined && {
-          steadfastApiKey: patch.apiKey.trim() || null,
-        }),
-        ...(patch.secretKey !== undefined && {
-          steadfastSecretKey: patch.secretKey.trim() || null,
         }),
       })
       .where(eq(platformSettings.id, row.id));

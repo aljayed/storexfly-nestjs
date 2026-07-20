@@ -38,6 +38,8 @@ import {
 import type { OrderStatus, SalesChannel } from '../../database/schema/enums';
 import { CustomersService } from '../customers/customers.service';
 import { BkashService } from '../gateways/bkash.service';
+import { PathaoService } from '../gateways/pathao.service';
+import { ShopCourierSettingsService } from '../gateways/shop-courier-settings.service';
 import { SteadfastService } from '../gateways/steadfast.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PaymentMethodsService } from '../settlements/payment-methods.service';
@@ -101,6 +103,8 @@ export class OrdersService {
     private readonly notifications: NotificationsService,
     private readonly bkash: BkashService,
     private readonly steadfast: SteadfastService,
+    private readonly pathao: PathaoService,
+    private readonly courierSettings: ShopCourierSettingsService,
     private readonly config: ConfigService,
   ) {}
 
@@ -899,14 +903,20 @@ export class OrdersService {
     return row ?? null;
   }
 
-  // ── Steadfast courier ──────────────────────────────────────────
+  // ── Courier (Steadfast / Pathao, per-shop) ─────────────────────
 
   /**
-   * Book a Steadfast parcel for a confirmed/packed order. The courier
+   * Book a parcel for a confirmed/packed order through the courier the shop
+   * has enabled (none enabled = the seller delivers manually). The courier
    * collects the order total in cash when the money is still due (COD),
-   * nothing when it was prepaid.
+   * nothing when it was prepaid. Pathao additionally needs the recipient's
+   * city/zone as Pathao IDs, picked by the seller in the booking modal.
    */
-  async bookCourier(shopId: string, id: string): Promise<OrderResponse> {
+  async bookCourier(
+    shopId: string,
+    id: string,
+    opts?: { cityId?: number; zoneId?: number; areaId?: number },
+  ): Promise<OrderResponse> {
     const order = await this.requireOwned(shopId, id);
     if (order.courierConsignmentId) {
       throw new ConflictException(
@@ -931,20 +941,59 @@ export class OrdersService {
     if (!address) {
       throw new BadRequestException('This order has no delivery address.');
     }
-    const consignment = await this.steadfast.createConsignment({
+    const active = await this.courierSettings.activeCourier(shopId);
+    if (!active) {
+      throw new BadRequestException(
+        'No courier is enabled for this shop — enable Steadfast or Pathao in Settings, or deliver manually.',
+      );
+    }
+    const shipment = {
       invoice: `${order.reference.replace('#', '')}-${order.id.slice(0, 8)}`,
       recipientName: order.customerName,
       recipientPhone: order.phone,
       recipientAddress: address,
       codAmountCents: order.pay === 'Due' ? order.totalCents : 0,
       note: `Order ${order.reference}`,
-    });
+    };
+    let booked: {
+      consignmentId: string;
+      trackingCode: string | null;
+      status: string;
+    };
+    if (active.provider === 'steadfast') {
+      const c = await this.steadfast.createConsignment(active.config, shipment);
+      booked = {
+        consignmentId: c.consignmentId,
+        trackingCode: c.trackingCode,
+        status: c.status,
+      };
+    } else {
+      if (!opts?.cityId || !opts.zoneId) {
+        throw new BadRequestException(
+          'Pick the delivery city and zone to book with Pathao.',
+        );
+      }
+      const c = await this.pathao.createOrder(active.config, {
+        ...shipment,
+        cityId: opts.cityId,
+        zoneId: opts.zoneId,
+        areaId: opts.areaId,
+        itemQuantity: order.qty,
+      });
+      // Pathao has no separate tracking code — the consignment ID is it.
+      booked = {
+        consignmentId: c.consignmentId,
+        trackingCode: c.consignmentId,
+        status: c.status,
+      };
+    }
     const [row] = await this.db
       .update(orders)
       .set({
-        courierConsignmentId: consignment.consignmentId,
-        courierTrackingCode: consignment.trackingCode,
-        courierStatus: consignment.status,
+        courierProvider: active.provider,
+        courierConsignmentId: booked.consignmentId,
+        courierTrackingCode: booked.trackingCode,
+        courierStatus: booked.status,
       })
       .where(eq(orders.id, order.id))
       .returning();
@@ -955,7 +1004,7 @@ export class OrdersService {
   }
 
   /**
-   * Refresh the consignment's delivery status from Steadfast. A delivered
+   * Refresh the consignment's delivery status from its provider. A delivered
    * parcel completes the order (and collects COD cash); everything else just
    * updates the badge the seller sees.
    */
@@ -964,7 +1013,7 @@ export class OrdersService {
     if (!order.courierConsignmentId) {
       throw new NotFoundException('No courier is booked for this order.');
     }
-    const status = await this.steadfast.status(order.courierConsignmentId);
+    const status = await this.courierStatus(shopId, order);
     let row = order;
     if (status && status !== order.courierStatus) {
       const delivered =
@@ -996,6 +1045,30 @@ export class OrdersService {
       where: eq(orderItems.orderId, order.id),
     });
     return OrderResponse.fromRow(row, items);
+  }
+
+  /** Ask the provider that booked this consignment for its current status.
+   *  Legacy rows booked before per-shop couriers were all Steadfast. */
+  private async courierStatus(
+    shopId: string,
+    order: OrderRow,
+  ): Promise<string | null> {
+    if (order.courierProvider === 'pathao') {
+      const config = await this.courierSettings.pathaoConfig(shopId);
+      if (!config) {
+        throw new BadRequestException(
+          'Pathao credentials were removed — add them back in Settings to track this parcel.',
+        );
+      }
+      return this.pathao.status(config, order.courierConsignmentId!);
+    }
+    const config = await this.courierSettings.steadfastConfig(shopId);
+    if (!config) {
+      throw new BadRequestException(
+        'Steadfast credentials are missing — add them in Settings to track this parcel.',
+      );
+    }
+    return this.steadfast.status(config, order.courierConsignmentId!);
   }
 
   private async isCodOrder(order: OrderRow): Promise<boolean> {

@@ -3,7 +3,7 @@ import {
   Logger,
   ServiceUnavailableException,
 } from '@nestjs/common';
-import { GatewaySettingsService } from './gateway-settings.service';
+import type { ShopSteadfastConfig } from './shop-courier-settings.service';
 
 const STEADFAST_BASE = 'https://portal.packzy.com/api/v1';
 const REQUEST_TIMEOUT_MS = 30_000;
@@ -15,29 +15,18 @@ export interface SteadfastConsignment {
 }
 
 /**
- * Steadfast Courier client (portal.packzy.com API). Credentials come from
- * the platform-settings singleton, managed in the platform-admin console.
+ * Steadfast Courier client (portal.packzy.com API). Credentials are per-shop,
+ * set by the seller in the console (see ShopCourierSettingsService).
  */
 @Injectable()
 export class SteadfastService {
   private readonly logger = new Logger(SteadfastService.name);
 
-  constructor(private readonly settings: GatewaySettingsService) {}
-
-  async isConfigured(): Promise<boolean> {
-    return !!(await this.settings.steadfastConfig());
-  }
-
   private async request<T>(
+    config: ShopSteadfastConfig,
     path: string,
     init?: { method?: string; body?: unknown },
   ): Promise<T> {
-    const config = await this.settings.steadfastConfig();
-    if (!config) {
-      throw new ServiceUnavailableException(
-        'Courier delivery is not configured — ask the platform operator to set up Steadfast.',
-      );
-    }
     const res = await fetch(`${STEADFAST_BASE}${path}`, {
       method: init?.method ?? 'GET',
       headers: {
@@ -59,14 +48,17 @@ export class SteadfastService {
    * Book one parcel. `codAmountCents` is what the courier collects from the
    * buyer on delivery (0 for prepaid orders).
    */
-  async createConsignment(input: {
-    invoice: string;
-    recipientName: string;
-    recipientPhone: string;
-    recipientAddress: string;
-    codAmountCents: number;
-    note?: string;
-  }): Promise<SteadfastConsignment> {
+  async createConsignment(
+    config: ShopSteadfastConfig,
+    input: {
+      invoice: string;
+      recipientName: string;
+      recipientPhone: string;
+      recipientAddress: string;
+      codAmountCents: number;
+      note?: string;
+    },
+  ): Promise<SteadfastConsignment> {
     try {
       const data = await this.request<{
         status?: number;
@@ -76,7 +68,7 @@ export class SteadfastService {
           status?: string;
         };
         message?: string;
-      }>('/create_order', {
+      }>(config, '/create_order', {
         method: 'POST',
         body: {
           invoice: input.invoice,
@@ -107,12 +99,15 @@ export class SteadfastService {
   }
 
   /** Current delivery_status for a consignment ('pending', 'delivered', …). */
-  async status(consignmentId: string): Promise<string | null> {
+  async status(
+    config: ShopSteadfastConfig,
+    consignmentId: string,
+  ): Promise<string | null> {
     try {
       const data = await this.request<{
         status?: number;
         delivery_status?: string;
-      }>(`/status_by_cid/${encodeURIComponent(consignmentId)}`);
+      }>(config, `/status_by_cid/${encodeURIComponent(consignmentId)}`);
       return data.delivery_status ?? null;
     } catch (err) {
       this.logger.warn(

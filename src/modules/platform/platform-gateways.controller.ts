@@ -42,25 +42,10 @@ export class UpdateBkashSettingsDto {
   password?: string;
 }
 
-export class UpdateSteadfastSettingsDto {
-  @ApiPropertyOptional() @IsOptional() @IsBoolean() enabled?: boolean;
-  @ApiPropertyOptional()
-  @IsOptional()
-  @IsString()
-  @MaxLength(200)
-  apiKey?: string;
-  @ApiPropertyOptional({
-    description: 'Write-only; omit to keep the stored value',
-  })
-  @IsOptional()
-  @IsString()
-  @MaxLength(200)
-  secretKey?: string;
-}
-
 /**
- * Operator console: bKash merchant + Steadfast courier credentials. Secrets
- * are write-only — reads only reveal whether one is stored.
+ * Operator console: bKash merchant credentials. Secrets are write-only —
+ * reads only reveal whether one is stored. (Couriers moved to per-shop
+ * settings; see ShopCouriersController.)
  */
 @ApiTags('platform-admin')
 @Public()
@@ -72,7 +57,7 @@ export class PlatformGatewaysController {
 
   @Get()
   @ApiOperation({
-    summary: 'Platform: gateway + courier settings (secrets masked)',
+    summary: 'Platform: gateway settings (secrets masked)',
   })
   view() {
     return this.settings.view();
@@ -82,11 +67,5 @@ export class PlatformGatewaysController {
   @ApiOperation({ summary: 'Platform: update bKash merchant credentials' })
   updateBkash(@Body() dto: UpdateBkashSettingsDto) {
     return this.settings.updateBkash(dto);
-  }
-
-  @Patch('steadfast')
-  @ApiOperation({ summary: 'Platform: update Steadfast courier credentials' })
-  updateSteadfast(@Body() dto: UpdateSteadfastSettingsDto) {
-    return this.settings.updateSteadfast(dto);
   }
 }
