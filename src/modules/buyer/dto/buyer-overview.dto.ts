@@ -90,6 +90,8 @@ export interface BuyerProfile {
 
 export interface BuyerOverviewOrder {
   reference: string;
+  /** Shop id — needed to address buyer order actions (claim/cancel). */
+  shopId: string;
   shopName: string;
   shopHandle: string;
   itemSummary: string;

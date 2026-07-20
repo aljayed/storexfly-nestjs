@@ -61,6 +61,9 @@ const STATUS_FLOW: Record<OrderStatus, OrderStatus | null> = {
 /** Statuses from which an order may still be cancelled (before it's packed). */
 const CANCELLABLE: readonly OrderStatus[] = ['New', 'Confirmed'];
 
+/** Statuses a buyer may self-cancel from — only before the seller confirms. */
+const BUYER_CANCELLABLE: readonly OrderStatus[] = ['New'];
+
 /** Statuses from which the seller may hand the parcel to the courier. */
 const COURIER_BOOKABLE: readonly OrderStatus[] = ['Confirmed', 'Packed'];
 
@@ -834,6 +837,49 @@ export class OrdersService {
         'order_cancelled',
         `Order ${row.reference} cancelled`,
         'This order has been cancelled. Any stock has been released.',
+      );
+      const items = await tx.query.orderItems.findMany({
+        where: eq(orderItems.orderId, order.id),
+      });
+      return OrderResponse.fromRow(row, items);
+    });
+  }
+
+  /**
+   * Buyer self-service cancel — only while the order is still 'New' (the shop
+   * admin hasn't confirmed it). Ownership is the order-email ↔ account match,
+   * the same link the buyer's order list is built on. Paid orders are excluded:
+   * cancelling one implies a refund, which stays a shop-side action.
+   */
+  async cancelByBuyer(
+    buyerEmail: string,
+    shopId: string,
+    reference: string,
+  ): Promise<OrderResponse> {
+    return this.db.transaction(async (tx) => {
+      const order = await tx.query.orders.findFirst({
+        where: and(eq(orders.shopId, shopId), eq(orders.reference, reference)),
+      });
+      // A foreign order is reported identically to a missing one, so the
+      // endpoint can't be used to probe other buyers' references.
+      if (!order || order.email !== buyerEmail) {
+        throw new NotFoundException('Order not found');
+      }
+      if (order.status === 'Cancelled') {
+        throw new ConflictException('This order is already cancelled.');
+      }
+      if (!BUYER_CANCELLABLE.includes(order.status) || order.pay === 'Paid') {
+        throw new BadRequestException(
+          'The shop has already started processing this order — please contact the shop to cancel it.',
+        );
+      }
+      const row = await this.cancelTx(tx, order);
+      await this.notifications.orderEvent(
+        tx,
+        row,
+        'order_cancelled',
+        `Order ${row.reference} cancelled`,
+        'You cancelled this order. Any reserved stock has been released.',
       );
       const items = await tx.query.orderItems.findMany({
         where: eq(orderItems.orderId, order.id),

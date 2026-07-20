@@ -325,6 +325,7 @@ export class BuyerService {
       },
       orders: orderRows.map((o) => ({
         reference: o.reference,
+        shopId: o.shopId,
         shopName: o.shop?.name ?? 'Shop',
         shopHandle: o.shop?.handle ?? '',
         itemSummary: summarizeItems(o.items.map((i) => i.name)),

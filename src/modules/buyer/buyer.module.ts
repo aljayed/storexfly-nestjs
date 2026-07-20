@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { PassportModule } from '@nestjs/passport';
 import { AuthModule } from '../auth/auth.module';
 import { BlockedWordsModule } from '../blocked-words/blocked-words.module';
+import { OrdersModule } from '../orders/orders.module';
 import { BuyerAuthController } from './buyer-auth.controller';
 import { BuyerOrdersController } from './buyer-orders.controller';
 import { BuyerProfileController } from './buyer-profile.controller';
@@ -13,7 +14,7 @@ import { BuyerJwtStrategy } from './strategies/buyer-jwt.strategy';
  * shared {@link TokenService}; registers the `buyer-jwt` passport strategy.
  */
 @Module({
-  imports: [AuthModule, PassportModule, BlockedWordsModule],
+  imports: [AuthModule, PassportModule, BlockedWordsModule, OrdersModule],
   controllers: [
     BuyerAuthController,
     BuyerOrdersController,
