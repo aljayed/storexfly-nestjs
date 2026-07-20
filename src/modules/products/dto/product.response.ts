@@ -40,6 +40,11 @@ export class ProductResponse {
   listingType!: ListingType;
   @ApiProperty({ example: 38, description: 'Unit price in dollars' })
   price!: number;
+  @ApiPropertyOptional({
+    example: 45,
+    description: 'Seller-entered "compare at" price (absent = no discount).',
+  })
+  comparePrice?: number;
   @ApiProperty({ example: 'box of 12' }) unit!: string;
   @ApiProperty() stock!: number;
   @ApiProperty({
@@ -86,6 +91,9 @@ export class ProductResponse {
       cat: row.cat,
       listingType: row.listingType,
       price: centsToDollars(row.priceCents),
+      comparePrice: row.comparePriceCents
+        ? centsToDollars(row.comparePriceCents)
+        : undefined,
       unit: row.unit,
       stock: row.stock,
       deliveryDhaka: centsToDollars(row.deliveryDhakaCents),

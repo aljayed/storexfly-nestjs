@@ -80,6 +80,10 @@ export const products = pgTable(
     // contact the seller to purchase offline. Showcase items can't be ordered.
     listingType: listingTypeEnum('listing_type').notNull().default('sale'),
     priceCents: integer('price_cents').notNull(),
+    // Seller-entered "compare at" (regular) price, struck through next to the
+    // real price. Null = no discount display; the storefront also hides it
+    // unless it's genuinely above the selling price — never fabricated.
+    comparePriceCents: integer('compare_price_cents'),
     unit: varchar('unit', { length: 60 }).notNull(),
     stock: integer('stock').notNull().default(0),
     // Per-product delivery charge in integer cents, split by zone. 0 = free

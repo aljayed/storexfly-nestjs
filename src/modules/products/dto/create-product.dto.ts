@@ -166,6 +166,18 @@ export class CreateProductDto {
   @Min(0)
   price!: number;
 
+  @ApiPropertyOptional({
+    example: 45,
+    description:
+      'Seller-entered "compare at" (regular) price, struck through next to ' +
+      'the selling price. 0/absent = no discount display.',
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0)
+  comparePrice?: number;
+
   @ApiProperty({ example: 'box of 12' })
   @IsString()
   @MaxLength(60)

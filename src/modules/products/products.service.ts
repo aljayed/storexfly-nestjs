@@ -170,6 +170,10 @@ export class ProductsService {
         cat: dto.cat,
         listingType,
         priceCents: dollarsToCents(dto.price),
+        // 0 (or absent) means "no compare-at price" — stored as null.
+        comparePriceCents: dto.comparePrice
+          ? dollarsToCents(dto.comparePrice)
+          : null,
         unit: dto.unit,
         stock: listingType === 'showcase' ? 0 : (dto.stock ?? 0),
         deliveryDhakaCents:
@@ -231,6 +235,12 @@ export class ProductsService {
     };
     if (dto.price !== undefined) {
       patch.priceCents = dollarsToCents(dto.price);
+    }
+    // Present clears (0) or sets the compare-at price; absent leaves it as-is.
+    if (dto.comparePrice !== undefined) {
+      patch.comparePriceCents = dto.comparePrice
+        ? dollarsToCents(dto.comparePrice)
+        : null;
     }
     if (dto.deliveryDhaka !== undefined) {
       patch.deliveryDhakaCents = dollarsToCents(dto.deliveryDhaka);
