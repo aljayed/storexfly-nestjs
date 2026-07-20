@@ -104,6 +104,7 @@ export class BuyerAuthResponse {
         city: row.addressCity,
         pincode: row.addressPincode,
         geo: row.geo,
+        lastPayMethod: row.lastPayMethod,
       },
     };
   }

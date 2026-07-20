@@ -52,6 +52,9 @@ export const buyers = pgTable(
     addressPincode: varchar('address_pincode', { length: 24 }),
     // Saved map-pin location (see BuyerGeoValue). Null until they pin one.
     geo: jsonb('geo').$type<BuyerGeoValue>(),
+    // Payment method code (platform catalog) from their most recent order —
+    // preselected at checkout when the seller still offers that method.
+    lastPayMethod: varchar('last_pay_method', { length: 64 }),
     // True only for accounts created via the OTP-verified signup modal; the
     // instant account created inline at checkout is never verified this way.
     emailVerified: boolean('email_verified').notNull().default(false),

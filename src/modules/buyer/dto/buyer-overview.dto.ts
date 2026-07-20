@@ -77,6 +77,15 @@ export class UpdateBuyerProfileDto {
   @ValidateNested()
   @Type(() => BuyerGeoDto)
   geo?: BuyerGeoDto | null;
+
+  // Payment method code (platform catalog) from the buyer's latest order —
+  // written by checkout so the next order preselects the same method.
+  @ApiProperty({ example: 'cod', required: false })
+  @IsOptional()
+  @IsString()
+  @Transform(trim)
+  @MaxLength(64)
+  lastPayMethod?: string;
 }
 
 /** The buyer's account + saved checkout details (GET /buyer/auth/me, PATCH). */
@@ -89,6 +98,7 @@ export interface BuyerProfile {
   city: string | null;
   pincode: string | null;
   geo: BuyerGeoValue | null;
+  lastPayMethod: string | null;
 }
 
 export interface BuyerOverviewOrder {

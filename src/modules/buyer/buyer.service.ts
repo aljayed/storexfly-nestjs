@@ -243,6 +243,7 @@ export class BuyerService {
       city: row.addressCity,
       pincode: row.addressPincode,
       geo: row.geo,
+      lastPayMethod: row.lastPayMethod,
     };
   }
 
@@ -262,6 +263,9 @@ export class BuyerService {
     if (dto.city !== undefined) patch.addressCity = dto.city || null;
     if (dto.pincode !== undefined) patch.addressPincode = dto.pincode || null;
     if (dto.geo !== undefined) patch.geo = dto.geo ?? null;
+    if (dto.lastPayMethod !== undefined) {
+      patch.lastPayMethod = dto.lastPayMethod || null;
+    }
 
     const [row] = await this.db
       .update(buyers)
@@ -316,6 +320,7 @@ export class BuyerService {
         city: buyer.addressCity,
         pincode: buyer.addressPincode,
         geo: buyer.geo,
+        lastPayMethod: buyer.lastPayMethod,
         memberSince: buyer.createdAt.toISOString(),
       },
       stats: {
