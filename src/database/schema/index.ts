@@ -20,6 +20,7 @@ export * from './buyers.schema';
 export * from './chat.schema';
 export * from './blocked-words.schema';
 export * from './settlements.schema';
+export * from './deleted-shop-settlements.schema';
 export * from './notices.schema';
 export * from './payment-methods.schema';
 export * from './gateway-payments.schema';

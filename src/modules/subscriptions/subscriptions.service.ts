@@ -360,20 +360,73 @@ export class SubscriptionsService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
-   * Resume a cancelled subscription. Billing restarts from the original
-   * anchor; if the due date passed while cancelled it settles immediately
-   * (auto-debit) or lands in past_due awaiting a manual payment.
+   * Resume a cancelled subscription. The months spent cancelled are never
+   * billed: if the paid-up period already lapsed, billing re-anchors to
+   * today and exactly one month is charged now; if the seller resumes
+   * inside a period they already paid for, nothing is charged and the
+   * original anchor is kept. Either way the shop goes back live.
    */
   async resume(shopId: string): Promise<SubscriptionResponse> {
     const sub = await this.requireByShop(shopId);
     if (sub.status !== 'cancelled') {
       return this.toResponse(await this.settle(sub));
     }
+    const now = new Date();
+    const lapsed = sub.nextBillingAt <= now;
+    // Guarded on status so a double-submitted resume charges once — the
+    // loser matches zero rows and just reloads the fresh state.
     const [reactivated] = await this.db
       .update(subscriptions)
-      .set({ status: 'active', cancelledAt: null })
-      .where(eq(subscriptions.id, sub.id))
+      .set(
+        lapsed
+          ? {
+              status: 'active',
+              cancelledAt: null,
+              startedAt: now,
+              nextBillingAt: addOneMonth(now, now.getDate()),
+              pendingCouponId: null,
+              pendingCouponCode: null,
+              pendingDiscountCents: 0,
+            }
+          : { status: 'active', cancelledAt: null },
+      )
+      .where(
+        and(
+          eq(subscriptions.id, sub.id),
+          eq(subscriptions.status, 'cancelled'),
+        ),
+      )
       .returning();
+    if (!reactivated) {
+      const fresh = await this.db.query.subscriptions.findFirst({
+        where: eq(subscriptions.id, sub.id),
+      });
+      return this.toResponse(fresh ?? sub);
+    }
+    if (lapsed) {
+      // The single month bought by resuming. A coupon that was pending when
+      // the subscription got cancelled discounts it.
+      await this.db.insert(subscriptionPayments).values({
+        userId: sub.ownerId,
+        subscriptionId: sub.id,
+        shopId: sub.shopId,
+        type: 'renewal',
+        method: 'manual',
+        amountCents: sub.amountCents - sub.pendingDiscountCents,
+        currency: sub.currency,
+        couponId: sub.pendingCouponId ?? undefined,
+        couponCode: sub.pendingCouponCode ?? undefined,
+        discountCents: sub.pendingDiscountCents,
+        periodStart: now,
+        periodEnd: reactivated.nextBillingAt,
+        paidAt: now,
+      });
+    }
+    // Cancelling forced the storefront off; resuming brings it back.
+    await this.db
+      .update(shops)
+      .set({ live: true })
+      .where(eq(shops.id, shopId));
     return this.toResponse(await this.settle(reactivated));
   }
 

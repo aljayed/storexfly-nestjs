@@ -1,10 +1,12 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Param,
   Patch,
   Post,
+  Put,
   Query,
 } from '@nestjs/common';
 import {
@@ -16,7 +18,7 @@ import {
 import { UseGuards } from '@nestjs/common';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { Public } from '../../common/decorators/public.decorator';
-import { RequirePerm } from '../../common/decorators/roles.decorator';
+import { RequirePerm, Roles } from '../../common/decorators/roles.decorator';
 import { AdminJwtAuthGuard } from '../../common/guards/admin-jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { ShopScopeGuard } from '../../common/guards/shop-scope.guard';
@@ -24,6 +26,8 @@ import { SHOP_CATEGORIES } from '../../database/schema/enums';
 import type { SellerPrincipal } from '../../common/types/principal';
 import { CheckHandleQuery } from './dto/check-handle.query';
 import { CreateShopDto } from './dto/create-shop.dto';
+import { DeleteShopDto } from './dto/delete-shop.dto';
+import { PayoutBankDto } from './dto/payout-bank.dto';
 import { DiscoverResponse } from './dto/discover.response';
 import { SubmitKycDto } from './dto/kyc.dto';
 import { KycResponse } from './dto/kyc.response';
@@ -118,6 +122,82 @@ export class ShopsController {
   @ApiOkResponse({ type: ShopResponse })
   consoleUpdate(@Param('shopId') shopId: string, @Body() dto: UpdateShopDto) {
     return this.shops.updateFromConsole(shopId, dto);
+  }
+
+  // ── Payout bank account (settlement transfer destination) ──
+  @Public()
+  @UseGuards(AdminJwtAuthGuard, ShopScopeGuard, RolesGuard)
+  @RequirePerm('settlements.view')
+  @ApiBearerAuth()
+  @Get(':shopId/payout-bank')
+  @ApiOperation({ summary: 'Admin: the payout bank account on file' })
+  getPayoutBank(@Param('shopId') shopId: string) {
+    return this.shops.getPayoutBank(shopId);
+  }
+
+  // Changing where the money goes is owner-only, like deleting the shop.
+  @Public()
+  @UseGuards(AdminJwtAuthGuard, ShopScopeGuard, RolesGuard)
+  @Roles('owner')
+  @ApiBearerAuth()
+  @Put(':shopId/payout-bank')
+  @ApiOperation({ summary: 'Admin (owner): set the payout bank account' })
+  setPayoutBank(@Param('shopId') shopId: string, @Body() dto: PayoutBankDto) {
+    return this.shops.setPayoutBank(shopId, {
+      bankName: dto.bankName,
+      accountName: dto.accountName,
+      accountNumber: dto.accountNumber,
+      branch: dto.branch?.trim() ? dto.branch : undefined,
+    });
+  }
+
+  @Public()
+  @UseGuards(AdminJwtAuthGuard, ShopScopeGuard, RolesGuard)
+  @Roles('owner')
+  @ApiBearerAuth()
+  @Delete(':shopId/payout-bank')
+  @ApiOperation({ summary: 'Admin (owner): remove the payout bank account' })
+  clearPayoutBank(@Param('shopId') shopId: string) {
+    return this.shops.setPayoutBank(shopId, null);
+  }
+
+  // ── Shop deletion — owner role only, confirmed by an email OTP ──
+  @Public()
+  @UseGuards(AdminJwtAuthGuard, ShopScopeGuard, RolesGuard)
+  @Roles('owner')
+  @ApiBearerAuth()
+  @Get(':shopId/delete-precheck')
+  @ApiOperation({
+    summary:
+      'Admin (owner): what blocks deletion (in-progress orders) and what is still owed (unsettled payouts)',
+  })
+  deletePrecheck(@Param('shopId') shopId: string) {
+    return this.shops.deletePrecheck(shopId);
+  }
+
+  @Public()
+  @UseGuards(AdminJwtAuthGuard, ShopScopeGuard, RolesGuard)
+  @Roles('owner')
+  @ApiBearerAuth()
+  @Post(':shopId/delete-otp')
+  @ApiOperation({
+    summary: 'Admin (owner): email a code confirming shop deletion',
+  })
+  requestDeleteOtp(@Param('shopId') shopId: string) {
+    return this.shops.requestDeleteOtp(shopId);
+  }
+
+  @Public()
+  @UseGuards(AdminJwtAuthGuard, ShopScopeGuard, RolesGuard)
+  @Roles('owner')
+  @ApiBearerAuth()
+  @Post(':shopId/delete')
+  @ApiOperation({
+    summary:
+      'Admin (owner): verify the emailed code, cancel billing and delete the shop',
+  })
+  deleteShop(@Param('shopId') shopId: string, @Body() dto: DeleteShopDto) {
+    return this.shops.deleteWithOtp(shopId, dto.code);
   }
 
   @Public()

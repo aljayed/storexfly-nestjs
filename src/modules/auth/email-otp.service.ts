@@ -29,7 +29,12 @@ export class EmailOtpService {
 
   constructor(private readonly mail: MailService) {}
 
-  async start<T>(scope: string, email: string, payload: T): Promise<void> {
+  async start<T>(
+    scope: string,
+    email: string,
+    payload: T,
+    mail?: { subject?: string; heading?: string; intro?: string },
+  ): Promise<void> {
     const code = String(randomInt(0, 1_000_000)).padStart(6, '0');
     const key = this.key(scope, email);
     this.store.set(key, {
@@ -43,11 +48,13 @@ export class EmailOtpService {
       this.logger.debug(`OTP for ${key}: ${code}`);
     }
 
+    const heading = mail?.heading ?? 'Verify your email';
+    const intro = mail?.intro ?? 'Your Hoomri verification code is:';
     await this.mail.send({
       to: email,
-      subject: 'Your Hoomri verification code',
-      text: textBody(code),
-      html: htmlBody(code),
+      subject: mail?.subject ?? 'Your Hoomri verification code',
+      text: textBody(code, intro),
+      html: htmlBody(code, heading, intro),
     });
   }
 
@@ -77,9 +84,9 @@ export class EmailOtpService {
   }
 }
 
-function textBody(code: string): string {
+function textBody(code: string, intro: string): string {
   return [
-    `Your Hoomri verification code is: ${code}`,
+    `${intro} ${code}`,
     '',
     'This code expires in 10 minutes.',
     '',
@@ -87,11 +94,11 @@ function textBody(code: string): string {
   ].join('\n');
 }
 
-function htmlBody(code: string): string {
+function htmlBody(code: string, heading: string, intro: string): string {
   return `
     <div style="font-family:system-ui,sans-serif;max-width:480px;margin:0 auto;color:#1a1814">
-      <h2 style="font-weight:800">Verify your email</h2>
-      <p>Your Hoomri verification code is:</p>
+      <h2 style="font-weight:800">${heading}</h2>
+      <p>${intro}</p>
       <p style="margin:28px 0">
         <span style="font-size:32px;font-weight:800;letter-spacing:6px">${code}</span>
       </p>

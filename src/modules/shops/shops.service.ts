@@ -1,4 +1,6 @@
 import {
+  BadRequestException,
+  ConflictException,
   ForbiddenException,
   HttpException,
   HttpStatus,
@@ -6,13 +8,35 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { and, desc, eq, ne, sql } from 'drizzle-orm';
+import { and, count, desc, eq, ne, notInArray, sql } from 'drizzle-orm';
 import { BRAND_SWATCHES } from '../../common/constants/brand-swatches';
 import { centsToDollars } from '../../common/utils/money.util';
 import { handleize } from '../../common/utils/slug.util';
 import { DRIZZLE } from '../../database/database.constants';
 import type { DrizzleDB } from '../../database/drizzle.types';
-import { products, shops, type ShopRow } from '../../database/schema';
+import {
+  deletedShopSettlements,
+  orders,
+  products,
+  settlements,
+  shops,
+  subscriptions,
+  users,
+  type PayoutBank,
+  type ShopRow,
+} from '../../database/schema';
+import {
+  addOrder,
+  classify,
+  emptyBuckets,
+  payoutCents,
+  periodOf,
+  totalFeeCents,
+  windowOf,
+  type Buckets,
+  type MonthCore,
+} from '../settlements/settlement-core';
+import { EmailOtpService } from '../auth/email-otp.service';
 import { BlockedWordsService } from '../blocked-words/blocked-words.service';
 import { StorageService } from '../storage/storage.service';
 import { ProductResponse } from '../products/dto/product.response';
@@ -28,13 +52,33 @@ const FEATURED_LIMIT = 8;
 // Cards per section on the public marketplace feed (logged-in no-shop home).
 const DISCOVER_LIMIT = 12;
 
+// EmailOtpService namespace for the delete-shop confirmation codes.
+const DELETE_OTP_SCOPE = 'shop-delete';
+
+/** One unsettled earnings month owed to a shop being deleted. */
+interface OwedMonth {
+  period: string;
+  core: MonthCore;
+  payoutCents: number;
+  feeCents: number;
+}
+
+/** j***b@gmail.com — enough for the owner to recognise the inbox. */
+function maskEmail(email: string): string {
+  const [local, domain] = email.split('@');
+  const first = local.slice(0, 1);
+  const last = local.length > 1 ? local.slice(-1) : '';
+  return `${first}***${last}@${domain}`;
+}
+
 @Injectable()
 export class ShopsService {
   constructor(
     @Inject(DRIZZLE) private readonly db: DrizzleDB,
-    private readonly subscriptions: SubscriptionsService,
+    private readonly subscriptionsService: SubscriptionsService,
     private readonly blockedWords: BlockedWordsService,
     private readonly storage: StorageService,
+    private readonly emailOtp: EmailOtpService,
   ) {}
 
   /** Live handle availability check for the onboarding wizard. */
@@ -64,7 +108,9 @@ export class ShopsService {
           'You already have a free shop. Upgrade it, or create this one on the paid plan.',
         );
       }
-    } else if (!(await this.subscriptions.hasUnconsumedCredit(ownerId))) {
+    } else if (
+      !(await this.subscriptionsService.hasUnconsumedCredit(ownerId))
+    ) {
       // Every paid shop costs ৳1,199 up front — refuse until the fee is paid.
       throw new HttpException(
         {
@@ -106,7 +152,7 @@ export class ShopsService {
     // Paid plan: consume the paid credit and open the monthly subscription.
     // Free shops have no subscription until they upgrade.
     if (plan === 'paid') {
-      await this.subscriptions.activateForNewShop(ownerId, row.id);
+      await this.subscriptionsService.activateForNewShop(ownerId, row.id);
     }
     return ShopResponse.fromRow(row);
   }
@@ -366,6 +412,252 @@ export class ShopsService {
       orderBy: [desc(shops.createdAt)],
     });
     return rows.map(ShopResponse.fromRow);
+  }
+
+  // ── Payout bank account (where settlements are transferred) ───
+
+  async getPayoutBank(shopId: string): Promise<{ bank: PayoutBank | null }> {
+    const shop = await this.requireById(shopId);
+    return { bank: shop.payoutBank ?? null };
+  }
+
+  /** Owner-set payout destination; `null` clears it. */
+  async setPayoutBank(
+    shopId: string,
+    bank: PayoutBank | null,
+  ): Promise<{ bank: PayoutBank | null }> {
+    await this.requireById(shopId);
+    const [row] = await this.db
+      .update(shops)
+      .set({ payoutBank: bank })
+      .where(eq(shops.id, shopId))
+      .returning({ payoutBank: shops.payoutBank });
+    return { bank: row.payoutBank ?? null };
+  }
+
+  // ── Shop deletion (OTP-confirmed, owner only) ─────────────────
+
+  /**
+   * What stands between this shop and deletion, shown in the confirm
+   * dialog before any code is sent: in-progress orders block outright;
+   * unsettled payout money doesn't block, but the seller is told when and
+   * where it will be transferred (and must have a payout account on file).
+   */
+  async deletePrecheck(shopId: string): Promise<{
+    inProgressOrders: number;
+    pendingPayout: number;
+    currency: string;
+    months: {
+      period: string;
+      payout: number;
+      windowFrom: string;
+      windowTo: string;
+    }[];
+    hasBankAccount: boolean;
+  }> {
+    const shop = await this.requireById(shopId);
+    const [inProgress, owed] = await Promise.all([
+      this.inProgressOrderCount(shopId),
+      this.owedSettlements(shopId),
+    ]);
+    const pendingCents = owed.reduce((sum, o) => sum + o.payoutCents, 0);
+    return {
+      inProgressOrders: inProgress,
+      pendingPayout: centsToDollars(pendingCents),
+      currency: shop.currency,
+      months: owed.map((o) => {
+        const window = windowOf(o.period);
+        return {
+          period: o.period,
+          payout: centsToDollars(o.payoutCents),
+          windowFrom: window.from,
+          windowTo: window.to,
+        };
+      }),
+      hasBankAccount: !!shop.payoutBank,
+    };
+  }
+
+  /**
+   * Step 1 of deleting a shop: email a 6-digit confirmation code to the
+   * shop *owner* (whoever triggers it, the code always goes to the owner's
+   * account email). The code is scoped to this shop and expires in 10
+   * minutes. Refused while orders are in progress, or while settlement
+   * money is owed but no payout account is on file.
+   */
+  async requestDeleteOtp(
+    shopId: string,
+  ): Promise<{ sent: boolean; email: string }> {
+    const shop = await this.requireById(shopId);
+    await this.assertDeletable(shop);
+    const email = await this.requireOwnerEmail(shop);
+    await this.emailOtp.start(
+      DELETE_OTP_SCOPE,
+      email,
+      { shopId },
+      {
+        subject: `Confirm deleting ${shop.name}`,
+        heading: 'Confirm shop deletion',
+        intro: `You asked to permanently delete your shop "${shop.name}" (hoomri.com/${shop.handle}). This cannot be undone. Your confirmation code is:`,
+      },
+    );
+    return { sent: true, email: maskEmail(email) };
+  }
+
+  /**
+   * Step 2: verify the emailed code and delete the shop. One transaction:
+   * any money still owed to the seller is snapshotted into
+   * `deleted_shop_settlements` (with the payout account and owner contact),
+   * the subscription is cancelled, and the shop row is removed — billing
+   * can never survive the shop (every dependent row, the subscription
+   * included, cascades with the delete; the payments ledger is kept with
+   * its shop reference nulled), and owed payouts can never be lost with it.
+   * The guards re-run here: orders may have arrived after the code was sent.
+   */
+  async deleteWithOtp(
+    shopId: string,
+    code: string,
+  ): Promise<{ deleted: boolean; pendingPayout: number; currency: string }> {
+    const shop = await this.requireById(shopId);
+    const email = await this.requireOwnerEmail(shop);
+    const payload = this.emailOtp.verify<{ shopId: string }>(
+      DELETE_OTP_SCOPE,
+      email,
+      code,
+    );
+    if (!payload || payload.shopId !== shopId) {
+      throw new ForbiddenException(
+        'That code is invalid or has expired. Request a new one and try again.',
+      );
+    }
+    const owed = await this.assertDeletable(shop);
+    await this.db.transaction(async (tx) => {
+      if (owed.length) {
+        await tx.insert(deletedShopSettlements).values(
+          owed.map((o) => ({
+            shopId: shop.id,
+            shopName: shop.name,
+            shopHandle: shop.handle,
+            currency: shop.currency,
+            ownerId: shop.ownerId,
+            ownerEmail: email,
+            period: o.period,
+            ordersCount: o.core.ordersCount,
+            totalCents: o.core.totalCents,
+            feeCents: o.feeCents,
+            payoutCents: o.payoutCents,
+            breakdown: o.core.online,
+            payoutBank: shop.payoutBank,
+          })),
+        );
+      }
+      await tx
+        .update(subscriptions)
+        .set({ status: 'cancelled', cancelledAt: new Date() })
+        .where(eq(subscriptions.shopId, shopId));
+      await tx.delete(shops).where(eq(shops.id, shopId));
+    });
+    return {
+      deleted: true,
+      pendingPayout: centsToDollars(
+        owed.reduce((sum, o) => sum + o.payoutCents, 0),
+      ),
+      currency: shop.currency,
+    };
+  }
+
+  /**
+   * The deletion guards. Returns the owed settlement months so the delete
+   * transaction can snapshot exactly what was checked.
+   */
+  private async assertDeletable(shop: ShopRow): Promise<OwedMonth[]> {
+    const inProgress = await this.inProgressOrderCount(shop.id);
+    if (inProgress > 0) {
+      throw new ConflictException(
+        `${inProgress} order${inProgress === 1 ? ' is' : 's are'} still in progress. Deliver or cancel every order before deleting the shop.`,
+      );
+    }
+    const owed = await this.owedSettlements(shop.id);
+    if (owed.length && !shop.payoutBank) {
+      throw new BadRequestException(
+        'You have settlement money pending. Add the bank account it should be transferred to before deleting the shop.',
+      );
+    }
+    return owed;
+  }
+
+  /** Orders neither delivered nor cancelled (in-flight gateway payments excluded). */
+  private async inProgressOrderCount(shopId: string): Promise<number> {
+    const [{ n }] = await this.db
+      .select({ n: count() })
+      .from(orders)
+      .where(
+        and(
+          eq(orders.shopId, shopId),
+          notInArray(orders.status, ['Delivered', 'Cancelled']),
+          // Gateway payments still in flight auto-expire — never delivered,
+          // never blocking.
+          ne(orders.pay, 'Pending'),
+        ),
+      );
+    return Number(n);
+  }
+
+  /**
+   * Every earnings month (current month included) whose online payout is
+   * still unpaid — the money the platform owes this seller. Mirrors
+   * SettlementsService month math via the shared settlement-core helpers.
+   */
+  private async owedSettlements(shopId: string): Promise<OwedMonth[]> {
+    const [methodRows, orderRows, paidRows] = await Promise.all([
+      this.db.query.paymentMethods.findMany(),
+      this.db.query.orders.findMany({
+        where: and(eq(orders.shopId, shopId), eq(orders.pay, 'Paid')),
+        columns: { totalCents: true, paymentMethod: true, placedAt: true },
+      }),
+      this.db.query.settlements.findMany({
+        where: eq(settlements.shopId, shopId),
+        columns: { period: true },
+      }),
+    ]);
+    const catalog = new Map(methodRows.map((m) => [m.code, m]));
+    const byPeriod = new Map<string, Buckets>();
+    for (const r of orderRows) {
+      const period = periodOf(r.placedAt);
+      const b = byPeriod.get(period) ?? emptyBuckets();
+      addOrder(b, r.paymentMethod, r.totalCents, 1);
+      byPeriod.set(period, b);
+    }
+    const alreadyPaid = new Set(paidRows.map((p) => p.period));
+    const owed: OwedMonth[] = [];
+    for (const [period, buckets] of byPeriod) {
+      if (alreadyPaid.has(period)) continue;
+      const core = classify(buckets, catalog);
+      const payout = payoutCents(core);
+      if (payout > 0) {
+        owed.push({
+          period,
+          core,
+          payoutCents: payout,
+          feeCents: totalFeeCents(core),
+        });
+      }
+    }
+    owed.sort((a, b) => a.period.localeCompare(b.period));
+    return owed;
+  }
+
+  private async requireOwnerEmail(shop: ShopRow): Promise<string> {
+    const owner = await this.db.query.users.findFirst({
+      where: eq(users.id, shop.ownerId),
+      columns: { email: true },
+    });
+    if (!owner?.email) {
+      throw new BadRequestException(
+        'The shop owner has no email on file, so a confirmation code cannot be sent.',
+      );
+    }
+    return owner.email;
   }
 
   // ── Internal helpers shared with other modules ───────────────

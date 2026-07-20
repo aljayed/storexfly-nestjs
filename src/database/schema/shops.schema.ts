@@ -24,6 +24,19 @@ import { customers } from './customers.schema';
 import { adminUsers } from './admin-users.schema';
 
 /**
+ * Where monthly settlement payouts are transferred: a bank account or a
+ * mobile-wallet number. Optional until the shop has online revenue to
+ * receive; snapshotted into `deleted_shop_settlements` when a shop with
+ * money still owed is deleted.
+ */
+export interface PayoutBank {
+  bankName: string;
+  accountName: string;
+  accountNumber: string;
+  branch?: string;
+}
+
+/**
  * A seller's branded storefront, reachable at hoomri.com/shops/<handle>.
  * Maps to `Shop` in the design handoff. `brand`/`brandSoft` are the resolved
  * hex values for the chosen swatch and drive the per-shop CSS custom props.
@@ -68,6 +81,8 @@ export const shops = pgTable(
     // sales) and are deactivated at the sales cap until they subscribe.
     // Existing shops predate the free tier and stay 'paid'.
     plan: shopPlanEnum('plan').notNull().default('paid'),
+    // Bank/wallet account monthly settlements are transferred to.
+    payoutBank: jsonb('payout_bank').$type<PayoutBank>(),
     // ── Business verification (trade-license KYC) ──────────────────
     // All optional: a shop can be created and go live without any of this,
     // and the seller can complete or update it later from the console.

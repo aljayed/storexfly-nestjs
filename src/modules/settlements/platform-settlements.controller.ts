@@ -23,6 +23,7 @@ import {
   SettlementDecisionDto,
 } from './dto/settlement-query.dto';
 import {
+  DeletedShopSettlementResponse,
   PlatformSettlementRowResponse,
   PlatformSettlementsResponse,
 } from './dto/platform-settlement.response';
@@ -42,6 +43,28 @@ export class PlatformSettlementsController {
   @ApiOkResponse({ type: PlatformSettlementsResponse })
   list(@Query() query: PlatformSettlementsQueryDto) {
     return this.settlements.forPlatform(query.period);
+  }
+
+  // Declared before ':shopId/:period' so "deleted" never parses as a shop id.
+  @Get('settlements/deleted')
+  @ApiOperation({
+    summary: 'Platform admin: payouts still owed to deleted shops',
+  })
+  @ApiOkResponse({ type: [DeletedShopSettlementResponse] })
+  listDeleted() {
+    return this.settlements.listDeleted();
+  }
+
+  @Patch('settlements/deleted/:id')
+  @ApiOperation({
+    summary: 'Platform admin: mark a deleted-shop payout (un)paid',
+  })
+  @ApiOkResponse({ type: DeletedShopSettlementResponse })
+  decideDeleted(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: SettlementDecisionDto,
+  ) {
+    return this.settlements.decideDeleted(id, dto.paid, dto.note);
   }
 
   @Patch('settlements/:shopId/:period')

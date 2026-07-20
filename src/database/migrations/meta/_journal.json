@@ -267,6 +267,13 @@
       "when": 1789171200000,
       "tag": "0040_shop_couriers",
       "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "7",
+      "when": 1789257600000,
+      "tag": "0041_delete_guards_payout_bank",
+      "breakpoints": true
     }
   ]
 }

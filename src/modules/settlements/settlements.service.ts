@@ -4,60 +4,51 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { and, asc, eq, gte, inArray, lt, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gte, inArray, lt, sql } from 'drizzle-orm';
 import { centsToDollars } from '../../common/utils/money.util';
 import { DRIZZLE } from '../../database/database.constants';
 import type { DrizzleDB } from '../../database/drizzle.types';
-import { orders, settlements, shops } from '../../database/schema';
+import {
+  deletedShopSettlements,
+  orders,
+  settlements,
+  shops,
+} from '../../database/schema';
 import type {
-  PaymentMethodRow,
-  SettlementMethodSnapshot,
+  DeletedShopSettlementRow,
   SettlementRow,
 } from '../../database/schema';
 import { ShopsService } from '../shops/shops.service';
 import { PaymentMethodsService } from './payment-methods.service';
+import { CARD_FEE_BP, MBANK_FEE_BP } from './settlement.constants';
 import {
-  CARD_FEE_BP,
-  MBANK_FEE_BP,
-  SETTLEMENT_WINDOW_END_DAY,
-  SETTLEMENT_WINDOW_START_DAY,
-  feeCents,
-  type SettlementStatus,
-} from './settlement.constants';
+  addOrder,
+  classify,
+  currentPeriod,
+  emptyBuckets,
+  listPeriods,
+  monthRange,
+  payoutCents,
+  periodOf,
+  previousPeriod,
+  snapshotCore,
+  statusOf,
+  totalFeeCents,
+  windowOf,
+  type Buckets,
+  type MethodCatalog,
+  type MonthCore,
+} from './settlement-core';
 import type {
   SettlementMonthResponse,
   ShopSettlementsResponse,
 } from './dto/settlement.response';
 import type {
+  DeletedShopSettlementResponse,
   PlatformSettlementRowResponse,
   PlatformSettlementsResponse,
   PlatformSettlementTotalResponse,
 } from './dto/platform-settlement.response';
-
-/** Raw money buckets for one shop-month: per method code, all integer cents. */
-interface Buckets {
-  ordersCount: number;
-  totalCents: number;
-  /** Orders recorded manually from the console — no payment method. */
-  manualCents: number;
-  byCode: Map<string, number>;
-}
-
-/** A month classified against the payment-method catalog. */
-interface MonthCore {
-  ordersCount: number;
-  totalCents: number;
-  codCents: number;
-  otherCents: number;
-  /** Online (fee-carrying) methods, each with its fee applied. */
-  online: SettlementMethodSnapshot[];
-}
-
-type MethodCatalog = Map<string, PaymentMethodRow>;
-
-function emptyBuckets(): Buckets {
-  return { ordersCount: 0, totalCents: 0, manualCents: 0, byCode: new Map() };
-}
 
 /**
  * Monthly payout accounting for prepaid (online) orders.
@@ -270,6 +261,38 @@ export class SettlementsService {
     return this.platformRow(shop, period);
   }
 
+  /**
+   * Platform admin: money still owed to shops that were deleted. These
+   * snapshots were written by the delete-shop transaction; they are the only
+   * record left (the orders cascaded away), so they are paid from here.
+   */
+  async listDeleted(): Promise<DeletedShopSettlementResponse[]> {
+    const rows = await this.db.query.deletedShopSettlements.findMany({
+      orderBy: [desc(deletedShopSettlements.owedAt)],
+    });
+    return rows.map(deletedResponse);
+  }
+
+  /** Platform admin: record (or undo) the transfer of one owed month. */
+  async decideDeleted(
+    id: string,
+    paid: boolean,
+    note?: string,
+  ): Promise<DeletedShopSettlementResponse> {
+    const [row] = await this.db
+      .update(deletedShopSettlements)
+      .set({
+        paidAt: paid ? new Date() : null,
+        note: paid ? note?.trim() || null : null,
+      })
+      .where(eq(deletedShopSettlements.id, id))
+      .returning();
+    if (!row) {
+      throw new NotFoundException('Owed settlement not found');
+    }
+    return deletedResponse(row);
+  }
+
   /** Rebuilds one platform table row after a decision. */
   private async platformRow(
     shop: { id: string; name: string; handle: string; currency: string },
@@ -350,158 +373,36 @@ export class SettlementsService {
   }
 }
 
-/* ── Bucket math ────────────────────────────────────────────────── */
-
-function addOrder(
-  b: Buckets,
-  method: string | null,
-  cents: number,
-  count: number,
-): void {
-  b.ordersCount += count;
-  b.totalCents += cents;
-  // Orders recorded manually from the console have no gateway — the seller
-  // was paid directly, so like COD they carry no fee and no payout.
-  if (!method) b.manualCents += cents;
-  else b.byCode.set(method, (b.byCode.get(method) ?? 0) + cents);
-}
-
-/**
- * Splits raw per-code volume into COD / online / other using the method
- * catalog. Only *gateway-collected* methods (bKash etc.) are money the
- * platform actually holds — those carry the fee and the payout. Direct-
- * transfer methods (the seller's own wallet number) and codes the catalog
- * no longer knows join the no-fee/no-payout buckets, so money the platform
- * never touched is never "paid out".
- */
-function classify(b: Buckets, catalog: MethodCatalog): MonthCore {
-  let codCents = 0;
-  let otherCents = b.manualCents;
-  const online: SettlementMethodSnapshot[] = [];
-  for (const [code, cents] of b.byCode) {
-    const method = catalog.get(code);
-    if (!method) otherCents += cents;
-    else if (method.kind === 'cod') codCents += cents;
-    else if (method.gateway === 'none') otherCents += cents;
-    else {
-      online.push({
-        code,
-        title: method.title,
-        cents,
-        feeBp: method.feeBp,
-        feeCents: feeCents(cents, method.feeBp),
-      });
-    }
-  }
-  online.sort((a, b2) => b2.cents - a.cents);
+/** API shape for one owed month of a deleted shop. */
+function deletedResponse(
+  row: DeletedShopSettlementRow,
+): DeletedShopSettlementResponse {
+  const window = windowOf(row.period);
   return {
-    ordersCount: b.ordersCount,
-    totalCents: b.totalCents,
-    codCents,
-    otherCents,
-    online,
+    id: row.id,
+    shopId: row.shopId,
+    shopName: row.shopName,
+    shopHandle: row.shopHandle,
+    currency: row.currency,
+    ownerEmail: row.ownerEmail ?? undefined,
+    period: row.period,
+    ordersCount: row.ordersCount,
+    total: centsToDollars(row.totalCents),
+    fees: centsToDollars(row.feeCents),
+    payout: centsToDollars(row.payoutCents),
+    methods: row.breakdown?.map((m) => ({
+      code: m.code,
+      title: m.title,
+      amount: centsToDollars(m.cents),
+      feePercent: m.feeBp / 100,
+      fee: centsToDollars(m.feeCents),
+    })),
+    payoutBank: row.payoutBank ?? undefined,
+    windowFrom: window.from,
+    windowTo: window.to,
+    owedAt: row.owedAt.toISOString(),
+    paidAt: row.paidAt?.toISOString(),
+    note: row.note ?? undefined,
+    status: row.paidAt ? 'paid' : 'owed',
   };
-}
-
-/** Rebuilds a MonthCore from a paid snapshot row (legacy rows included). */
-function snapshotCore(paid: SettlementRow): MonthCore {
-  // Rows written before per-method snapshots reconstruct their two-bucket
-  // breakdown from the legacy mbank/card columns and their frozen rates.
-  const online: SettlementMethodSnapshot[] =
-    paid.breakdown ??
-    [
-      {
-        code: 'mbank',
-        title: 'Mobile banking',
-        cents: paid.mbankCents,
-        feeBp: paid.mbankFeeBp,
-        feeCents: feeCents(paid.mbankCents, paid.mbankFeeBp),
-      },
-      {
-        code: 'card',
-        title: 'Card',
-        cents: paid.cardCents,
-        feeBp: paid.cardFeeBp,
-        feeCents: feeCents(paid.cardCents, paid.cardFeeBp),
-      },
-    ].filter((m) => m.cents > 0);
-  return {
-    ordersCount: paid.ordersCount,
-    totalCents: paid.totalCents,
-    codCents: paid.codCents,
-    otherCents: paid.otherCents,
-    online,
-  };
-}
-
-function totalFeeCents(core: MonthCore): number {
-  return core.online.reduce((sum, m) => sum + m.feeCents, 0);
-}
-
-function payoutCents(core: MonthCore): number {
-  return core.online.reduce((sum, m) => sum + m.cents - m.feeCents, 0);
-}
-
-/* ── Calendar helpers (server-local months, matching the dashboard) ─ */
-
-function periodOf(d: Date): string {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-}
-
-function currentPeriod(): string {
-  return periodOf(new Date());
-}
-
-function previousPeriod(period: string): string {
-  const [y, m] = period.split('-').map(Number);
-  return periodOf(new Date(y, m - 2, 1));
-}
-
-/** [start, end) instants of one "YYYY-MM" month in server-local time. */
-function monthRange(period: string): [Date, Date] {
-  const [y, m] = period.split('-').map(Number);
-  return [new Date(y, m - 1, 1), new Date(y, m, 1)];
-}
-
-/** The 15th–21st payout window in the month after the earnings month. */
-function windowOf(period: string): { from: string; to: string } {
-  const [y, m] = period.split('-').map(Number);
-  const next = new Date(y, m, 1); // first day of the following month
-  const iso = (day: number) =>
-    `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-  return {
-    from: iso(SETTLEMENT_WINDOW_START_DAY),
-    to: iso(SETTLEMENT_WINDOW_END_DAY),
-  };
-}
-
-function statusOf(
-  period: string,
-  paid: boolean,
-  payoutCents: number,
-): SettlementStatus {
-  if (paid) return 'paid';
-  if (period >= currentPeriod()) return 'accruing';
-  if (payoutCents <= 0) return 'none';
-  const { from, to } = windowOf(period);
-  const today =
-    periodOf(new Date()) + '-' + String(new Date().getDate()).padStart(2, '0');
-  if (today < from) return 'scheduled';
-  if (today <= to) return 'due';
-  return 'overdue';
-}
-
-/** Every month from the first order to now, newest first. */
-function listPeriods(firstOrderAt: Date | undefined): string[] {
-  if (!firstOrderAt) return [currentPeriod()];
-  const first = periodOf(firstOrderAt);
-  const out: string[] = [];
-  for (
-    let p = currentPeriod();
-    p >= first && out.length < 60;
-    p = previousPeriod(p)
-  ) {
-    out.push(p);
-  }
-  return out;
 }

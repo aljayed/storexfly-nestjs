@@ -14,6 +14,7 @@ import type { DrizzleDB } from '../../database/drizzle.types';
 import {
   products,
   reviews,
+  subscriptions,
   type ProductPack,
   type ProductRow,
   type ProductVariantGroup,
@@ -139,6 +140,18 @@ export class ProductsService {
       if (Number(n) >= FREE_MAX_PRODUCTS) {
         throw new ForbiddenException(
           `The free plan allows ${FREE_MAX_PRODUCTS} product — subscribe to add more.`,
+        );
+      }
+    } else {
+      // A cancelled subscription freezes the catalog: the existing items are
+      // kept, but nothing new can be added until the seller resumes.
+      const sub = await this.db.query.subscriptions.findFirst({
+        where: eq(subscriptions.shopId, shopId),
+        columns: { status: true },
+      });
+      if (sub?.status === 'cancelled') {
+        throw new ForbiddenException(
+          'Your subscription is cancelled — resume it to add new products.',
         );
       }
     }
