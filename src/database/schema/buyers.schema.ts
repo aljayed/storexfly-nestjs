@@ -20,6 +20,10 @@ export interface BuyerGeoValue {
   line: string;
   area: string;
   pin: string;
+  /** Raw district label from the reverse geocoder (e.g. "Dhaka District"). */
+  district?: string;
+  /** Complete reverse-geocoded address line shown under the delivery map. */
+  full?: string;
   lat?: number;
   lng?: number;
   x?: number;

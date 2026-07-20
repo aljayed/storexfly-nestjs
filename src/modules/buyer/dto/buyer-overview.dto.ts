@@ -18,6 +18,9 @@ export class BuyerGeoDto implements BuyerGeoValue {
   @ApiProperty() @IsString() @MaxLength(500) line!: string;
   @ApiProperty() @IsString() @MaxLength(200) area!: string;
   @ApiProperty() @IsString() @MaxLength(24) pin!: string;
+  // Reverse-geocoder extras: raw district label + the complete address line.
+  @ApiPropertyOptional() @IsOptional() @IsString() @MaxLength(200) district?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() @MaxLength(600) full?: string;
   // Exact coordinates from the interactive delivery map.
   @ApiPropertyOptional() @IsOptional() @IsNumber() lat?: number;
   @ApiPropertyOptional() @IsOptional() @IsNumber() lng?: number;
