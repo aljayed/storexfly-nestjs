@@ -64,11 +64,21 @@ export class ShareController {
     // First uploaded photo, absolute. Legacy inline base64 rows are skipped —
     // a data: URL is useless to a crawler.
     const raw = product.images?.[0];
-    const image = raw?.startsWith('http')
+    let image = raw?.startsWith('http')
       ? raw
       : raw?.startsWith('/')
         ? `${webUrl}${raw}`
         : undefined;
+
+    // Chat apps pick the card layout from the image dimensions: big images get
+    // the huge edge-to-edge photo card, small ones get a compact thumbnail
+    // beside the title/price text. A 240×240 square (media proxy crops) lands
+    // in the compact range everywhere: WhatsApp needs <300px wide, Facebook/
+    // Messenger show the side square between 200×200 and 600×315.
+    const thumb = image?.includes('/media/');
+    if (thumb) {
+      image += '?s=240';
+    }
 
     const symbol = SYMBOLS[shop.currency] ?? `${shop.currency} `;
     const priceLine =
@@ -97,7 +107,7 @@ export class ShareController {
 <meta property="og:description" content="${d}">
 <meta property="og:url" content="${u}">
 <meta property="og:locale" content="${locale}">
-${image ? `<meta property="og:image" content="${escapeHtml(image)}">\n<meta name="twitter:card" content="summary_large_image">\n<meta name="twitter:image" content="${escapeHtml(image)}">` : `<meta name="twitter:card" content="summary">`}
+${image ? `<meta property="og:image" content="${escapeHtml(image)}">\n${thumb ? '<meta property="og:image:width" content="240">\n<meta property="og:image:height" content="240">\n' : ''}<meta name="twitter:card" content="summary">\n<meta name="twitter:image" content="${escapeHtml(image)}">` : `<meta name="twitter:card" content="summary">`}
 <meta name="twitter:title" content="${t}">
 <meta name="twitter:description" content="${d}">
 ${priceLine ? `<meta property="product:price:amount" content="${product.price}">\n<meta property="product:price:currency" content="${escapeHtml(shop.currency)}">` : ''}
