@@ -16,7 +16,6 @@ import {
   FREE_MAX_PRODUCTS,
   FREE_SALES_CAP_CENTS,
   FREE_TIER_LIMIT_MESSAGE,
-  MONTHLY_FEE_CENTS,
   PLATFORM_CURRENCY,
 } from '../../common/constants/billing';
 import { DRIZZLE } from '../../database/database.constants';
@@ -31,13 +30,14 @@ import {
   type SubscriptionPaymentRow,
   type SubscriptionRow,
 } from '../../database/schema';
+import { BillingSettingsService } from '../billing/billing-settings.service';
 import { CouponsService } from '../coupons/coupons.service';
 import {
   ShopCreditResponse,
   SubscriptionResponse,
 } from './dto/subscription.response';
 
-export { MONTHLY_FEE_CENTS, PLATFORM_CURRENCY };
+export { PLATFORM_CURRENCY };
 
 /** How often the background billing sweep looks for due subscriptions. */
 const BILLING_SWEEP_INTERVAL_MS = 60 * 60 * 1000;
@@ -69,6 +69,7 @@ export class SubscriptionsService implements OnModuleInit, OnModuleDestroy {
   constructor(
     @Inject(DRIZZLE) private readonly db: DrizzleDB,
     private readonly coupons: CouponsService,
+    private readonly billing: BillingSettingsService,
   ) {}
 
   onModuleInit(): void {
@@ -103,10 +104,13 @@ export class SubscriptionsService implements OnModuleInit, OnModuleDestroy {
       return ShopCreditResponse.fromRow(existing);
     }
 
+    // Read the fee once so the coupon check and the charge can never see two
+    // different prices, even if the operator changes it mid-request.
+    const feeCents = await this.billing.monthlyFeeCents();
     let coupon: { id: string; code: string } | undefined;
     let discountCents = 0;
     if (couponCode?.trim()) {
-      const check = await this.coupons.checkForShopCreation(couponCode, userId);
+      const check = await this.coupons.check(couponCode, userId, feeCents);
       if (!check.ok) {
         throw new BadRequestException(
           this.coupons.rejectionMessage(check.reason),
@@ -122,7 +126,7 @@ export class SubscriptionsService implements OnModuleInit, OnModuleDestroy {
         userId,
         type: 'shop_creation',
         method: 'manual',
-        amountCents: MONTHLY_FEE_CENTS - discountCents,
+        amountCents: feeCents - discountCents,
         currency: PLATFORM_CURRENCY,
         couponId: coupon?.id,
         couponCode: coupon?.code,
@@ -142,7 +146,7 @@ export class SubscriptionsService implements OnModuleInit, OnModuleDestroy {
       ? ShopCreditResponse.fromRow(existing)
       : {
           paid: false,
-          amount: MONTHLY_FEE_CENTS / 100,
+          amount: (await this.billing.monthlyFeeCents()) / 100,
           currency: PLATFORM_CURRENCY,
         };
   }
@@ -162,7 +166,7 @@ export class SubscriptionsService implements OnModuleInit, OnModuleDestroy {
         {
           statusCode: HttpStatus.PAYMENT_REQUIRED,
           error: 'PaymentRequired',
-          message: 'Pay the ৳1,199 shop fee before creating a shop.',
+          message: 'Pay the shop subscription fee before creating a shop.',
         },
         HttpStatus.PAYMENT_REQUIRED,
       );
@@ -174,7 +178,7 @@ export class SubscriptionsService implements OnModuleInit, OnModuleDestroy {
         shopId,
         ownerId: userId,
         status: 'active',
-        amountCents: MONTHLY_FEE_CENTS,
+        amountCents: await this.billing.monthlyFeeCents(),
         currency: PLATFORM_CURRENCY,
         startedAt,
         nextBillingAt: addOneMonth(startedAt, startedAt.getDate()),
@@ -222,7 +226,7 @@ export class SubscriptionsService implements OnModuleInit, OnModuleDestroy {
 
   /**
    * Upgrade a free shop: consumes the seller's paid shop credit (the same
-   * ৳1,199 payment used at shop creation) and opens the monthly
+   * first payment used at shop creation) and opens the monthly
    * subscription. Also lifts a free-tier deactivation so the seller can go
    * live again immediately.
    */
@@ -266,7 +270,7 @@ export class SubscriptionsService implements OnModuleInit, OnModuleDestroy {
       salesCapCents: FREE_SALES_CAP_CENTS,
       productsCount: usage.productsCount,
       maxProducts: FREE_MAX_PRODUCTS,
-      monthlyFeeCents: MONTHLY_FEE_CENTS,
+      monthlyFeeCents: await this.billing.monthlyFeeCents(),
     });
   }
 
@@ -423,10 +427,7 @@ export class SubscriptionsService implements OnModuleInit, OnModuleDestroy {
       });
     }
     // Cancelling forced the storefront off; resuming brings it back.
-    await this.db
-      .update(shops)
-      .set({ live: true })
-      .where(eq(shops.id, shopId));
+    await this.db.update(shops).set({ live: true }).where(eq(shops.id, shopId));
     return this.toResponse(await this.settle(reactivated));
   }
 
@@ -700,7 +701,7 @@ export class SubscriptionsService implements OnModuleInit, OnModuleDestroy {
         shopId,
         ownerId: shop.ownerId,
         status: 'active',
-        amountCents: MONTHLY_FEE_CENTS,
+        amountCents: await this.billing.monthlyFeeCents(),
         currency: PLATFORM_CURRENCY,
         startedAt,
         nextBillingAt,

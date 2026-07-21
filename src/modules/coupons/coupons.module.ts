@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { BillingModule } from '../billing/billing.module';
 import { CouponsService } from './coupons.service';
 
 /**
@@ -7,6 +8,7 @@ import { CouponsService } from './coupons.service';
  * platform-admin module (CRUD from the platform console).
  */
 @Module({
+  imports: [BillingModule],
   providers: [CouponsService],
   exports: [CouponsService],
 })

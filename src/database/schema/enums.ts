@@ -128,7 +128,7 @@ export const paymentStatusEnum = pgEnum('payment_status', [
 ]);
 
 // Shop pricing tier. 'free' = no subscription: 1 product, ৳5,000 lifetime
-// sales cap, deactivated at the cap until upgraded. 'paid' = ৳1,199/month.
+// sales cap, deactivated at the cap until upgraded. 'paid' = the monthly fee.
 export const shopPlanEnum = pgEnum('shop_plan', ['free', 'paid']);
 
 // Which payment gateway (if any) collects a checkout method's money. 'none'

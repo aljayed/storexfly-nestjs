@@ -32,6 +32,7 @@ import {
   ShopCreditResponse,
   SubscriptionResponse,
 } from './dto/subscription.response';
+import { BillingSettingsService } from '../billing/billing-settings.service';
 import { SubscriptionsService } from './subscriptions.service';
 
 @ApiTags('subscriptions')
@@ -40,7 +41,18 @@ export class SubscriptionsController {
   constructor(
     private readonly subscriptions: SubscriptionsService,
     private readonly coupons: CouponsService,
+    private readonly billing: BillingSettingsService,
   ) {}
+
+  // ── Public pricing ────────────────────────────────────────────
+  // The landing page and the create-shop wizard quote the fee before anyone
+  // has signed in, so this is the one billing route with no principal.
+  @Public()
+  @Get('billing/pricing')
+  @ApiOperation({ summary: 'The platform monthly per-shop fee' })
+  pricing() {
+    return this.billing.pricing();
+  }
 
   // ── Seller (onboarding wizard) ────────────────────────────────
   @ApiBearerAuth()
@@ -53,7 +65,7 @@ export class SubscriptionsController {
 
   @ApiBearerAuth()
   @Post('billing/shop-credit')
-  @ApiOperation({ summary: 'Pay the ৳1,199 shop-creation fee (dummy gateway)' })
+  @ApiOperation({ summary: 'Pay the shop-creation fee (dummy gateway)' })
   @ApiOkResponse({ type: ShopCreditResponse })
   payShopCredit(
     @CurrentUser() user: SellerPrincipal,

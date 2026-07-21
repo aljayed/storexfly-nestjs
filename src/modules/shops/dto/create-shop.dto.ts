@@ -30,7 +30,7 @@ export class CreateShopDto {
   @ApiPropertyOptional({
     enum: ['free', 'paid'],
     description:
-      "Pricing tier. 'free' skips the ৳1,199 fee but limits the shop to 1 product and ৳5,000 of lifetime sales (one free shop per seller).",
+      "Pricing tier. 'free' skips the monthly fee but limits the shop to 1 product and ৳5,000 of lifetime sales (one free shop per seller).",
   })
   @IsOptional()
   @IsEnum(['free', 'paid'])

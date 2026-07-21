@@ -7,14 +7,12 @@ import {
   type OnModuleInit,
 } from '@nestjs/common';
 import { and, desc, eq, gte, sql } from 'drizzle-orm';
-import {
-  MONTHLY_FEE_CENTS,
-  PLATFORM_CURRENCY,
-} from '../../common/constants/billing';
+import { PLATFORM_CURRENCY } from '../../common/constants/billing';
 import { isUniqueViolation } from '../../common/utils/postgres-error.util';
 import { DRIZZLE } from '../../database/database.constants';
 import type { DbExecutor, DrizzleDB } from '../../database/drizzle.types';
 import { coupons, orders, shops, type CouponRow } from '../../database/schema';
+import { BillingSettingsService } from '../billing/billing-settings.service';
 import type { CreateCouponDto } from './dto/create-coupon.dto';
 import { CouponPreviewResponse, CouponResponse } from './dto/coupon.response';
 
@@ -66,7 +64,10 @@ export type CouponCheck =
 export class CouponsService implements OnModuleInit {
   private readonly logger = new Logger(CouponsService.name);
 
-  constructor(@Inject(DRIZZLE) private readonly db: DrizzleDB) {}
+  constructor(
+    @Inject(DRIZZLE) private readonly db: DrizzleDB,
+    private readonly billing: BillingSettingsService,
+  ) {}
 
   async onModuleInit(): Promise<void> {
     try {
@@ -184,7 +185,7 @@ export class CouponsService implements OnModuleInit {
     if (highSalesShop.length > 0) return { ok: false, reason: 'high_sales' };
 
     // Round the discount up to a whole taka so the price after the coupon is
-    // a whole amount (৳1,199 at 75% → ৳299, not ৳299.75).
+    // a whole amount (৳599 at 75% → ৳150, not ৳149.75).
     const discountCents =
       Math.ceil((amountCents * coupon.percentOff) / 100 / 100) * 100;
     return { ok: true, coupon, discountCents };
@@ -195,17 +196,18 @@ export class CouponsService implements OnModuleInit {
     code: string,
     userId: string,
   ): Promise<CouponCheck> {
-    return this.check(code, userId, MONTHLY_FEE_CENTS);
+    return this.check(code, userId, await this.billing.monthlyFeeCents());
   }
 
   /** Seller-facing dry run for the onboarding wizard's coupon field. */
   async preview(code: string, userId: string): Promise<CouponPreviewResponse> {
+    const feeCents = await this.billing.monthlyFeeCents();
     const check = await this.checkForShopCreation(code, userId);
     if (!check.ok) {
       return {
         valid: false,
-        amount: MONTHLY_FEE_CENTS / 100,
-        total: MONTHLY_FEE_CENTS / 100,
+        amount: feeCents / 100,
+        total: feeCents / 100,
         currency: PLATFORM_CURRENCY,
         reason: REJECT_COPY[check.reason],
       };
@@ -214,9 +216,9 @@ export class CouponsService implements OnModuleInit {
       valid: true,
       code: check.coupon.code,
       percentOff: check.coupon.percentOff,
-      amount: MONTHLY_FEE_CENTS / 100,
+      amount: feeCents / 100,
       discount: check.discountCents / 100,
-      total: (MONTHLY_FEE_CENTS - check.discountCents) / 100,
+      total: (feeCents - check.discountCents) / 100,
       currency: PLATFORM_CURRENCY,
     };
   }

@@ -19,7 +19,7 @@ import { shops } from './shops.schema';
 import { users } from './users.schema';
 
 /**
- * The platform subscription a seller pays per shop (৳1,199 / month).
+ * The platform subscription a seller pays per shop, monthly.
  * `nextBillingAt` is the billing anchor: it always advances exactly one
  * calendar month from the *scheduled* date, never from the date a late
  * payment was actually made. `startedAt`'s day-of-month is the anchor day.
@@ -35,8 +35,9 @@ export const subscriptions = pgTable(
       .notNull()
       .references(() => users.id, { onDelete: 'cascade' }),
     status: subscriptionStatusEnum('status').notNull().default('active'),
-    // Monthly fee in integer paisa (BDT cents) — ৳1,199.00.
-    amountCents: integer('amount_cents').notNull().default(119900),
+    // Monthly fee in integer paisa (BDT cents), copied from the operator-set
+    // platform price when the subscription opens and re-priced with it.
+    amountCents: integer('amount_cents').notNull().default(59900),
     currency: varchar('currency', { length: 3 }).notNull().default('BDT'),
     // When true the platform collects the renewal automatically on the due
     // date (dummy gateway). When false the sub goes past_due until the seller

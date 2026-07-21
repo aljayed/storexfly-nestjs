@@ -111,12 +111,12 @@ export class ShopsService {
     } else if (
       !(await this.subscriptionsService.hasUnconsumedCredit(ownerId))
     ) {
-      // Every paid shop costs ৳1,199 up front — refuse until the fee is paid.
+      // Every paid shop costs a month up front — refuse until the fee is paid.
       throw new HttpException(
         {
           statusCode: HttpStatus.PAYMENT_REQUIRED,
           error: 'PaymentRequired',
-          message: 'Pay the ৳1,199 shop fee before creating a shop.',
+          message: 'Pay the shop subscription fee before creating a shop.',
         },
         HttpStatus.PAYMENT_REQUIRED,
       );

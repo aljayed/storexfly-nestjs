@@ -34,7 +34,7 @@ export class CouponPreviewResponse {
   @ApiPropertyOptional({ example: 'HOOMRI75' }) code?: string;
   @ApiPropertyOptional({ example: 75 }) percentOff?: number;
   /** Fee before discount, major units (৳). */
-  @ApiProperty({ example: 1199 }) amount!: number;
+  @ApiProperty({ example: 599 }) amount!: number;
   @ApiPropertyOptional({ example: 899.25 }) discount?: number;
   /** What the seller actually pays, major units (৳). */
   @ApiProperty({ example: 299.75 }) total!: number;

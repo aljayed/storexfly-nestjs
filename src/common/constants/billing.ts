@@ -3,8 +3,13 @@
  * modules (kept out of the services to avoid an import cycle between them).
  */
 
-/** Monthly platform fee per shop: ৳1,199.00 in integer paisa. */
-export const MONTHLY_FEE_CENTS = 119900;
+/**
+ * Fallback monthly platform fee per shop, ৳599.00 in integer paisa. The live
+ * price is operator-editable and lives on the platform-settings singleton —
+ * read it through `BillingSettingsService.monthlyFeeCents()`. This constant
+ * only seeds a fresh database and backs a settings read that fails.
+ */
+export const DEFAULT_MONTHLY_FEE_CENTS = 59900;
 export const PLATFORM_CURRENCY = 'BDT';
 
 // ── Free tier ─────────────────────────────────────────────────────

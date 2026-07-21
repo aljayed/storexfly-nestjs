@@ -10,7 +10,7 @@ export class SubscriptionPaymentResponse {
   @ApiProperty() id!: string;
   @ApiProperty({ enum: ['shop_creation', 'renewal'] }) type!: string;
   @ApiProperty({ enum: ['auto', 'manual'] }) method!: string;
-  @ApiProperty({ example: 1199 }) amount!: number;
+  @ApiProperty({ example: 599 }) amount!: number;
   @ApiProperty({ example: 'BDT' }) currency!: string;
   @ApiPropertyOptional({ example: 'HOOMRI75' }) couponCode?: string;
   @ApiPropertyOptional({ example: 899.25 }) discount?: number;
@@ -56,7 +56,7 @@ export class SubscriptionResponse {
   freeTier?: FreeTierUsageResponse;
   @ApiProperty({ enum: ['active', 'past_due', 'cancelled', 'free'] })
   status!: string;
-  @ApiProperty({ example: 1199 }) amount!: number;
+  @ApiProperty({ example: 599 }) amount!: number;
   @ApiProperty({ example: 'BDT' }) currency!: string;
   @ApiProperty() autoDebit!: boolean;
   /** What the next renewal will actually charge (after any pending coupon). */
@@ -138,7 +138,7 @@ export class SubscriptionResponse {
 export class ShopCreditResponse {
   @ApiProperty() paid!: boolean;
   /** Amount actually charged (after any coupon), major units (৳). */
-  @ApiProperty({ example: 1199 }) amount!: number;
+  @ApiProperty({ example: 599 }) amount!: number;
   @ApiProperty({ example: 'BDT' }) currency!: string;
   @ApiPropertyOptional({ example: 'HOOMRI75' }) couponCode?: string;
   @ApiPropertyOptional({ example: 899.25 }) discount?: number;
