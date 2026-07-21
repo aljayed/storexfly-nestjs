@@ -71,7 +71,11 @@ export class SubscriptionsController {
     @CurrentUser() user: SellerPrincipal,
     @Body() dto: PayShopCreditDto,
   ) {
-    return this.subscriptions.payShopCreationFee(user.id, dto.couponCode);
+    return this.subscriptions.payShopCreationFee(
+      user.id,
+      dto.couponCode,
+      dto.refSlug,
+    );
   }
 
   @ApiBearerAuth()

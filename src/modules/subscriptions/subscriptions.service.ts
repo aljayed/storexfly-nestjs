@@ -32,6 +32,7 @@ import {
 } from '../../database/schema';
 import { BillingSettingsService } from '../billing/billing-settings.service';
 import { CouponsService } from '../coupons/coupons.service';
+import { ReferralsService } from '../referrals/referrals.service';
 import {
   ShopCreditResponse,
   SubscriptionResponse,
@@ -70,6 +71,7 @@ export class SubscriptionsService implements OnModuleInit, OnModuleDestroy {
     @Inject(DRIZZLE) private readonly db: DrizzleDB,
     private readonly coupons: CouponsService,
     private readonly billing: BillingSettingsService,
+    private readonly referrals: ReferralsService,
   ) {}
 
   onModuleInit(): void {
@@ -98,6 +100,7 @@ export class SubscriptionsService implements OnModuleInit, OnModuleDestroy {
   async payShopCreationFee(
     userId: string,
     couponCode?: string,
+    refSlug?: string,
   ): Promise<ShopCreditResponse> {
     const existing = await this.findUnconsumedCredit(userId);
     if (existing) {
@@ -135,6 +138,11 @@ export class SubscriptionsService implements OnModuleInit, OnModuleDestroy {
       .returning();
     if (coupon) {
       await this.coupons.markRedeemed(coupon.id);
+      // Attribution only — recordSignup never throws and only counts when
+      // the slug still maps to the coupon that was actually redeemed.
+      if (refSlug?.trim()) {
+        await this.referrals.recordSignup(refSlug, coupon.id);
+      }
     }
     return ShopCreditResponse.fromRow(row);
   }

@@ -15,6 +15,7 @@ export * from './orders.schema';
 export * from './combos.schema';
 export * from './subscriptions.schema';
 export * from './coupons.schema';
+export * from './referral-links.schema';
 export * from './platform-settings.schema';
 export * from './buyers.schema';
 export * from './chat.schema';

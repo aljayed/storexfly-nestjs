@@ -5,6 +5,7 @@ import { BlockedWordsModule } from '../blocked-words/blocked-words.module';
 import { BrandingModule } from '../branding/branding.module';
 import { CouponsModule } from '../coupons/coupons.module';
 import { GatewaysModule } from '../gateways/gateways.module';
+import { ReferralsModule } from '../referrals/referrals.module';
 import { PlatformAuthController } from './platform-auth.controller';
 import { PlatformAuthService } from './platform-auth.service';
 import { PlatformBillingController } from './platform-billing.controller';
@@ -14,6 +15,7 @@ import { PlatformCouponsController } from './platform-coupons.controller';
 import { PlatformGatewaysController } from './platform-gateways.controller';
 import { PlatformOverviewController } from './platform-overview.controller';
 import { PlatformOverviewService } from './platform-overview.service';
+import { PlatformReferralsController } from './platform-referrals.controller';
 
 /**
  * The platform-admin console API (hoomri.com/platform-admin): operator
@@ -25,6 +27,7 @@ import { PlatformOverviewService } from './platform-overview.service';
     AuthModule,
     BillingModule,
     CouponsModule,
+    ReferralsModule,
     BrandingModule,
     BlockedWordsModule,
     GatewaysModule,
@@ -33,6 +36,7 @@ import { PlatformOverviewService } from './platform-overview.service';
     PlatformAuthController,
     PlatformBillingController,
     PlatformCouponsController,
+    PlatformReferralsController,
     PlatformBrandingController,
     PlatformGatewaysController,
     PlatformOverviewController,

@@ -10,4 +10,14 @@ export class PayShopCreditDto {
   @IsString()
   @MaxLength(40)
   couponCode?: string;
+
+  @ApiPropertyOptional({
+    example: 'rahim-fb',
+    description:
+      'Referral-link slug the coupon arrived through, for attribution only',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(60)
+  refSlug?: string;
 }

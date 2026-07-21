@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { BillingModule } from '../billing/billing.module';
 import { CouponsModule } from '../coupons/coupons.module';
+import { ReferralsModule } from '../referrals/referrals.module';
 import { SubscriptionsController } from './subscriptions.controller';
 import { SubscriptionsService } from './subscriptions.service';
 
@@ -11,7 +12,7 @@ import { SubscriptionsService } from './subscriptions.service';
  * fee.
  */
 @Module({
-  imports: [BillingModule, CouponsModule],
+  imports: [BillingModule, CouponsModule, ReferralsModule],
   controllers: [SubscriptionsController],
   providers: [SubscriptionsService],
   exports: [SubscriptionsService],
