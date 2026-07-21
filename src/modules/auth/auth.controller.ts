@@ -7,6 +7,7 @@ import {
   Post,
   Req,
   Res,
+  UseFilters,
   UseGuards,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -32,6 +33,7 @@ import { LoginDto } from './dto/login.dto';
 import { ForgotPasswordDto, ResetPasswordDto } from './dto/password-reset.dto';
 import { PhoneStartDto, PhoneVerifyDto } from './dto/phone.dto';
 import { RegisterDto } from './dto/register.dto';
+import { GoogleOAuthFailureFilter } from './filters/google-oauth-failure.filter';
 import { GoogleOAuthGuard } from './guards/google-oauth.guard';
 import { PasswordResetService } from './password-reset.service';
 
@@ -115,12 +117,14 @@ export class AuthController {
   @Public()
   @Get('google')
   @UseGuards(GoogleOAuthGuard)
+  @UseFilters(GoogleOAuthFailureFilter)
   @ApiOperation({ summary: 'Begin Google OAuth (302 → Google)' })
   googleAuth(): void {}
 
   @Public()
   @Get('google/callback')
   @UseGuards(GoogleOAuthGuard)
+  @UseFilters(GoogleOAuthFailureFilter)
   @ApiOperation({
     summary: 'Google OAuth callback → redirect to Vue with token',
   })
