@@ -2,6 +2,7 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { centsToDollars } from '../../../common/utils/money.util';
 import type {
   DeliveryAddressValue,
+  OrderAmountAdjustmentRow,
   OrderItemRow,
   OrderRow,
 } from '../../../database/schema';
@@ -23,6 +24,34 @@ export class OrderItemResponse {
       qty: row.qty,
       unitPrice: centsToDollars(row.unitPriceCents),
       variant: row.variant ?? undefined,
+    };
+  }
+}
+
+/** One entry of an order's amount-change history (see OrderAmountAdjustment). */
+export class OrderAdjustmentResponse {
+  @ApiProperty() id!: string;
+  @ApiProperty({ description: 'Order total before this change (dollars)' })
+  previousTotal!: number;
+  @ApiProperty({ description: 'Proposed new order total (dollars)' })
+  newTotal!: number;
+  @ApiProperty() reason!: string;
+  @ApiProperty({ enum: ['pending', 'approved', 'rejected', 'withdrawn'] })
+  status!: string;
+  @ApiPropertyOptional({ description: 'When it was approved/declined/withdrawn' })
+  resolvedAt?: string;
+  @ApiProperty({ description: 'When the seller requested the change' })
+  createdAt!: string;
+
+  static fromRow(row: OrderAmountAdjustmentRow): OrderAdjustmentResponse {
+    return {
+      id: row.id,
+      previousTotal: centsToDollars(row.previousTotalCents),
+      newTotal: centsToDollars(row.newTotalCents),
+      reason: row.reason,
+      status: row.status,
+      resolvedAt: row.resolvedAt?.toISOString(),
+      createdAt: row.createdAt.toISOString(),
     };
   }
 }
@@ -62,8 +91,17 @@ export class OrderResponse {
     description: "Courier delivery status ('pending', 'delivered', …)",
   })
   courierStatus?: string;
+  @ApiProperty({
+    type: [OrderAdjustmentResponse],
+    description: 'Amount-change history (newest last); the pending one, if any, awaits buyer approval',
+  })
+  adjustments!: OrderAdjustmentResponse[];
 
-  static fromRow(row: OrderRow, items: OrderItemRow[]): OrderResponse {
+  static fromRow(
+    row: OrderRow,
+    items: OrderItemRow[],
+    adjustments: OrderAmountAdjustmentRow[] = [],
+  ): OrderResponse {
     return {
       id: row.reference,
       shopId: row.shopId,
@@ -87,6 +125,9 @@ export class OrderResponse {
       courierConsignmentId: row.courierConsignmentId ?? undefined,
       courierTrackingCode: row.courierTrackingCode ?? undefined,
       courierStatus: row.courierStatus ?? undefined,
+      adjustments: [...adjustments]
+        .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
+        .map(OrderAdjustmentResponse.fromRow),
     };
   }
 }

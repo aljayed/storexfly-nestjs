@@ -51,7 +51,8 @@ export class NotificationsService {
       | 'order_status'
       | 'order_cancelled'
       | 'order_refunded'
-      | 'payment_confirmed',
+      | 'payment_confirmed'
+      | 'order_adjustment',
     title: string,
     body: string,
   ): Promise<void> {

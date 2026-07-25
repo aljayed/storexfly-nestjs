@@ -160,6 +160,28 @@ export class CustomersService {
   }
 
   /**
+   * Re-syncs a customer's lifetime spend when an order's total changes (a
+   * buyer-approved amount adjustment). Signed delta: positive adds, negative
+   * removes. The order count is unchanged, so the segment can't move.
+   */
+  async adjustSpend(
+    tx: DbExecutor,
+    customerId: string,
+    deltaCents: number,
+  ): Promise<void> {
+    if (!deltaCents) return;
+    const customer = await tx.query.customers.findFirst({
+      where: eq(customers.id, customerId),
+    });
+    if (!customer) return;
+    const spentCents = Math.max(0, customer.spentCents + deltaCents);
+    await tx
+      .update(customers)
+      .set({ spentCents })
+      .where(eq(customers.id, customerId));
+  }
+
+  /**
    * Reverses a whole order from a customer's aggregates when it is cancelled
    * (unlike `applyRefund`, which only unwinds spend, a cancellation also drops
    * the order count since the sale never happened).

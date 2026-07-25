@@ -18,6 +18,7 @@ import {
 import { shops } from './shops.schema';
 import { customers } from './customers.schema';
 import { products } from './products.schema';
+import { orderAmountAdjustments } from './order-amount-adjustments.schema';
 
 /** Shape of the embedded delivery address (maps to `DeliveryAddress`). */
 export interface DeliveryAddressValue {
@@ -120,6 +121,7 @@ export const ordersRelations = relations(orders, ({ one, many }) => ({
     references: [customers.id],
   }),
   items: many(orderItems),
+  adjustments: many(orderAmountAdjustments),
 }));
 
 export const orderItemsRelations = relations(orderItems, ({ one }) => ({

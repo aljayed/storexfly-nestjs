@@ -20,6 +20,7 @@ import { ShopScopeGuard } from '../../common/guards/shop-scope.guard';
 import { BookCourierDto } from './dto/book-courier.dto';
 import { CheckoutDto } from './dto/checkout.dto';
 import { OrderQueryDto } from './dto/order-query.dto';
+import { RequestAdjustmentDto } from './dto/request-adjustment.dto';
 import { UpdateOrderStatusDto } from './dto/update-order-status.dto';
 import { OrdersService } from './orders.service';
 
@@ -111,6 +112,39 @@ export class OrdersController {
   })
   markPaid(@Param('shopId') shopId: string, @Param('id') id: string) {
     return this.orders.markPaid(shopId, id);
+  }
+
+  // ── Buyer-approved amount adjustments ────────────────────────
+  @Public()
+  @UseGuards(AdminJwtAuthGuard, ShopScopeGuard, RolesGuard)
+  @RequirePerm('orders.manage')
+  @ApiBearerAuth()
+  @Post('shops/:shopId/orders/:id/adjustment')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Admin: propose a new order total for the buyer to approve',
+  })
+  requestAdjustment(
+    @Param('shopId') shopId: string,
+    @Param('id') id: string,
+    @Body() dto: RequestAdjustmentDto,
+  ) {
+    return this.orders.requestAmountAdjustment(shopId, id, dto);
+  }
+
+  @Public()
+  @UseGuards(AdminJwtAuthGuard, ShopScopeGuard, RolesGuard)
+  @RequirePerm('orders.manage')
+  @ApiBearerAuth()
+  @Post('shops/:shopId/orders/:id/adjustment/:adjustmentId/withdraw')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Admin: withdraw a pending amount change' })
+  withdrawAdjustment(
+    @Param('shopId') shopId: string,
+    @Param('id') id: string,
+    @Param('adjustmentId') adjustmentId: string,
+  ) {
+    return this.orders.withdrawAmountAdjustment(shopId, id, adjustmentId);
   }
 
   // ── Courier (whichever provider the shop enabled) ────────────

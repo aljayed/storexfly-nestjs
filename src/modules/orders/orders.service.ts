@@ -19,7 +19,7 @@ import {
   or,
   sql,
 } from 'drizzle-orm';
-import { centsToDollars } from '../../common/utils/money.util';
+import { centsToDollars, dollarsToCents } from '../../common/utils/money.util';
 import {
   FREE_SALES_CAP_CENTS,
   FREE_TIER_LIMIT_MESSAGE,
@@ -29,6 +29,7 @@ import type { DrizzleDB } from '../../database/drizzle.types';
 import {
   combos,
   gatewayPayments,
+  orderAmountAdjustments,
   orderItems,
   orders,
   products,
@@ -67,6 +68,13 @@ const BUYER_CANCELLABLE: readonly OrderStatus[] = ['New'];
 /** Statuses from which the seller may hand the parcel to the courier. */
 const COURIER_BOOKABLE: readonly OrderStatus[] = ['Confirmed', 'Packed'];
 
+/**
+ * Statuses at which the seller may still propose an amount change: before the
+ * parcel ships. Past shipping the total is locked (a courier COD amount is
+ * fixed at booking and money has effectively started moving).
+ */
+const AMOUNT_ADJUSTABLE: readonly OrderStatus[] = ['New', 'Confirmed', 'Packed'];
+
 /** Buyer-facing copy for status-change notifications. */
 const STATUS_NOTIFICATION: Partial<Record<OrderStatus, string>> = {
   Confirmed: 'has been confirmed by the seller',
@@ -77,6 +85,11 @@ const STATUS_NOTIFICATION: Partial<Record<OrderStatus, string>> = {
 
 /** The transaction handle used inside `checkout`. */
 type OrdersTx = Parameters<Parameters<DrizzleDB['transaction']>[0]>[0];
+
+/** "৳1,500" from integer cents — buyer-facing money in notification copy. */
+function formatBdt(cents: number): string {
+  return `৳${centsToDollars(cents).toLocaleString('en-US')}`;
+}
 
 /** Priced line items + stock deductions computed for one checkout. */
 interface CheckoutCart {
@@ -609,7 +622,7 @@ export class OrdersService {
         orderBy,
         limit: query.limit,
         offset: query.offset,
-        with: { items: true },
+        with: { items: true, adjustments: true },
       }),
       this.db.select({ total: count() }).from(orders).where(where),
       this.db
@@ -636,7 +649,7 @@ export class OrdersService {
     const paidCount = Number(money.paidCount);
 
     return {
-      data: rows.map((o) => OrderResponse.fromRow(o, o.items)),
+      data: rows.map((o) => OrderResponse.fromRow(o, o.items, o.adjustments)),
       total,
       page: query.page,
       limit: query.limit,
@@ -666,12 +679,12 @@ export class OrdersService {
   async getById(shopId: string, id: string): Promise<OrderResponse> {
     const order = await this.db.query.orders.findFirst({
       where: this.orderIdFilter(shopId, id),
-      with: { items: true },
+      with: { items: true, adjustments: true },
     });
     if (!order) {
       throw new NotFoundException('Order not found');
     }
-    return OrderResponse.fromRow(order, order.items);
+    return OrderResponse.fromRow(order, order.items, order.adjustments);
   }
 
   /**
@@ -755,6 +768,220 @@ export class OrdersService {
       where: eq(orderItems.orderId, order.id),
     });
     return OrderResponse.fromRow(row, items);
+  }
+
+  // ── Buyer-approved amount adjustments ────────────────────────
+
+  /**
+   * Seller proposes a new order total (with a reason) that the buyer must
+   * approve before it takes effect. Only allowed on unpaid (Due) orders that
+   * haven't shipped and have no courier booked — so no money has moved yet and
+   * the courier's COD figure is still the order's own total. At most one
+   * pending proposal may exist at a time; the buyer approves/declines it from
+   * their profile. Emits a buyer notification so they can act on it.
+   */
+  async requestAmountAdjustment(
+    shopId: string,
+    id: string,
+    input: { newTotal: number; reason: string },
+  ): Promise<OrderResponse> {
+    const order = await this.requireOwned(shopId, id);
+    const reason = input.reason.trim();
+    if (!reason) {
+      throw new BadRequestException('Add a short reason for the change.');
+    }
+    if (order.status === 'Cancelled' || !AMOUNT_ADJUSTABLE.includes(order.status)) {
+      throw new BadRequestException(
+        'This order can no longer be changed — amount changes are only possible before it ships.',
+      );
+    }
+    if (order.pay !== 'Due') {
+      throw new ConflictException(
+        'Only unpaid (due) orders can have their amount changed for buyer approval.',
+      );
+    }
+    if (order.courierConsignmentId) {
+      throw new ConflictException(
+        'A courier is already booked — the amount is locked to the consignment.',
+      );
+    }
+    const newTotalCents = dollarsToCents(input.newTotal);
+    if (!Number.isFinite(newTotalCents) || newTotalCents <= 0) {
+      throw new BadRequestException('Enter a valid new amount.');
+    }
+    if (newTotalCents === order.totalCents) {
+      throw new BadRequestException(
+        'The new amount is the same as the current total.',
+      );
+    }
+    // The order total always includes delivery, so a change can't drop below it.
+    if (newTotalCents < order.deliveryCents) {
+      throw new BadRequestException(
+        'The new amount cannot be less than the delivery charge.',
+      );
+    }
+
+    const [existingPending] = await this.db
+      .select({ id: orderAmountAdjustments.id })
+      .from(orderAmountAdjustments)
+      .where(
+        and(
+          eq(orderAmountAdjustments.orderId, order.id),
+          eq(orderAmountAdjustments.status, 'pending'),
+        ),
+      );
+    if (existingPending) {
+      throw new ConflictException(
+        'This order already has a change waiting for the buyer to approve.',
+      );
+    }
+
+    await this.db.insert(orderAmountAdjustments).values({
+      orderId: order.id,
+      shopId: order.shopId,
+      previousTotalCents: order.totalCents,
+      newTotalCents,
+      reason: reason.slice(0, 300),
+    });
+
+    await this.notifications.orderEvent(
+      this.db,
+      order,
+      'order_adjustment',
+      `Order ${order.reference} — approval needed`,
+      `The seller updated your order total to ${formatBdt(newTotalCents)} (${reason.slice(0, 160)}). Open your profile to approve or decline it.`,
+    );
+
+    return this.orderResponseWithHistory(order.id);
+  }
+
+  /** Seller withdraws their own still-pending amount proposal. */
+  async withdrawAmountAdjustment(
+    shopId: string,
+    id: string,
+    adjustmentId: string,
+  ): Promise<OrderResponse> {
+    const order = await this.requireOwned(shopId, id);
+    const [row] = await this.db
+      .update(orderAmountAdjustments)
+      .set({ status: 'withdrawn', resolvedAt: new Date() })
+      .where(
+        and(
+          eq(orderAmountAdjustments.id, adjustmentId),
+          eq(orderAmountAdjustments.orderId, order.id),
+          eq(orderAmountAdjustments.status, 'pending'),
+        ),
+      )
+      .returning();
+    if (!row) {
+      throw new NotFoundException(
+        'No pending amount change was found to withdraw.',
+      );
+    }
+    return this.orderResponseWithHistory(order.id);
+  }
+
+  /**
+   * Buyer approves or declines a pending amount change. Ownership is the
+   * order-email ↔ account match (same link the buyer's order list uses).
+   * Approving rewrites the order's total and re-syncs the customer's lifetime
+   * spend by the delta; declining just records the decision. Runs in a
+   * transaction so the order total and the adjustment status can't diverge.
+   */
+  async respondToAdjustmentByBuyer(
+    buyerEmail: string,
+    shopId: string,
+    reference: string,
+    adjustmentId: string,
+    approve: boolean,
+  ): Promise<OrderResponse> {
+    return this.db.transaction(async (tx) => {
+      const order = await tx.query.orders.findFirst({
+        where: and(eq(orders.shopId, shopId), eq(orders.reference, reference)),
+      });
+      // A foreign/missing order is reported identically so the endpoint can't
+      // be used to probe other buyers' orders.
+      if (!order || order.email !== buyerEmail) {
+        throw new NotFoundException('Order not found');
+      }
+      const adjustment = await tx.query.orderAmountAdjustments.findFirst({
+        where: and(
+          eq(orderAmountAdjustments.id, adjustmentId),
+          eq(orderAmountAdjustments.orderId, order.id),
+        ),
+      });
+      if (!adjustment || adjustment.status !== 'pending') {
+        throw new ConflictException(
+          'This amount change is no longer awaiting your approval.',
+        );
+      }
+
+      await tx
+        .update(orderAmountAdjustments)
+        .set({
+          status: approve ? 'approved' : 'rejected',
+          resolvedAt: new Date(),
+        })
+        .where(eq(orderAmountAdjustments.id, adjustment.id));
+
+      let row = order;
+      if (approve) {
+        // Guard against the total having moved since the proposal was made
+        // (another adjustment, a refund, …): only apply from the total the
+        // seller quoted from.
+        if (order.totalCents !== adjustment.previousTotalCents) {
+          throw new ConflictException(
+            'The order total changed since this request — please ask the seller to send it again.',
+          );
+        }
+        [row] = await tx
+          .update(orders)
+          .set({ totalCents: adjustment.newTotalCents })
+          .where(eq(orders.id, order.id))
+          .returning();
+        if (order.customerId) {
+          await this.customers.adjustSpend(
+            tx,
+            order.customerId,
+            adjustment.newTotalCents - adjustment.previousTotalCents,
+          );
+        }
+      }
+
+      await this.notifications.orderEvent(
+        tx,
+        row,
+        'order_adjustment',
+        `Order ${row.reference} — amount ${approve ? 'approved' : 'declined'}`,
+        approve
+          ? `You approved the updated total of ${formatBdt(adjustment.newTotalCents)}.`
+          : `You declined the seller's updated total. Your order total stays ${formatBdt(order.totalCents)}.`,
+      );
+
+      const [items, adjustments] = await Promise.all([
+        tx.query.orderItems.findMany({
+          where: eq(orderItems.orderId, order.id),
+        }),
+        tx.query.orderAmountAdjustments.findMany({
+          where: eq(orderAmountAdjustments.orderId, order.id),
+        }),
+      ]);
+      return OrderResponse.fromRow(row, items, adjustments);
+    });
+  }
+
+  /** Reload an order as a full OrderResponse (items + amount history). */
+  private async orderResponseWithHistory(
+    orderId: string,
+  ): Promise<OrderResponse> {
+    const order = await this.db.query.orders.findFirst({
+      where: eq(orders.id, orderId),
+      with: { items: true, adjustments: true },
+    });
+    if (!order) {
+      throw new NotFoundException('Order not found');
+    }
+    return OrderResponse.fromRow(order, order.items, order.adjustments);
   }
 
   /**

@@ -8,6 +8,7 @@ import { OrdersService } from '../orders/orders.service';
 import { BuyerService } from './buyer.service';
 import { CancelOrderDto } from './dto/cancel-order.dto';
 import { ClaimOrderDto } from './dto/claim-order.dto';
+import { RespondAdjustmentDto } from './dto/respond-adjustment.dto';
 
 /** Buyer-authed order actions (separate from the seller order pipeline). */
 @ApiTags('buyer')
@@ -37,5 +38,23 @@ export class BuyerOrdersController {
   })
   cancel(@CurrentUser() user: BuyerPrincipal, @Body() dto: CancelOrderDto) {
     return this.orders.cancelByBuyer(user.email, dto.shopId, dto.reference);
+  }
+
+  @Post('adjustment/respond')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: "Buyer: approve or decline a seller's order-amount change",
+  })
+  respondAdjustment(
+    @CurrentUser() user: BuyerPrincipal,
+    @Body() dto: RespondAdjustmentDto,
+  ) {
+    return this.orders.respondToAdjustmentByBuyer(
+      user.email,
+      dto.shopId,
+      dto.reference,
+      dto.adjustmentId,
+      dto.approve,
+    );
   }
 }

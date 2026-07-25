@@ -101,9 +101,20 @@ export interface BuyerProfile {
   lastPayMethod: string | null;
 }
 
+/** A seller's still-pending order-amount change awaiting the buyer's decision. */
+export interface BuyerOverviewPendingAdjustment {
+  id: string;
+  /** The current order total the buyer would be moving away from (dollars). */
+  previousTotal: number;
+  /** The proposed new order total (dollars). */
+  newTotal: number;
+  reason: string;
+  createdAt: string;
+}
+
 export interface BuyerOverviewOrder {
   reference: string;
-  /** Shop id — needed to address buyer order actions (claim/cancel). */
+  /** Shop id — needed to address buyer order actions (claim/cancel/approve). */
   shopId: string;
   shopName: string;
   shopHandle: string;
@@ -113,6 +124,8 @@ export interface BuyerOverviewOrder {
   status: string;
   pay: string;
   placedAt: string;
+  /** Set when the seller has proposed an amount change awaiting approval. */
+  pendingAdjustment: BuyerOverviewPendingAdjustment | null;
 }
 
 export interface BuyerOverviewReview {

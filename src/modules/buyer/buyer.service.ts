@@ -292,6 +292,7 @@ export class BuyerService {
         with: {
           shop: { columns: { name: true, handle: true } },
           items: { columns: { name: true } },
+          adjustments: true,
         },
       }),
       this.db.query.reviews.findMany({
@@ -328,18 +329,30 @@ export class BuyerService {
         reviews: reviewRows.length,
         totalSpent: centsToDollars(totalSpentCents),
       },
-      orders: orderRows.map((o) => ({
-        reference: o.reference,
-        shopId: o.shopId,
-        shopName: o.shop?.name ?? 'Shop',
-        shopHandle: o.shop?.handle ?? '',
-        itemSummary: summarizeItems(o.items.map((i) => i.name)),
-        qty: o.qty,
-        total: centsToDollars(o.totalCents),
-        status: o.status,
-        pay: o.pay,
-        placedAt: o.placedAt.toISOString(),
-      })),
+      orders: orderRows.map((o) => {
+        const pending = o.adjustments.find((a) => a.status === 'pending');
+        return {
+          reference: o.reference,
+          shopId: o.shopId,
+          shopName: o.shop?.name ?? 'Shop',
+          shopHandle: o.shop?.handle ?? '',
+          itemSummary: summarizeItems(o.items.map((i) => i.name)),
+          qty: o.qty,
+          total: centsToDollars(o.totalCents),
+          status: o.status,
+          pay: o.pay,
+          placedAt: o.placedAt.toISOString(),
+          pendingAdjustment: pending
+            ? {
+                id: pending.id,
+                previousTotal: centsToDollars(pending.previousTotalCents),
+                newTotal: centsToDollars(pending.newTotalCents),
+                reason: pending.reason,
+                createdAt: pending.createdAt.toISOString(),
+              }
+            : null,
+        };
+      }),
       reviews: reviewRows.map((r) => ({
         id: r.id,
         rating: r.rating,
