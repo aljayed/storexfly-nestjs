@@ -1,7 +1,13 @@
 import type { Request } from 'express';
 import type { AdminRole } from '../../database/schema/enums';
 
-/** Authenticated seller/buyer, attached to `req.user` by the JWT strategy. */
+/**
+ * The authenticated account — the single human identity used for BOTH shopping
+ * and selling (buyer and seller were unified into one `users` account). Attached
+ * to `req.user` by the JWT strategy. `isAdmin` is the platform-admin flag; owning
+ * a shop is what makes the account a seller. (Historically "seller"; kept for
+ * blast radius — semantically it's the account.)
+ */
 export interface SellerPrincipal {
   kind: 'seller';
   id: string;
@@ -9,6 +15,9 @@ export interface SellerPrincipal {
   name: string;
   isAdmin: boolean;
 }
+
+/** Alias for the unified account principal — clearer in storefront/buyer code. */
+export type AccountPrincipal = SellerPrincipal;
 
 /**
  * Authenticated admin-console staff member, attached by the admin JWT
@@ -33,19 +42,7 @@ export interface PlatformPrincipal {
   email: string;
 }
 
-/** A signed-in shopper, attached by the buyer JWT strategy. Leaves reviews. */
-export interface BuyerPrincipal {
-  kind: 'buyer';
-  id: string;
-  email: string;
-  name: string;
-}
-
-export type Principal =
-  | SellerPrincipal
-  | AdminPrincipal
-  | PlatformPrincipal
-  | BuyerPrincipal;
+export type Principal = SellerPrincipal | AdminPrincipal | PlatformPrincipal;
 
 export interface RequestWithPrincipal<
   P extends Principal = Principal,

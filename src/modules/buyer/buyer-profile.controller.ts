@@ -1,35 +1,59 @@
-import { Body, Controller, Get, Patch, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  HttpCode,
+  HttpStatus,
+  Patch,
+  Post,
+} from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { Throttle } from '@nestjs/throttler';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
-import { Public } from '../../common/decorators/public.decorator';
-import { BuyerJwtAuthGuard } from '../../common/guards/buyer-jwt-auth.guard';
-import type { BuyerPrincipal } from '../../common/types/principal';
+import type { AccountPrincipal } from '../../common/types/principal';
 import { BuyerService } from './buyer.service';
 import { UpdateBuyerProfileDto } from './dto/buyer-overview.dto';
+import { VerifyCodeDto } from './dto/verify-code.dto';
 
-/** Buyer self-service profile — account info, order history and reviews. */
+/** Account storefront profile — info, order history and reviews. Authed by the
+ *  global account JWT guard (the single session). */
 @ApiTags('buyer')
-// @Public() opts out of the global *seller* JWT guard; the buyer guard below is
-// what actually authenticates these routes (same pattern as the buyer /me route).
-@Public()
-@UseGuards(BuyerJwtAuthGuard)
 @ApiBearerAuth()
 @Controller('buyer/profile')
 export class BuyerProfileController {
   constructor(private readonly buyers: BuyerService) {}
 
   @Get()
-  @ApiOperation({ summary: 'Buyer: profile overview (account, orders, reviews)' })
-  overview(@CurrentUser() user: BuyerPrincipal) {
+  @ApiOperation({ summary: 'Account: profile overview (account, orders, reviews)' })
+  overview(@CurrentUser() user: AccountPrincipal) {
     return this.buyers.overview(user.id);
   }
 
   @Patch()
-  @ApiOperation({ summary: 'Buyer: update name and saved checkout details' })
+  @ApiOperation({ summary: 'Account: update name and saved checkout details' })
   updateProfile(
-    @CurrentUser() user: BuyerPrincipal,
+    @CurrentUser() user: AccountPrincipal,
     @Body() dto: UpdateBuyerProfileDto,
   ) {
     return this.buyers.updateProfile(user.id, dto);
+  }
+
+  @Throttle({ default: { limit: 3, ttl: 60_000 } })
+  @Post('verify-email/start')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: "Account: email a code to verify the account's email" })
+  startEmailVerification(@CurrentUser() user: AccountPrincipal) {
+    return this.buyers.startEmailVerification(user.id);
+  }
+
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  @Post('verify-email')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Account: confirm the emailed code and verify the email' })
+  confirmEmailVerification(
+    @CurrentUser() user: AccountPrincipal,
+    @Body() dto: VerifyCodeDto,
+  ) {
+    return this.buyers.confirmEmailVerification(user.id, dto.code);
   }
 }

@@ -15,6 +15,7 @@ import {
   eq,
   gte,
   ilike,
+  inArray,
   ne,
   or,
   sql,
@@ -34,6 +35,7 @@ import {
   orders,
   products,
   shops,
+  users,
   type OrderRow,
 } from '../../database/schema';
 import type { OrderStatus, SalesChannel } from '../../database/schema/enums';
@@ -89,6 +91,12 @@ type OrdersTx = Parameters<Parameters<DrizzleDB['transaction']>[0]>[0];
 /** "৳1,500" from integer cents — buyer-facing money in notification copy. */
 function formatBdt(cents: number): string {
   return `৳${centsToDollars(cents).toLocaleString('en-US')}`;
+}
+
+/** Reduce any BD phone format to the bare national number (same rule as the
+ *  notifications matcher), so an order's phone can be matched to a buyer row. */
+function normalizePhone(raw: string | null | undefined): string {
+  return (raw ?? '').replace(/\D/g, '').replace(/^880/, '').replace(/^0+/, '');
 }
 
 /** Priced line items + stock deductions computed for one checkout. */
@@ -648,8 +656,12 @@ export class OrdersService {
     const revenueCents = Number(money.revenueCents);
     const paidCount = Number(money.paidCount);
 
+    const accountIds = await this.orderIdsWithBuyerAccount(rows);
+
     return {
-      data: rows.map((o) => OrderResponse.fromRow(o, o.items, o.adjustments)),
+      data: rows.map((o) =>
+        OrderResponse.fromRow(o, o.items, o.adjustments, accountIds.has(o.id)),
+      ),
       total,
       page: query.page,
       limit: query.limit,
@@ -684,7 +696,13 @@ export class OrdersService {
     if (!order) {
       throw new NotFoundException('Order not found');
     }
-    return OrderResponse.fromRow(order, order.items, order.adjustments);
+    const hasAccount = await this.orderHasBuyerAccount(order);
+    return OrderResponse.fromRow(
+      order,
+      order.items,
+      order.adjustments,
+      hasAccount,
+    );
   }
 
   /**
@@ -779,6 +797,13 @@ export class OrdersService {
    * the courier's COD figure is still the order's own total. At most one
    * pending proposal may exist at a time; the buyer approves/declines it from
    * their profile. Emits a buyer notification so they can act on it.
+   *
+   * The buyer must hold a *verified* account matching the order (verified email
+   * now; verified phone once that exists): approval is an authenticated,
+   * account-only action, so a guest order — or one matched only by an
+   * unverified identifier — can't be adjusted. Otherwise the change could be
+   * "approved" by whoever holds the order, which includes the seller. Such
+   * orders are blocked up front.
    */
   async requestAmountAdjustment(
     shopId: string,
@@ -803,6 +828,16 @@ export class OrdersService {
     if (order.courierConsignmentId) {
       throw new ConflictException(
         'A courier is already booked — the amount is locked to the consignment.',
+      );
+    }
+    if (!(await this.orderHasBuyerAccount(order))) {
+      // Orders placed with only a phone carry a synthetic "<phone>@phone.local"
+      // email — point the seller at the phone number in that case.
+      const identifier = order.email.endsWith('@phone.local')
+        ? 'phone number'
+        : 'email';
+      throw new BadRequestException(
+        `This order isn't tied to a verified buyer account, so there's no owner to approve a change. It becomes available once the buyer verifies an account using this order's ${identifier}.`,
       );
     }
     const newTotalCents = dollarsToCents(input.newTotal);
@@ -882,11 +917,10 @@ export class OrdersService {
   }
 
   /**
-   * Buyer approves or declines a pending amount change. Ownership is the
-   * order-email ↔ account match (same link the buyer's order list uses).
-   * Approving rewrites the order's total and re-syncs the customer's lifetime
-   * spend by the delta; declining just records the decision. Runs in a
-   * transaction so the order total and the adjustment status can't diverge.
+   * Buyer approves or declines a pending amount change from their profile.
+   * Ownership is the order-email ↔ account match (same link the buyer's order
+   * list uses). Runs in a transaction so the order total and the adjustment
+   * status can't diverge.
    */
   async respondToAdjustmentByBuyer(
     buyerEmail: string,
@@ -901,7 +935,10 @@ export class OrdersService {
       });
       // A foreign/missing order is reported identically so the endpoint can't
       // be used to probe other buyers' orders.
-      if (!order || order.email !== buyerEmail) {
+      if (
+        !order ||
+        order.email.toLowerCase() !== buyerEmail.toLowerCase()
+      ) {
         throw new NotFoundException('Order not found');
       }
       const adjustment = await tx.query.orderAmountAdjustments.findFirst({
@@ -916,46 +953,11 @@ export class OrdersService {
         );
       }
 
-      await tx
-        .update(orderAmountAdjustments)
-        .set({
-          status: approve ? 'approved' : 'rejected',
-          resolvedAt: new Date(),
-        })
-        .where(eq(orderAmountAdjustments.id, adjustment.id));
-
-      let row = order;
-      if (approve) {
-        // Guard against the total having moved since the proposal was made
-        // (another adjustment, a refund, …): only apply from the total the
-        // seller quoted from.
-        if (order.totalCents !== adjustment.previousTotalCents) {
-          throw new ConflictException(
-            'The order total changed since this request — please ask the seller to send it again.',
-          );
-        }
-        [row] = await tx
-          .update(orders)
-          .set({ totalCents: adjustment.newTotalCents })
-          .where(eq(orders.id, order.id))
-          .returning();
-        if (order.customerId) {
-          await this.customers.adjustSpend(
-            tx,
-            order.customerId,
-            adjustment.newTotalCents - adjustment.previousTotalCents,
-          );
-        }
-      }
-
-      await this.notifications.orderEvent(
+      const row = await this.applyAdjustmentDecision(
         tx,
-        row,
-        'order_adjustment',
-        `Order ${row.reference} — amount ${approve ? 'approved' : 'declined'}`,
-        approve
-          ? `You approved the updated total of ${formatBdt(adjustment.newTotalCents)}.`
-          : `You declined the seller's updated total. Your order total stays ${formatBdt(order.totalCents)}.`,
+        order,
+        adjustment,
+        approve,
       );
 
       const [items, adjustments] = await Promise.all([
@@ -970,6 +972,61 @@ export class OrdersService {
     });
   }
 
+  /**
+   * Shared approve/decline core for the buyer path. Marks the adjustment
+   * resolved; on approval rewrites the order total (guarding that it hasn't
+   * moved since the request) and re-syncs the customer's lifetime spend by the
+   * delta. Emits a buyer notification. Returns the possibly-updated order row.
+   */
+  private async applyAdjustmentDecision(
+    tx: OrdersTx,
+    order: OrderRow,
+    adjustment: { id: string; previousTotalCents: number; newTotalCents: number },
+    approve: boolean,
+  ): Promise<OrderRow> {
+    await tx
+      .update(orderAmountAdjustments)
+      .set({
+        status: approve ? 'approved' : 'rejected',
+        resolvedAt: new Date(),
+      })
+      .where(eq(orderAmountAdjustments.id, adjustment.id));
+
+    let row = order;
+    if (approve) {
+      // Guard against the total having moved since the proposal was made
+      // (another adjustment, a refund, …): only apply from the quoted total.
+      if (order.totalCents !== adjustment.previousTotalCents) {
+        throw new ConflictException(
+          'The order total changed since this request — please ask the seller to send it again.',
+        );
+      }
+      [row] = await tx
+        .update(orders)
+        .set({ totalCents: adjustment.newTotalCents })
+        .where(eq(orders.id, order.id))
+        .returning();
+      if (order.customerId) {
+        await this.customers.adjustSpend(
+          tx,
+          order.customerId,
+          adjustment.newTotalCents - adjustment.previousTotalCents,
+        );
+      }
+    }
+
+    await this.notifications.orderEvent(
+      tx,
+      row,
+      'order_adjustment',
+      `Order ${row.reference} — amount ${approve ? 'approved' : 'declined'}`,
+      approve
+        ? `You approved the updated total of ${formatBdt(adjustment.newTotalCents)}.`
+        : `You declined the seller's updated total. Your order total stays ${formatBdt(order.totalCents)}.`,
+    );
+    return row;
+  }
+
   /** Reload an order as a full OrderResponse (items + amount history). */
   private async orderResponseWithHistory(
     orderId: string,
@@ -981,7 +1038,90 @@ export class OrdersService {
     if (!order) {
       throw new NotFoundException('Order not found');
     }
-    return OrderResponse.fromRow(order, order.items, order.adjustments);
+    const hasAccount = await this.orderHasBuyerAccount(order);
+    return OrderResponse.fromRow(
+      order,
+      order.items,
+      order.adjustments,
+      hasAccount,
+    );
+  }
+
+  /**
+   * Does this order belong to a buyer who has *verified* the matching
+   * identifier? Only a verified email (or, once it exists, a verified phone)
+   * counts — a guest order attaches to an account only after the owner proves
+   * they own the email/phone it was placed with. This gates repricing so a
+   * change can only be approved by the real order owner.
+   */
+  private async orderHasBuyerAccount(
+    order: Pick<OrderRow, 'email' | 'phone'>,
+  ): Promise<boolean> {
+    const phone = normalizePhone(order.phone);
+    const email = order.email.toLowerCase();
+    const candidates = await this.db.query.users.findMany({
+      where: phone
+        ? or(eq(users.email, email), eq(users.phone, phone))
+        : eq(users.email, email),
+      columns: {
+        email: true,
+        phone: true,
+        emailVerified: true,
+        phoneVerified: true,
+      },
+    });
+    return candidates.some(
+      (b) =>
+        (b.emailVerified && b.email === email) ||
+        (b.phoneVerified && !!phone && b.phone === phone),
+    );
+  }
+
+  /**
+   * Batch version of {@link orderHasBuyerAccount} for the list page: one query
+   * resolves which of the given orders belong to a verified account. Returns
+   * the set of order ids that do.
+   */
+  private async orderIdsWithBuyerAccount(
+    rows: Pick<OrderRow, 'id' | 'email' | 'phone'>[],
+  ): Promise<Set<string>> {
+    const emails = [
+      ...new Set(rows.map((r) => r.email.toLowerCase()).filter(Boolean)),
+    ];
+    const phones = [
+      ...new Set(rows.map((r) => normalizePhone(r.phone)).filter(Boolean)),
+    ];
+    if (!emails.length && !phones.length) return new Set();
+    const accounts = await this.db.query.users.findMany({
+      where: or(
+        emails.length ? inArray(users.email, emails) : undefined,
+        phones.length ? inArray(users.phone, phones) : undefined,
+      ),
+      columns: {
+        email: true,
+        phone: true,
+        emailVerified: true,
+        phoneVerified: true,
+      },
+    });
+    // Only verified identifiers attach an order to an account.
+    const verifiedEmails = new Set(
+      accounts.filter((a) => a.emailVerified && a.email).map((a) => a.email),
+    );
+    const verifiedPhones = new Set(
+      accounts.filter((a) => a.phoneVerified && a.phone).map((a) => a.phone),
+    );
+    const out = new Set<string>();
+    for (const r of rows) {
+      const phone = normalizePhone(r.phone);
+      if (
+        verifiedEmails.has(r.email.toLowerCase()) ||
+        (phone && verifiedPhones.has(phone))
+      ) {
+        out.add(r.id);
+      }
+    }
+    return out;
   }
 
   /**
@@ -1089,7 +1229,10 @@ export class OrdersService {
       });
       // A foreign order is reported identically to a missing one, so the
       // endpoint can't be used to probe other buyers' references.
-      if (!order || order.email !== buyerEmail) {
+      if (
+        !order ||
+        order.email.toLowerCase() !== buyerEmail.toLowerCase()
+      ) {
         throw new NotFoundException('Order not found');
       }
       if (order.status === 'Cancelled') {

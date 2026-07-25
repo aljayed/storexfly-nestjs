@@ -5,7 +5,6 @@ import {
   HttpCode,
   HttpStatus,
   Post,
-  UseGuards,
 } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 import {
@@ -16,8 +15,7 @@ import {
 } from '@nestjs/swagger';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { Public } from '../../common/decorators/public.decorator';
-import { BuyerJwtAuthGuard } from '../../common/guards/buyer-jwt-auth.guard';
-import type { BuyerPrincipal } from '../../common/types/principal';
+import type { AccountPrincipal } from '../../common/types/principal';
 import { EmailOtpVerifyDto } from '../auth/dto/email-otp-verify.dto';
 import { BuyerService } from './buyer.service';
 import {
@@ -69,12 +67,10 @@ export class BuyerAuthController {
     return this.buyers.login(dto);
   }
 
-  @Public()
-  @UseGuards(BuyerJwtAuthGuard)
   @ApiBearerAuth()
   @Get('me')
-  @ApiOperation({ summary: 'Buyer: current session' })
-  async me(@CurrentUser() user: BuyerPrincipal) {
+  @ApiOperation({ summary: 'Account: current storefront session' })
+  async me(@CurrentUser() user: AccountPrincipal) {
     const row = await this.buyers.findById(user.id);
     return row ? this.buyers.me(row) : null;
   }

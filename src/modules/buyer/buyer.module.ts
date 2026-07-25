@@ -7,11 +7,11 @@ import { BuyerAuthController } from './buyer-auth.controller';
 import { BuyerOrdersController } from './buyer-orders.controller';
 import { BuyerProfileController } from './buyer-profile.controller';
 import { BuyerService } from './buyer.service';
-import { BuyerJwtStrategy } from './strategies/buyer-jwt.strategy';
 
 /**
- * Buyer (shopper) accounts and their JWT session. Imports AuthModule for the
- * shared {@link TokenService}; registers the `buyer-jwt` passport strategy.
+ * Storefront-shopper account flows (register/login/profile), operating on the
+ * unified `users` account. Authenticated storefront routes use the global
+ * account JWT guard — there is no separate buyer session anymore.
  */
 @Module({
   imports: [AuthModule, PassportModule, BlockedWordsModule, OrdersModule],
@@ -20,7 +20,7 @@ import { BuyerJwtStrategy } from './strategies/buyer-jwt.strategy';
     BuyerOrdersController,
     BuyerProfileController,
   ],
-  providers: [BuyerService, BuyerJwtStrategy],
+  providers: [BuyerService],
   exports: [BuyerService],
 })
 export class BuyerModule {}

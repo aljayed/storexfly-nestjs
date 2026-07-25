@@ -2,6 +2,7 @@ import { relations } from 'drizzle-orm';
 import {
   boolean,
   index,
+  jsonb,
   pgTable,
   text,
   timestamp,
@@ -13,9 +14,32 @@ import { authMethodEnum } from './enums';
 import { shops } from './shops.schema';
 
 /**
- * Platform accounts — sellers (and Google/phone buyers). Maps to `User` in the
- * design handoff. `passwordHash` is null for accounts that only ever used a
- * social/phone login.
+ * A pinned map location the account saved at checkout. `line`/`area`/`pin` are
+ * the human-readable address for the drop. `lat`/`lng` are the exact coordinates
+ * from the interactive delivery map. `x`/`y` are the legacy canvas pin position
+ * (percent) kept for pins saved before the real map — all optional so either
+ * representation validates.
+ */
+export interface BuyerGeoValue {
+  line: string;
+  area: string;
+  pin: string;
+  /** Raw district label from the reverse geocoder (e.g. "Dhaka District"). */
+  district?: string;
+  /** Complete reverse-geocoded address line shown under the delivery map. */
+  full?: string;
+  lat?: number;
+  lng?: number;
+  x?: number;
+  y?: number;
+}
+
+/**
+ * Platform accounts — the single human identity for both shopping and selling.
+ * Anyone can buy; you become a seller by owning a shop. `passwordHash` is null
+ * for accounts that only ever used a social/phone login. The `address*`/`geo`/
+ * `lastPayMethod`/`phoneVerified` fields are the storefront-shopper profile
+ * (saved checkout autofill), folded in when buyer & seller accounts unified.
  */
 export const users = pgTable(
   'users',
@@ -29,6 +53,17 @@ export const users = pgTable(
     googleId: varchar('google_id', { length: 64 }),
     isAdmin: boolean('is_admin').notNull().default(false),
     emailVerified: boolean('email_verified').notNull().default(false),
+    // True once the buyer proves the phone number (SMS OTP). No phone-verify
+    // step exists yet, so always false — kept so it drops in without a backfill.
+    phoneVerified: boolean('phone_verified').notNull().default(false),
+    // Saved checkout details (autofill the storefront order form). All optional.
+    // Phone holds the bare 10 digits after +880 (same format checkout captures).
+    addressLine: text('address_line'),
+    addressCity: varchar('address_city', { length: 120 }),
+    addressPincode: varchar('address_pincode', { length: 24 }),
+    geo: jsonb('geo').$type<BuyerGeoValue>(),
+    // Payment-method code from the account's most recent order (preselected at checkout).
+    lastPayMethod: varchar('last_pay_method', { length: 64 }),
     createdAt: timestamp('created_at', { withTimezone: true })
       .notNull()
       .defaultNow(),

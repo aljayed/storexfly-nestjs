@@ -12,7 +12,7 @@ import {
   uuid,
   varchar,
 } from 'drizzle-orm/pg-core';
-import { buyers } from './buyers.schema';
+import { users } from './users.schema';
 import { shops } from './shops.schema';
 
 /**
@@ -105,7 +105,7 @@ export const chatConversations = pgTable(
     id: uuid('id').primaryKey().defaultRandom(),
     buyerId: uuid('buyer_id')
       .notNull()
-      .references(() => buyers.id, { onDelete: 'cascade' }),
+      .references(() => users.id, { onDelete: 'cascade' }),
     shopId: uuid('shop_id')
       .notNull()
       .references(() => shops.id, { onDelete: 'cascade' }),
@@ -191,9 +191,9 @@ export const chatQuickReplies = pgTable(
 export const chatConversationsRelations = relations(
   chatConversations,
   ({ one, many }) => ({
-    buyer: one(buyers, {
+    buyer: one(users, {
       fields: [chatConversations.buyerId],
-      references: [buyers.id],
+      references: [users.id],
     }),
     shop: one(shops, {
       fields: [chatConversations.shopId],

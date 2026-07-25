@@ -8,7 +8,7 @@ import {
   MinLength,
   ValidateNested,
 } from 'class-validator';
-import type { BuyerRow } from '../../../database/schema';
+import type { UserRow } from '../../../database/schema';
 import { BuyerGeoDto, type BuyerProfile } from './buyer-overview.dto';
 
 const lower = ({ value }: { value: unknown }) =>
@@ -87,24 +87,25 @@ export class BuyerLoginDto {
   password!: string;
 }
 
-/** Public buyer profile + session token. */
+/** Public account profile + session token (the storefront-facing shape). */
 export class BuyerAuthResponse {
   @ApiProperty() token!: string;
   @ApiProperty() buyer!: BuyerProfile;
 
-  static of(row: BuyerRow, token: string): BuyerAuthResponse {
+  static of(row: UserRow, token: string): BuyerAuthResponse {
     return {
       token,
       buyer: {
         id: row.id,
         name: row.name,
-        email: row.email,
+        email: row.email ?? '',
         phone: row.phone,
         address: row.addressLine,
         city: row.addressCity,
         pincode: row.addressPincode,
         geo: row.geo,
         lastPayMethod: row.lastPayMethod,
+        emailVerified: row.emailVerified,
       },
     };
   }

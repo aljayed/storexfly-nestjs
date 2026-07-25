@@ -4,8 +4,8 @@ import { DRIZZLE } from '../../database/database.constants';
 import type { DbExecutor, DrizzleDB } from '../../database/drizzle.types';
 import {
   buyerNotifications,
-  buyers,
   shops,
+  users,
   type OrderRow,
 } from '../../database/schema';
 
@@ -58,10 +58,11 @@ export class NotificationsService {
   ): Promise<void> {
     try {
       const phone = normalizePhone(order.phone);
-      const buyer = await executor.query.buyers.findFirst({
+      const email = order.email.toLowerCase();
+      const buyer = await executor.query.users.findFirst({
         where: phone
-          ? or(eq(buyers.email, order.email), eq(buyers.phone, phone))
-          : eq(buyers.email, order.email),
+          ? or(eq(sql`lower(${users.email})`, email), eq(users.phone, phone))
+          : eq(sql`lower(${users.email})`, email),
         columns: { id: true },
       });
       if (!buyer) return;

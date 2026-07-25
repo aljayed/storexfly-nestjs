@@ -3,14 +3,14 @@ import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import type {
   AdminJwtPayload,
-  BuyerJwtPayload,
+  SellerJwtPayload,
 } from '../auth/interfaces/jwt-payload.interface';
 import { roleHasPermission } from '../../common/auth/admin-permissions';
 import type { ChatActor } from './chat-actor';
 
 /**
  * The chat module's ONLY tie into the host platform's auth. Accepts the
- * platform's existing session tokens — buyer JWTs for the customer side and
+ * platform's existing session tokens — the account JWT for the customer side and
  * admin-console JWTs for the seller side — so chat needs no login of its own.
  *
  * Porting the module to another host means re-implementing just this class
@@ -30,21 +30,21 @@ export class ChatTokenService {
       throw new UnauthorizedException('Missing chat credentials');
     }
 
-    // Buyer session (typ 'buyer', seller-JWT secret) → customer side.
+    // Account session (typ 'seller', account-JWT secret) → customer side.
     try {
-      const payload = await this.jwt.verifyAsync<BuyerJwtPayload>(token, {
+      const payload = await this.jwt.verifyAsync<SellerJwtPayload>(token, {
         secret: this.config.getOrThrow<string>('jwt.secret'),
       });
-      if (payload.typ === 'buyer') {
+      if (payload.typ === 'seller') {
         return {
           role: 'customer',
           id: payload.sub,
           name: payload.name,
-          email: payload.email,
+          email: payload.email ?? '',
         };
       }
     } catch {
-      /* not a buyer token — try the admin secret */
+      /* not an account token — try the admin secret */
     }
 
     // Admin-console session (typ 'admin', own secret) → seller side. The 2FA

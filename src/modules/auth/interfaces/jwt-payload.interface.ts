@@ -1,20 +1,15 @@
 import type { AdminRole } from '../../../database/schema/enums';
 
-/** Claims carried by the seller-session JWT. */
+/**
+ * Claims carried by the account-session JWT — the single login for shopping and
+ * selling. (`typ:'seller'` kept for backward compatibility with live tokens.)
+ */
 export interface SellerJwtPayload {
-  sub: string; // user id
+  sub: string; // account (users) id
   email?: string;
   name: string;
   isAdmin: boolean;
   typ: 'seller';
-}
-
-/** Claims carried by the buyer-session JWT (shopper reviews). */
-export interface BuyerJwtPayload {
-  sub: string; // buyer id
-  email: string;
-  name: string;
-  typ: 'buyer';
 }
 
 /** Claims carried by the admin-console JWT (issued post-2FA). */

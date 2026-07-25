@@ -8,7 +8,7 @@ import {
   uuid,
   varchar,
 } from 'drizzle-orm/pg-core';
-import { buyers } from './buyers.schema';
+import { users } from './users.schema';
 import { orders } from './orders.schema';
 import { shops } from './shops.schema';
 
@@ -24,7 +24,7 @@ export const buyerNotifications = pgTable(
     id: uuid('id').primaryKey().defaultRandom(),
     buyerId: uuid('buyer_id')
       .notNull()
-      .references(() => buyers.id, { onDelete: 'cascade' }),
+      .references(() => users.id, { onDelete: 'cascade' }),
     orderId: uuid('order_id').references(() => orders.id, {
       onDelete: 'set null',
     }),
@@ -55,9 +55,9 @@ export const buyerNotifications = pgTable(
 export const buyerNotificationsRelations = relations(
   buyerNotifications,
   ({ one }) => ({
-    buyer: one(buyers, {
+    buyer: one(users, {
       fields: [buyerNotifications.buyerId],
-      references: [buyers.id],
+      references: [users.id],
     }),
     order: one(orders, {
       fields: [buyerNotifications.orderId],

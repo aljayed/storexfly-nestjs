@@ -3,7 +3,6 @@ import { ConfigService } from '@nestjs/config';
 import { JwtService, type JwtSignOptions } from '@nestjs/jwt';
 import type {
   AdminJwtPayload,
-  BuyerJwtPayload,
   PlatformJwtPayload,
   SellerJwtPayload,
   TwoFactorTicketPayload,
@@ -28,20 +27,6 @@ export class TokenService {
   ): Promise<string> {
     return this.jwt.signAsync(
       { ...payload, typ: 'seller' } satisfies SellerJwtPayload,
-      {
-        secret: this.config.getOrThrow<string>('jwt.secret'),
-        expiresIn: this.config.getOrThrow<string>('jwt.expiresIn'),
-      } as JwtSignOptions,
-    );
-  }
-
-  /**
-   * Buyer-session token. Shares the seller JWT secret but carries `typ: 'buyer'`
-   * so the buyer and seller strategies can't accept each other's tokens.
-   */
-  async signBuyerToken(payload: Omit<BuyerJwtPayload, 'typ'>): Promise<string> {
-    return this.jwt.signAsync(
-      { ...payload, typ: 'buyer' } satisfies BuyerJwtPayload,
       {
         secret: this.config.getOrThrow<string>('jwt.secret'),
         expiresIn: this.config.getOrThrow<string>('jwt.expiresIn'),

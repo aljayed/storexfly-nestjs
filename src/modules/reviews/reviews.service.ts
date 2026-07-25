@@ -15,7 +15,7 @@ import {
   reviews,
   type ProductRow,
 } from '../../database/schema';
-import type { BuyerPrincipal } from '../../common/types/principal';
+import type { AccountPrincipal } from '../../common/types/principal';
 import { ShopsService } from '../shops/shops.service';
 import { StorageService } from '../storage/storage.service';
 import { ReviewResponse } from '../products/dto/product-detail.response';
@@ -96,11 +96,11 @@ export class ReviewsService {
   async eligibility(
     handle: string,
     slug: string,
-    buyer: BuyerPrincipal,
+    buyer: AccountPrincipal,
   ): Promise<ReviewEligibilityResponse> {
     const product = await this.resolveProduct(handle, slug);
     const [purchased, existing] = await Promise.all([
-      this.hasPurchased(product.id, buyer.email),
+      this.hasPurchased(product.id, buyer.email ?? ''),
       this.existingReview(product.id, buyer.id),
     ]);
     return {
@@ -113,12 +113,12 @@ export class ReviewsService {
   async create(
     handle: string,
     slug: string,
-    buyer: BuyerPrincipal,
+    buyer: AccountPrincipal,
     dto: CreateReviewDto,
   ): Promise<ReviewResponse> {
     const product = await this.resolveProduct(handle, slug);
 
-    if (!(await this.hasPurchased(product.id, buyer.email))) {
+    if (!(await this.hasPurchased(product.id, buyer.email ?? ''))) {
       throw new ForbiddenException(
         'Only buyers who purchased this product can review it.',
       );
@@ -150,7 +150,7 @@ export class ReviewsService {
     handle: string,
     slug: string,
     reviewId: string,
-    buyer: BuyerPrincipal,
+    buyer: AccountPrincipal,
     dto: CreateReviewDto,
   ): Promise<ReviewResponse> {
     const product = await this.resolveProduct(handle, slug);
@@ -176,7 +176,7 @@ export class ReviewsService {
     handle: string,
     slug: string,
     reviewId: string,
-    buyer: BuyerPrincipal,
+    buyer: AccountPrincipal,
   ): Promise<{ deleted: true }> {
     const product = await this.resolveProduct(handle, slug);
     await this.requireOwnReview(reviewId, product.id, buyer.id);

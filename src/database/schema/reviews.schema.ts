@@ -10,13 +10,13 @@ import {
   varchar,
 } from 'drizzle-orm/pg-core';
 import { products } from './products.schema';
-import { buyers } from './buyers.schema';
+import { users } from './users.schema';
 
 /**
- * A buyer review shown on the product page (`.pp-reviews`). Drives the score,
- * rating-distribution bars, and review cards. When written by a signed-in buyer
- * who bought the product, `buyerId` is set and `verified` is true; `imageUrl`
- * is an optional photo (stored inline as a data URL, like product images).
+ * A product review (`.pp-reviews`). Drives the score, rating-distribution bars,
+ * and review cards. When written by a signed-in account that bought the product,
+ * `buyerId` (→ the unified `users` account) is set and `verified` is true;
+ * `imageUrl` is an optional photo (stored inline as a data URL).
  */
 export const reviews = pgTable(
   'reviews',
@@ -25,7 +25,7 @@ export const reviews = pgTable(
     productId: uuid('product_id')
       .notNull()
       .references(() => products.id, { onDelete: 'cascade' }),
-    buyerId: uuid('buyer_id').references(() => buyers.id, {
+    buyerId: uuid('buyer_id').references(() => users.id, {
       onDelete: 'set null',
     }),
     author: varchar('author', { length: 160 }).notNull(),

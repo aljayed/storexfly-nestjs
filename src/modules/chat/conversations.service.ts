@@ -8,7 +8,7 @@ import { and, desc, eq, ilike, inArray, sql } from 'drizzle-orm';
 import { DRIZZLE } from '../../database/database.constants';
 import type { DrizzleDB } from '../../database/drizzle.types';
 import {
-  buyers,
+  users,
   chatConversations,
   customers,
   orders,
@@ -79,7 +79,7 @@ export interface CustomerContextDto {
 
 type ConversationWithParties = ChatConversationRow & {
   shop: typeof shops.$inferSelect;
-  buyer: typeof buyers.$inferSelect;
+  buyer: typeof users.$inferSelect;
 };
 
 @Injectable()
@@ -125,9 +125,9 @@ export class ConversationsService {
         : inArray(
             chatConversations.buyerId,
             this.db
-              .select({ id: buyers.id })
-              .from(buyers)
-              .where(ilike(buyers.name, `%${opts.q}%`)),
+              .select({ id: users.id })
+              .from(users)
+              .where(ilike(users.name, `%${opts.q}%`)),
           )
       : undefined;
 
@@ -228,17 +228,18 @@ export class ConversationsService {
     const convo = await this.requireParticipantRow(actor, conversationId);
 
     // The platform's per-shop customer aggregate is keyed by (shop, email);
-    // buyers link to it through the email captured at checkout.
+    // the account links to it through the email captured at checkout.
+    const buyerEmail = (convo.buyer.email ?? '').toLowerCase();
     const customer = await this.db.query.customers.findFirst({
       where: and(
         eq(customers.shopId, actor.shopId),
-        eq(customers.email, convo.buyer.email),
+        sql`lower(${customers.email}) = ${buyerEmail}`,
       ),
     });
     const recent = await this.db.query.orders.findMany({
       where: and(
         eq(orders.shopId, actor.shopId),
-        eq(orders.email, convo.buyer.email),
+        sql`lower(${orders.email}) = ${buyerEmail}`,
       ),
       orderBy: [desc(orders.placedAt)],
       limit: 5,

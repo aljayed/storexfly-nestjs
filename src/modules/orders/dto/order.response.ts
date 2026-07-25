@@ -96,11 +96,17 @@ export class OrderResponse {
     description: 'Amount-change history (newest last); the pending one, if any, awaits buyer approval',
   })
   adjustments!: OrderAdjustmentResponse[];
+  @ApiProperty({
+    description:
+      'Whether the order is tied to a verified buyer account (matched by a verified email or, later, verified phone). Amount changes are offered only when true — a guest or unverified match has no owner to approve them.',
+  })
+  hasBuyerAccount!: boolean;
 
   static fromRow(
     row: OrderRow,
     items: OrderItemRow[],
     adjustments: OrderAmountAdjustmentRow[] = [],
+    hasBuyerAccount = false,
   ): OrderResponse {
     return {
       id: row.reference,
@@ -128,6 +134,7 @@ export class OrderResponse {
       adjustments: [...adjustments]
         .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
         .map(OrderAdjustmentResponse.fromRow),
+      hasBuyerAccount,
     };
   }
 }

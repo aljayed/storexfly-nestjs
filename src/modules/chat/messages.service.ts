@@ -292,7 +292,7 @@ export class MessagesService {
     dto: SendMessageDto,
     convo: {
       shopId: string;
-      buyer: { email: string };
+      buyer: { email: string | null };
       shop: { currency: string; handle: string };
     },
   ): Promise<Partial<typeof chatMessages.$inferInsert>> {
@@ -342,7 +342,7 @@ export class MessagesService {
           where: and(
             eq(orders.id, dto.orderId),
             eq(orders.shopId, convo.shopId),
-            eq(orders.email, convo.buyer.email),
+            sql`lower(${orders.email}) = ${(convo.buyer.email ?? '').toLowerCase()}`,
           ),
           with: { items: true },
         });
