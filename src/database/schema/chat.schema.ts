@@ -40,6 +40,9 @@ export const chatMessageTypeEnum = pgEnum('chat_message_type', [
   'image',
   'file',
   'system',
+  // A shop-initiated order-amount change card. A decrease is auto-applied and
+  // informational; an increase is an approval card the buyer acts on in-chat.
+  'adjustment',
 ]);
 
 /** sent → delivered (recipient connected) → read. `sending` is client-only. */
@@ -83,6 +86,23 @@ export interface ChatOrderSnapshotValue {
   total: number;
   currency: string;
   status: string;
+}
+
+/**
+ * A shop-initiated order-amount change embedded in an 'adjustment' card. A
+ * `decrease` is auto-applied (status 'approved') and purely informational; an
+ * `increase` starts 'pending' and the buyer approves/declines from the card.
+ * Totals are decimal (major units). Kept as a snapshot like the other cards.
+ */
+export interface ChatAdjustmentSnapshotValue {
+  adjustmentId: string;
+  displayId: string; // order human reference, e.g. "#1042"
+  previousTotal: number;
+  newTotal: number;
+  reason: string;
+  currency: string;
+  direction: 'increase' | 'decrease';
+  status: 'pending' | 'approved' | 'rejected' | 'withdrawn';
 }
 
 /** Inline attachment (data URL, same storage approach as product images). */
@@ -152,6 +172,7 @@ export const chatMessages = pgTable(
     text: text('text'),
     product: jsonb('product').$type<ChatProductSnapshotValue>(),
     order: jsonb('order').$type<ChatOrderSnapshotValue>(),
+    adjustment: jsonb('adjustment').$type<ChatAdjustmentSnapshotValue>(),
     attachment: jsonb('attachment').$type<ChatAttachmentValue>(),
     status: chatMessageStatusEnum('status').notNull().default('sent'),
     sentAt: timestamp('sent_at', { withTimezone: true }).notNull().defaultNow(),

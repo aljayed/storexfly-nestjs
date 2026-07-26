@@ -29,5 +29,9 @@ import { QuickRepliesService } from './quick-replies.service';
     QuickRepliesService,
     ChatGateway,
   ],
+  // Exported so the platform can post shop-initiated cards (e.g. order-amount
+  // changes) into a thread. Chat still imports no feature module — the
+  // dependency is one-way (orders → chat).
+  exports: [MessagesService],
 })
 export class ChatModule {}

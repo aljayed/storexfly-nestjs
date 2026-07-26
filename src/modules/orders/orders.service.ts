@@ -45,6 +45,7 @@ import { PathaoService } from '../gateways/pathao.service';
 import { ShopCourierSettingsService } from '../gateways/shop-courier-settings.service';
 import { SteadfastService } from '../gateways/steadfast.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { MessagesService } from '../chat/messages.service';
 import { PaymentMethodsService } from '../settlements/payment-methods.service';
 import type { CheckoutDto } from './dto/checkout.dto';
 import { CheckoutResultResponse } from './dto/checkout-result.response';
@@ -130,6 +131,7 @@ export class OrdersService {
     private readonly pathao: PathaoService,
     private readonly courierSettings: ShopCourierSettingsService,
     private readonly config: ConfigService,
+    private readonly messages: MessagesService,
   ) {}
 
   /**
@@ -791,19 +793,20 @@ export class OrdersService {
   // ── Buyer-approved amount adjustments ────────────────────────
 
   /**
-   * Seller proposes a new order total (with a reason) that the buyer must
-   * approve before it takes effect. Only allowed on unpaid (Due) orders that
-   * haven't shipped and have no courier booked — so no money has moved yet and
-   * the courier's COD figure is still the order's own total. At most one
-   * pending proposal may exist at a time; the buyer approves/declines it from
-   * their profile. Emits a buyer notification so they can act on it.
+   * Seller changes an order total (with a reason). A **decrease** only benefits
+   * the buyer, so it is auto-applied and the buyer is simply informed (a card in
+   * the chat thread). An **increase** needs the buyer's consent: it stays pending
+   * and posts an approval card the buyer acts on in chat (or their profile).
+   *
+   * Only on unpaid (Due) orders that haven't shipped and have no courier booked
+   * — so no money has moved and the courier COD figure is still the order total.
+   * At most one pending proposal at a time.
    *
    * The buyer must hold a *verified* account matching the order (verified email
    * now; verified phone once that exists): approval is an authenticated,
    * account-only action, so a guest order — or one matched only by an
-   * unverified identifier — can't be adjusted. Otherwise the change could be
-   * "approved" by whoever holds the order, which includes the seller. Such
-   * orders are blocked up front.
+   * unverified identifier — can't be adjusted (there'd be no owner to approve,
+   * and no thread to notify). Such orders are blocked up front.
    */
   async requestAmountAdjustment(
     shopId: string,
@@ -871,23 +874,143 @@ export class OrdersService {
       );
     }
 
-    await this.db.insert(orderAmountAdjustments).values({
-      orderId: order.id,
-      shopId: order.shopId,
-      previousTotalCents: order.totalCents,
-      newTotalCents,
-      reason: reason.slice(0, 300),
-    });
+    const reasonText = reason.slice(0, 300);
+    const previousTotalCents = order.totalCents;
+    const accountId = await this.resolveOrderAccountId(order);
 
-    await this.notifications.orderEvent(
-      this.db,
-      order,
-      'order_adjustment',
-      `Order ${order.reference} — approval needed`,
-      `The seller updated your order total to ${formatBdt(newTotalCents)} (${reason.slice(0, 160)}). Open your profile to approve or decline it.`,
-    );
+    if (newTotalCents < previousTotalCents) {
+      // ── Decrease: auto-applied, no approval needed ──
+      const adjustmentId = await this.db.transaction(async (tx) => {
+        const [adj] = await tx
+          .insert(orderAmountAdjustments)
+          .values({
+            orderId: order.id,
+            shopId: order.shopId,
+            previousTotalCents,
+            newTotalCents,
+            reason: reasonText,
+            status: 'approved',
+            resolvedAt: new Date(),
+          })
+          .returning({ id: orderAmountAdjustments.id });
+        await tx
+          .update(orders)
+          .set({ totalCents: newTotalCents })
+          .where(eq(orders.id, order.id));
+        if (order.customerId) {
+          await this.customers.adjustSpend(
+            tx,
+            order.customerId,
+            newTotalCents - previousTotalCents,
+          );
+        }
+        await this.notifications.orderEvent(
+          tx,
+          order,
+          'order_adjustment',
+          `Order ${order.reference} — total lowered`,
+          `Good news — the shop lowered your order total to ${formatBdt(newTotalCents)} (${reasonText}).`,
+        );
+        return adj.id;
+      });
+      if (accountId) {
+        await this.postAdjustmentCard(order, accountId, {
+          adjustmentId,
+          previousTotalCents,
+          newTotalCents,
+          reason: reasonText,
+          status: 'approved',
+        });
+      }
+    } else {
+      // ── Increase: needs the buyer's approval ──
+      const [adj] = await this.db
+        .insert(orderAmountAdjustments)
+        .values({
+          orderId: order.id,
+          shopId: order.shopId,
+          previousTotalCents,
+          newTotalCents,
+          reason: reasonText,
+        })
+        .returning({ id: orderAmountAdjustments.id });
+      await this.notifications.orderEvent(
+        this.db,
+        order,
+        'order_adjustment',
+        `Order ${order.reference} — approval needed`,
+        `The seller updated your order total to ${formatBdt(newTotalCents)} (${reasonText}). Approve or decline it in chat or your profile.`,
+      );
+      if (accountId) {
+        await this.postAdjustmentCard(order, accountId, {
+          adjustmentId: adj.id,
+          previousTotalCents,
+          newTotalCents,
+          reason: reasonText,
+          status: 'pending',
+        });
+      }
+    }
 
     return this.orderResponseWithHistory(order.id);
+  }
+
+  /** The verified account id that owns an order (or null), used to address the
+   *  chat thread and confirm ownership — same match rule as the reprice gate. */
+  private async resolveOrderAccountId(
+    order: Pick<OrderRow, 'email' | 'phone'>,
+  ): Promise<string | null> {
+    const phone = normalizePhone(order.phone);
+    const email = order.email.toLowerCase();
+    const candidates = await this.db.query.users.findMany({
+      where: phone
+        ? or(eq(users.email, email), eq(users.phone, phone))
+        : eq(users.email, email),
+      columns: {
+        id: true,
+        email: true,
+        phone: true,
+        emailVerified: true,
+        phoneVerified: true,
+      },
+    });
+    const match = candidates.find(
+      (b) =>
+        (b.emailVerified && b.email === email) ||
+        (b.phoneVerified && !!phone && b.phone === phone),
+    );
+    return match?.id ?? null;
+  }
+
+  /** Post the order-amount change card into the (buyer, shop) chat thread. */
+  private async postAdjustmentCard(
+    order: OrderRow,
+    accountId: string,
+    a: {
+      adjustmentId: string;
+      previousTotalCents: number;
+      newTotalCents: number;
+      reason: string;
+      status: 'pending' | 'approved';
+    },
+  ): Promise<void> {
+    const shop = await this.db.query.shops.findFirst({
+      where: eq(shops.id, order.shopId),
+      columns: { currency: true },
+    });
+    await this.messages.postShopMessage(order.shopId, accountId, {
+      type: 'adjustment',
+      adjustment: {
+        adjustmentId: a.adjustmentId,
+        displayId: order.reference,
+        previousTotal: centsToDollars(a.previousTotalCents),
+        newTotal: centsToDollars(a.newTotalCents),
+        reason: a.reason,
+        currency: shop?.currency ?? 'BDT',
+        direction: a.newTotalCents < a.previousTotalCents ? 'decrease' : 'increase',
+        status: a.status,
+      },
+    });
   }
 
   /** Seller withdraws their own still-pending amount proposal. */
@@ -913,6 +1036,15 @@ export class OrdersService {
         'No pending amount change was found to withdraw.',
       );
     }
+    // Reflect on the chat card so its buttons disappear, and tell the buyer.
+    await this.messages.updateAdjustmentStatus(adjustmentId, 'withdrawn');
+    const accountId = await this.resolveOrderAccountId(order);
+    if (accountId) {
+      await this.messages.postShopMessage(order.shopId, accountId, {
+        type: 'text',
+        text: `The amount change for order ${order.reference} was withdrawn by the shop.`,
+      });
+    }
     return this.orderResponseWithHistory(order.id);
   }
 
@@ -929,7 +1061,7 @@ export class OrdersService {
     adjustmentId: string,
     approve: boolean,
   ): Promise<OrderResponse> {
-    return this.db.transaction(async (tx) => {
+    const result = await this.db.transaction(async (tx) => {
       const order = await tx.query.orders.findFirst({
         where: and(eq(orders.shopId, shopId), eq(orders.reference, reference)),
       });
@@ -968,8 +1100,28 @@ export class OrdersService {
           where: eq(orderAmountAdjustments.orderId, order.id),
         }),
       ]);
-      return OrderResponse.fromRow(row, items, adjustments);
+      return {
+        response: OrderResponse.fromRow(row, items, adjustments),
+        order: row,
+        newTotalCents: adjustment.newTotalCents,
+      };
     });
+
+    // Post-commit: reflect the outcome on the chat card and add a history line.
+    await this.messages.updateAdjustmentStatus(
+      adjustmentId,
+      approve ? 'approved' : 'rejected',
+    );
+    const accountId = await this.resolveOrderAccountId(result.order);
+    if (accountId) {
+      await this.messages.postShopMessage(shopId, accountId, {
+        type: 'text',
+        text: approve
+          ? `Order ${reference} total updated to ${formatBdt(result.newTotalCents)}.`
+          : `The amount change for order ${reference} was declined — total stays ${formatBdt(result.order.totalCents)}.`,
+      });
+    }
+    return result.response;
   }
 
   /**

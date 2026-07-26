@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { ChatModule } from '../chat/chat.module';
 import { CustomersModule } from '../customers/customers.module';
 import { GatewaysModule } from '../gateways/gateways.module';
 import { NotificationsModule } from '../notifications/notifications.module';
@@ -14,6 +15,7 @@ import { PaymentsService } from './payments.service';
     SettlementsModule,
     GatewaysModule,
     NotificationsModule,
+    ChatModule,
   ],
   controllers: [OrdersController, PaymentsController],
   providers: [OrdersService, PaymentsService],

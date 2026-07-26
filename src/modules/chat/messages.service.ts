@@ -12,8 +12,11 @@ import {
   chatMessages,
   orders,
   products,
+  shops,
+  type ChatAdjustmentSnapshotValue,
   type ChatMessageRow,
   type ChatMessageStatus,
+  type ChatMessageType,
   type ChatOrderSnapshotValue,
   type ChatProductSnapshotValue,
   type ChatSenderRole,
@@ -59,6 +62,7 @@ export interface MessageDto {
   text?: string;
   product?: ChatProductSnapshotValue;
   order?: ChatOrderSnapshotValue;
+  adjustment?: ChatAdjustmentSnapshotValue;
   attachment?: {
     kind: 'image' | 'file';
     fileName: string;
@@ -418,9 +422,117 @@ export class MessagesService {
         return '🖼️ Photo';
       case 'file':
         return `📎 ${fields.attachment?.fileName ?? 'File'}`;
+      case 'adjustment':
+        return `💱 Order ${fields.adjustment?.displayId ?? ''} amount change`.trim();
       default:
         return '';
     }
+  }
+
+  /**
+   * Post a shop-initiated message into the (buyer, shop) thread on the
+   * platform's behalf — used for order-amount change cards, not a live seller.
+   * Creates the thread if it doesn't exist. The bubble reads as from the shop
+   * (senderRole 'seller', senderId = the shop's owner account).
+   */
+  async postShopMessage(
+    shopId: string,
+    buyerAccountId: string,
+    payload: {
+      type: ChatMessageType;
+      text?: string;
+      adjustment?: ChatAdjustmentSnapshotValue;
+    },
+  ): Promise<void> {
+    await this.db
+      .insert(chatConversations)
+      .values({ buyerId: buyerAccountId, shopId })
+      .onConflictDoNothing({
+        target: [chatConversations.buyerId, chatConversations.shopId],
+      });
+    const convo = await this.db.query.chatConversations.findFirst({
+      where: and(
+        eq(chatConversations.buyerId, buyerAccountId),
+        eq(chatConversations.shopId, shopId),
+      ),
+    });
+    if (!convo) return;
+    const shop = await this.db.query.shops.findFirst({
+      where: eq(shops.id, shopId),
+      columns: { ownerId: true },
+    });
+    const senderId = shop?.ownerId ?? buyerAccountId;
+    const fields = {
+      text: payload.text ?? null,
+      adjustment: payload.adjustment ?? null,
+    };
+    const preview = this.previewOf(payload.type, fields);
+    const buyerOnline = this.realtime.isOnline('buyer', buyerAccountId);
+
+    const row = await this.db.transaction(async (tx) => {
+      const [inserted] = await tx
+        .insert(chatMessages)
+        .values({
+          conversationId: convo.id,
+          senderRole: 'seller',
+          senderId,
+          type: payload.type,
+          status: buyerOnline ? 'delivered' : 'sent',
+          deliveredAt: buyerOnline ? new Date() : null,
+          ...fields,
+        })
+        .returning();
+      await tx
+        .update(chatConversations)
+        .set({
+          lastMessageAt: inserted.sentAt,
+          lastMessagePreview: {
+            type: payload.type,
+            text: preview,
+            senderRole: 'seller',
+            sentAt: inserted.sentAt.toISOString(),
+          },
+          buyerUnread: sql`${chatConversations.buyerUnread} + 1`,
+        })
+        .where(eq(chatConversations.id, convo.id));
+      return inserted;
+    });
+
+    const message = this.toDto(row);
+    this.realtime.emitTo(
+      ChatRealtimeService.room('buyer', buyerAccountId),
+      'message.new',
+      { conversationId: convo.id, message },
+    );
+    this.realtime.emitTo(
+      ChatRealtimeService.room('shop', shopId),
+      'message.new',
+      { conversationId: convo.id, message },
+    );
+    await this.conversations.broadcastUpdated(convo.id);
+  }
+
+  /**
+   * Reflect a resolved adjustment onto its card so a later reload shows the
+   * outcome (the live confirmation is the follow-up message posted alongside).
+   */
+  async updateAdjustmentStatus(
+    adjustmentId: string,
+    status: ChatAdjustmentSnapshotValue['status'],
+  ): Promise<void> {
+    await this.db
+      .update(chatMessages)
+      .set({
+        adjustment: sql`jsonb_set(${chatMessages.adjustment}, '{status}', ${JSON.stringify(
+          status,
+        )}::jsonb, false)`,
+      })
+      .where(
+        and(
+          eq(chatMessages.type, 'adjustment'),
+          sql`${chatMessages.adjustment}->>'adjustmentId' = ${adjustmentId}`,
+        ),
+      );
   }
 
   private toDto(row: ChatMessageRow): MessageDto {
@@ -433,6 +545,7 @@ export class MessagesService {
       text: row.text ?? undefined,
       product: row.product ?? undefined,
       order: row.order ?? undefined,
+      adjustment: row.adjustment ?? undefined,
       attachment: row.attachment ?? undefined,
       status: row.status,
       sentAt: row.sentAt.toISOString(),
