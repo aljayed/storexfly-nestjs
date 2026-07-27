@@ -1,5 +1,9 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { centsToDollars } from '../../../common/utils/money.util';
+import {
+  orderLineKind,
+  type OrderLineKind,
+} from '../../../common/utils/order-line.util';
 import type {
   DeliveryAddressValue,
   OrderAmountAdjustmentRow,
@@ -16,6 +20,13 @@ export class OrderItemResponse {
     description: 'What was picked at purchase time ("Size: L · Pack of 3")',
   })
   variant?: string;
+  @ApiProperty({
+    enum: ['product', 'delivery', 'discount'],
+    description:
+      'What the line is. Only "product" lines are things the buyer bought — ' +
+      'shipping and combo reconciliation ride along so the lines sum to the total.',
+  })
+  kind!: OrderLineKind;
 
   static fromRow(row: OrderItemRow): OrderItemResponse {
     return {
@@ -24,6 +35,7 @@ export class OrderItemResponse {
       qty: row.qty,
       unitPrice: centsToDollars(row.unitPriceCents),
       variant: row.variant ?? undefined,
+      kind: orderLineKind(row),
     };
   }
 }

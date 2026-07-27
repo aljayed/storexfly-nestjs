@@ -15,6 +15,7 @@ import {
   sum,
 } from 'drizzle-orm';
 import { centsToDollars } from '../../common/utils/money.util';
+import { productLines } from '../../common/utils/order-line.util';
 import { DRIZZLE } from '../../database/database.constants';
 import type { DbExecutor, DrizzleDB } from '../../database/drizzle.types';
 import { customers, orders, type CustomerRow } from '../../database/schema';
@@ -390,7 +391,9 @@ export class CustomersService {
               inArray(orders.customerId, ids),
             ),
             columns: { customerId: true, totalCents: true, placedAt: true },
-            with: { items: { columns: { name: true, qty: true } } },
+            with: {
+              items: { columns: { name: true, qty: true, productId: true } },
+            },
           }),
         ])
       : [[], []];
@@ -416,7 +419,7 @@ export class CustomersService {
       }
       cell.orders += 1;
       cell.spentCents += o.totalCents;
-      for (const it of o.items) {
+      for (const it of productLines(o.items)) {
         cell.products.set(it.name, (cell.products.get(it.name) ?? 0) + it.qty);
       }
     }

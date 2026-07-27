@@ -1,6 +1,9 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import {
+  ArrayMaxSize,
+  ArrayMinSize,
+  IsArray,
   IsEmail,
   IsEnum,
   IsInt,
@@ -64,6 +67,40 @@ class AddressDto {
   geo?: GeoDto;
 }
 
+/**
+ * One line of a cart checkout — a product with the pick the buyer made for it.
+ * The same product may appear twice with different variants; each is its own
+ * line (stock is still summed per product).
+ */
+export class CheckoutItemDto {
+  @ApiProperty()
+  @IsString()
+  productId!: string;
+
+  @ApiProperty({
+    example: 2,
+    minimum: 1,
+    description: 'Units or packs picked.',
+  })
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  qty!: number;
+
+  @ApiPropertyOptional({
+    description: 'Chosen variant options, keyed by group id → option id.',
+  })
+  @IsOptional()
+  @IsObject()
+  variant?: Record<string, string>;
+
+  @ApiPropertyOptional({ description: 'A multi-buy pack id for this line.' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(24)
+  packId?: string;
+}
+
 /** Inline product-page checkout payload (the `CheckoutRequest` interface). */
 export class CheckoutDto {
   @ApiProperty()
@@ -71,11 +108,26 @@ export class CheckoutDto {
   shopId!: string;
 
   @ApiPropertyOptional({
-    description: 'The product being ordered. Exactly one of productId/comboId.',
+    description:
+      'The product being ordered. Exactly one of productId/comboId/items.',
   })
   @IsOptional()
   @IsString()
   productId?: string;
+
+  @ApiPropertyOptional({
+    type: [CheckoutItemDto],
+    description:
+      'Cart checkout: several products from this shop in one order. A cart ' +
+      'belongs to exactly one shop, so every product must live in `shopId`.',
+  })
+  @IsOptional()
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(50)
+  @ValidateNested({ each: true })
+  @Type(() => CheckoutItemDto)
+  items?: CheckoutItemDto[];
 
   @ApiPropertyOptional({
     description: 'A combo offer being ordered instead of a single product.',
@@ -84,15 +136,18 @@ export class CheckoutDto {
   @IsString()
   comboId?: string;
 
-  @ApiProperty({
+  @ApiPropertyOptional({
     example: 1,
     minimum: 1,
-    description: 'Units, packs, or combo sets — whichever was picked.',
+    description:
+      'Units, packs, or combo sets — whichever was picked. Ignored for a ' +
+      'cart checkout, where every line carries its own qty.',
   })
+  @IsOptional()
   @Type(() => Number)
   @IsInt()
   @Min(1)
-  qty!: number;
+  qty?: number;
 
   @ApiPropertyOptional({
     description:

@@ -18,6 +18,7 @@ import {
   type UserRow,
 } from '../../database/schema';
 import { centsToDollars } from '../../common/utils/money.util';
+import { productLines } from '../../common/utils/order-line.util';
 import { BlockedWordsService } from '../blocked-words/blocked-words.service';
 import { EmailOtpService } from '../auth/email-otp.service';
 import { TokenService } from '../auth/token.service';
@@ -370,7 +371,7 @@ export class BuyerService {
         orderBy: [desc(orders.placedAt)],
         with: {
           shop: { columns: { name: true, handle: true } },
-          items: { columns: { name: true } },
+          items: { columns: { name: true, productId: true } },
           adjustments: true,
         },
       }),
@@ -416,7 +417,7 @@ export class BuyerService {
           shopId: o.shopId,
           shopName: o.shop?.name ?? 'Shop',
           shopHandle: o.shop?.handle ?? '',
-          itemSummary: summarizeItems(o.items.map((i) => i.name)),
+          itemSummary: summarizeItems(productLines(o.items).map((i) => i.name)),
           qty: o.qty,
           total: centsToDollars(o.totalCents),
           status: o.status,

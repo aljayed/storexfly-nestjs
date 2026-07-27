@@ -21,6 +21,7 @@ import {
   sql,
 } from 'drizzle-orm';
 import { centsToDollars, dollarsToCents } from '../../common/utils/money.util';
+import { DELIVERY_LINE_NAME } from '../../common/utils/order-line.util';
 import {
   FREE_SALES_CAP_CENTS,
   FREE_TIER_LIMIT_MESSAGE,
@@ -37,6 +38,7 @@ import {
   shops,
   users,
   type OrderRow,
+  type ProductRow,
 } from '../../database/schema';
 import type { OrderStatus, SalesChannel } from '../../database/schema/enums';
 import { CustomersService } from '../customers/customers.service';
@@ -162,9 +164,12 @@ export class OrdersService {
         'bKash payments are temporarily unavailable — please pick another method.',
       );
     }
-    if (!dto.productId === !dto.comboId) {
+    // Exactly one of the three order shapes: a single product, a combo, or a
+    // cart of products (all from this one shop).
+    const shapes = [dto.productId, dto.comboId, dto.items].filter(Boolean);
+    if (shapes.length !== 1) {
       throw new BadRequestException(
-        'Provide either a product or a combo to order.',
+        'Provide a product, a combo, or a cart of items to order.',
       );
     }
 
@@ -205,10 +210,12 @@ export class OrdersService {
         );
       }
 
-      // Build the priced line items + stock deductions for either flow.
-      const cart = dto.comboId
-        ? await this.buildComboCart(tx, dto, method.kind)
-        : await this.buildProductCart(tx, dto, method.kind);
+      // Build the priced line items + stock deductions for the picked flow.
+      const cart = dto.items
+        ? await this.buildItemsCart(tx, dto, method.kind)
+        : dto.comboId
+          ? await this.buildComboCart(tx, dto, method.kind)
+          : await this.buildProductCart(tx, dto, method.kind);
 
       const placedAt = new Date();
       const reference = await this.nextReference(tx, dto.shopId);
@@ -344,7 +351,7 @@ export class OrdersService {
       total: order.totalCents / 100,
       delivery: order.deliveryCents / 100,
       paymentMethod: dto.paymentMethod,
-      qty: dto.qty,
+      qty: order.qty,
       eta: 'Within 2–3 days',
       payStatus: order.pay,
       ...extra,
@@ -373,10 +380,78 @@ export class OrdersService {
   }
 
   /**
-   * Single-product checkout: resolves the variant selection (one option per
-   * group the product defines) and an optional multi-buy pack into a priced
-   * line, then adds the product's zone delivery charge. Deltas apply per
-   * unit, so a pack of N carries N × delta on top of the pack price.
+   * Price one picked line of a product: the variant selection (one option per
+   * group the product defines) and an optional multi-buy pack. Deltas apply
+   * per unit, so a pack of N carries N × delta on top of the pack price.
+   * Stock is *not* checked here — the caller sums the units a product needs
+   * across every line first, then checks once.
+   */
+  private priceProductPick(
+    product: ProductRow,
+    pick: { qty: number; variant?: Record<string, string>; packId?: string },
+    payKind: string,
+  ): { line: CheckoutCart['lines'][number]; units: number } {
+    // Showcase items are advertised only — the sale happens offline, so
+    // online checkout is never allowed for them.
+    if (product.listingType === 'showcase') {
+      throw new ConflictException(
+        `“${product.name}” cannot be ordered online — please contact the seller.`,
+      );
+    }
+    // Sellers toggle payment *kinds* per product (COD / mobile banking /
+    // card); the picked method must belong to an allowed kind.
+    if (!product.paymentMethods.includes(payKind as never)) {
+      throw new BadRequestException(
+        `“${product.name}” cannot be paid with that method — please pick another.`,
+      );
+    }
+
+    // One option per variant group is mandatory once a product defines groups.
+    const parts: string[] = [];
+    let deltaCents = 0;
+    for (const group of product.variantGroups ?? []) {
+      const option = group.options.find(
+        (o) => o.id === pick.variant?.[group.id],
+      );
+      if (!option) {
+        throw new BadRequestException(
+          `Please choose an option for “${group.name}” on ${product.name}`,
+        );
+      }
+      deltaCents += option.priceDeltaCents;
+      parts.push(`${group.name}: ${option.label}`);
+    }
+
+    // A pack re-prices the line: qty counts packs, each consuming pack.units.
+    let unitsPerPick = 1;
+    let unitPriceCents = Math.max(0, product.priceCents + deltaCents);
+    if (pick.packId) {
+      const pack = (product.packs ?? []).find((p) => p.id === pick.packId);
+      if (!pack) {
+        throw new BadRequestException(
+          'That pack is no longer available — please reload and pick again.',
+        );
+      }
+      unitsPerPick = pack.units;
+      unitPriceCents = Math.max(0, pack.priceCents + pack.units * deltaCents);
+      parts.push(pack.label.trim() || `Pack of ${pack.units}`);
+    }
+
+    return {
+      line: {
+        productId: product.id,
+        name: product.name,
+        qty: pick.qty,
+        unitPriceCents,
+        variant: parts.length ? parts.join(' · ').slice(0, 240) : null,
+      },
+      units: unitsPerPick * pick.qty,
+    };
+  }
+
+  /**
+   * Single-product checkout (the product page's inline order card): one
+   * priced line plus the product's zone delivery charge.
    */
   private async buildProductCart(
     tx: OrdersTx,
@@ -392,74 +467,91 @@ export class OrdersService {
     if (!product) {
       throw new NotFoundException('Product not found in this shop');
     }
-    // Showcase items are advertised only — the sale happens offline, so
-    // online checkout is never allowed for them.
-    if (product.listingType === 'showcase') {
-      throw new ConflictException(
-        'This item cannot be ordered online — please contact the seller.',
-      );
-    }
-    // Sellers toggle payment *kinds* per product (COD / mobile banking /
-    // card); the picked method must belong to an allowed kind.
-    if (!product.paymentMethods.includes(payKind as never)) {
-      throw new BadRequestException(
-        'This item cannot be paid with that method — please pick another.',
-      );
-    }
 
-    // One option per variant group is mandatory once a product defines groups.
-    const parts: string[] = [];
-    let deltaCents = 0;
-    for (const group of product.variantGroups ?? []) {
-      const option = group.options.find(
-        (o) => o.id === dto.variant?.[group.id],
-      );
-      if (!option) {
-        throw new BadRequestException(
-          `Please choose an option for “${group.name}”`,
-        );
-      }
-      deltaCents += option.priceDeltaCents;
-      parts.push(`${group.name}: ${option.label}`);
-    }
-
-    // A pack re-prices the line: qty counts packs, each consuming pack.units.
-    let unitsPerPick = 1;
-    let unitPriceCents = Math.max(0, product.priceCents + deltaCents);
-    if (dto.packId) {
-      const pack = (product.packs ?? []).find((p) => p.id === dto.packId);
-      if (!pack) {
-        throw new BadRequestException(
-          'That pack is no longer available — please reload and pick again.',
-        );
-      }
-      unitsPerPick = pack.units;
-      unitPriceCents = Math.max(0, pack.priceCents + pack.units * deltaCents);
-      parts.push(pack.label.trim() || `Pack of ${pack.units}`);
-    }
-
-    const totalUnits = unitsPerPick * dto.qty;
-    if (product.stock < totalUnits) {
+    const { line, units } = this.priceProductPick(
+      product,
+      { qty: dto.qty ?? 1, variant: dto.variant, packId: dto.packId },
+      payKind,
+    );
+    if (product.stock < units) {
       throw new ConflictException('Not enough stock for this quantity');
     }
 
-    const lines: CheckoutCart['lines'] = [
-      {
-        productId: product.id,
-        name: product.name,
-        qty: dto.qty,
-        unitPriceCents,
-        variant: parts.length ? parts.join(' · ').slice(0, 240) : null,
-      },
-    ];
+    const lines: CheckoutCart['lines'] = [line];
     const deliveryCents = this.deliveryFeeCents(dto, [product]);
     this.pushDeliveryLine(lines, deliveryCents, dto);
 
     return {
-      totalCents: unitPriceCents * dto.qty + deliveryCents,
+      totalCents: line.unitPriceCents * line.qty + deliveryCents,
       deliveryCents,
-      totalUnits,
-      deductions: [{ productId: product.id, units: totalUnits }],
+      totalUnits: units,
+      deductions: [{ productId: product.id, units }],
+      lines,
+    };
+  }
+
+  /**
+   * Cart checkout: several products from one shop in a single order. A cart
+   * is per shop by construction (the buyer keeps a separate cart for every
+   * shop), and this rejects anything that isn't in `dto.shopId`, so an order
+   * can never mix shops. The parcel ships together, so the buyer pays one
+   * delivery charge — the highest zone fee among the products in it.
+   */
+  private async buildItemsCart(
+    tx: OrdersTx,
+    dto: CheckoutDto,
+    payKind: string,
+  ): Promise<CheckoutCart> {
+    const picks = dto.items!;
+    const ids = [...new Set(picks.map((i) => i.productId))];
+    const rows = await tx.query.products.findMany({
+      where: and(inArray(products.id, ids), eq(products.shopId, dto.shopId)),
+    });
+    const byId = new Map(rows.map((p) => [p.id, p]));
+    const missing = ids.find((id) => !byId.has(id));
+    if (missing) {
+      throw new NotFoundException(
+        'One of the items in your cart is no longer available in this shop.',
+      );
+    }
+
+    const lines: CheckoutCart['lines'] = [];
+    // The same product can appear on several lines (different variants), so
+    // stock is only sound once every line's units are summed per product.
+    const unitsByProduct = new Map<string, number>();
+    for (const pick of picks) {
+      const product = byId.get(pick.productId)!;
+      const { line, units } = this.priceProductPick(product, pick, payKind);
+      lines.push(line);
+      unitsByProduct.set(
+        product.id,
+        (unitsByProduct.get(product.id) ?? 0) + units,
+      );
+    }
+    for (const [productId, units] of unitsByProduct) {
+      const product = byId.get(productId)!;
+      if (product.stock < units) {
+        throw new ConflictException(
+          `Not enough stock of ${product.name} for this quantity`,
+        );
+      }
+    }
+
+    const itemsTotalCents = lines.reduce(
+      (sum, l) => sum + l.unitPriceCents * l.qty,
+      0,
+    );
+    const deliveryCents = this.deliveryFeeCents(dto, rows);
+    this.pushDeliveryLine(lines, deliveryCents, dto);
+
+    return {
+      totalCents: itemsTotalCents + deliveryCents,
+      deliveryCents,
+      totalUnits: [...unitsByProduct.values()].reduce((a, b) => a + b, 0),
+      deductions: [...unitsByProduct].map(([productId, units]) => ({
+        productId,
+        units,
+      })),
       lines,
     };
   }
@@ -484,6 +576,8 @@ export class OrdersService {
       throw new NotFoundException('This combo offer is no longer available.');
     }
 
+    // Combo sets ordered (the single-product/combo paths carry qty on the dto).
+    const sets = dto.qty ?? 1;
     let membersValueCents = 0;
     let totalUnits = 0;
     const deductions: CheckoutCart['deductions'] = [];
@@ -499,7 +593,7 @@ export class OrdersService {
           'This combo cannot be paid with that method — please pick another.',
         );
       }
-      const units = item.qty * dto.qty;
+      const units = item.qty * sets;
       if (product.stock < units) {
         throw new ConflictException(
           `Not enough stock of ${product.name} for this quantity`,
@@ -519,7 +613,7 @@ export class OrdersService {
 
     // One adjustment line reconciles the full-price member lines with the
     // combo price, so line totals always sum to the order total.
-    const comboCents = combo.priceCents * dto.qty;
+    const comboCents = combo.priceCents * sets;
     const adjustCents = comboCents - membersValueCents;
     if (adjustCents !== 0) {
       lines.push({
@@ -576,7 +670,7 @@ export class OrdersService {
     const inDhaka = dto.address.area.trim().toLowerCase() === 'dhaka';
     lines.push({
       productId: null,
-      name: 'Delivery charge',
+      name: DELIVERY_LINE_NAME,
       qty: 1,
       unitPriceCents: deliveryCents,
       variant: inDhaka ? 'Inside Dhaka' : 'Outside Dhaka',

@@ -17,6 +17,7 @@ import {
   type ChatConversationRow,
 } from '../../database/schema';
 import { centsToDollars } from '../../common/utils/money.util';
+import { productLines } from '../../common/utils/order-line.util';
 import type { ChatActor, CustomerActor, SellerActor } from './chat-actor';
 import { ChatRealtimeService } from './chat-realtime.service';
 import type { StartConversationDto } from './dto/chat.dto';
@@ -259,8 +260,9 @@ export class ConversationsService {
         orderId: o.id,
         displayId: o.reference,
         itemsSummary:
-          o.items.map((i) => `${i.name} ×${i.qty}`).join(', ') ||
-          `${o.qty} item${o.qty === 1 ? '' : 's'}`,
+          productLines(o.items)
+            .map((i) => `${i.name} ×${i.qty}`)
+            .join(', ') || `${o.qty} item${o.qty === 1 ? '' : 's'}`,
         total: centsToDollars(o.totalCents),
         currency: convo.shop.currency,
         status: o.status,

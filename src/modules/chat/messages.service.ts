@@ -22,6 +22,7 @@ import {
   type ChatSenderRole,
 } from '../../database/schema';
 import { centsToDollars } from '../../common/utils/money.util';
+import { productLines } from '../../common/utils/order-line.util';
 import type { ChatActor } from './chat-actor';
 import { ChatRealtimeService } from './chat-realtime.service';
 import { ConversationsService } from './conversations.service';
@@ -357,8 +358,9 @@ export class MessagesService {
           orderId: o.id,
           displayId: o.reference,
           itemsSummary:
-            o.items.map((i) => `${i.name} ×${i.qty}`).join(', ') ||
-            `${o.qty} item${o.qty === 1 ? '' : 's'}`,
+            productLines(o.items)
+              .map((i) => `${i.name} ×${i.qty}`)
+              .join(', ') || `${o.qty} item${o.qty === 1 ? '' : 's'}`,
           total: centsToDollars(o.totalCents),
           currency: convo.shop.currency,
           status: o.status,
