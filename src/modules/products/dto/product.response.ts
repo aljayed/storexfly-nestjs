@@ -1,6 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { centsToDollars } from '../../../common/utils/money.util';
-import type { ProductHighlight, ProductRow } from '../../../database/schema';
+import type { ProductRow } from '../../../database/schema';
 import type { ListingType } from '../../../database/schema/enums';
 
 /** Public variant option — `priceDelta` in dollars, added to the base price. */
@@ -69,8 +69,6 @@ export class ProductResponse {
   @ApiProperty({ description: 'Review/sold count' }) reviews!: number;
   @ApiProperty() blurb!: string;
   @ApiPropertyOptional({ type: [String] }) images?: string[];
-  @ApiProperty({ description: 'Seller-authored product highlights' })
-  highlights!: ProductHighlight[];
   @ApiPropertyOptional({ description: 'Optional YouTube product video URL' })
   videoUrl?: string;
   @ApiProperty({
@@ -110,7 +108,6 @@ export class ProductResponse {
       reviews: row.reviewsCount,
       blurb: row.blurb,
       images: row.images ?? undefined,
-      highlights: row.highlights ?? [],
       videoUrl: row.videoUrl ?? undefined,
       variantGroups: (row.variantGroups ?? []).map((g) => ({
         id: g.id,

@@ -16,17 +16,6 @@ import { shops } from './shops.schema';
 import { reviews } from './reviews.schema';
 
 /**
- * A seller-authored selling point shown on the product page (the "trust"
- * badges, e.g. "Free next-day · Cold-chain delivery"). `icon` is a key into a
- * fixed front-end icon set; an empty list renders nothing to buyers.
- */
-export interface ProductHighlight {
-  icon?: string;
-  title: string;
-  subtitle?: string;
-}
-
-/**
  * One choice inside a variant group (e.g. "Large"). `priceDeltaCents` adjusts
  * the base unit price when this option is picked (can be negative). Ids are
  * short random slugs assigned by the API on save, so a buyer's selection stays
@@ -105,11 +94,6 @@ export const products = pgTable(
     reviewsCount: integer('reviews_count').notNull().default(0),
     blurb: text('blurb').notNull().default(''),
     images: text('images').array(),
-    // Seller-authored selling points ("trust" badges). Empty = nothing shown.
-    highlights: jsonb('highlights')
-      .$type<ProductHighlight[]>()
-      .notNull()
-      .default([]),
     // Optional product video — a YouTube watch/share/embed URL. Rendered as an
     // embedded player on the storefront product page.
     videoUrl: text('video_url'),

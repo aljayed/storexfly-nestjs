@@ -358,6 +358,13 @@
       "when": 1790294400000,
       "tag": "0053_shop_coupons",
       "breakpoints": true
+    },
+    {
+      "idx": 54,
+      "version": "7",
+      "when": 1790380800000,
+      "tag": "0054_drop_product_highlights",
+      "breakpoints": true
     }
   ]
 }

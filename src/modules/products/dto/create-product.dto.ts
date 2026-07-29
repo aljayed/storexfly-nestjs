@@ -28,30 +28,6 @@ type ProductTag = (typeof productTagEnum.enumValues)[number];
 type PaymentMethod = (typeof paymentMethodEnum.enumValues)[number];
 type ListingType = (typeof listingTypeEnum.enumValues)[number];
 
-/** One seller-authored selling point (the product-page "trust" badges). */
-export class HighlightDto {
-  @ApiPropertyOptional({
-    example: 'truck',
-    description: 'Icon key from the storefront icon set.',
-  })
-  @IsOptional()
-  @IsString()
-  @MaxLength(40)
-  icon?: string;
-
-  @ApiProperty({ example: 'Free next-day' })
-  @IsString()
-  @MinLength(1)
-  @MaxLength(60)
-  title!: string;
-
-  @ApiPropertyOptional({ example: 'Cold-chain delivery' })
-  @IsOptional()
-  @IsString()
-  @MaxLength(120)
-  subtitle?: string;
-}
-
 /** One choice inside a variant group; `priceDelta` adjusts the base price. */
 export class VariantOptionDto {
   @ApiPropertyOptional({
@@ -264,13 +240,6 @@ export class CreateProductDto {
   @MaxLength(3_000_000, { each: true })
   images?: string[];
 
-  @ApiPropertyOptional({ type: [HighlightDto] })
-  @IsOptional()
-  @IsArray()
-  @ValidateNested({ each: true })
-  @Type(() => HighlightDto)
-  highlights?: HighlightDto[];
-
   @ApiPropertyOptional({
     type: [VariantGroupDto],
     description:
@@ -293,6 +262,22 @@ export class CreateProductDto {
   @ValidateNested({ each: true })
   @Type(() => PackDto)
   packs?: PackDto[];
+
+  /**
+   * Removed feature, still accepted so nothing breaks mid-rollout.
+   *
+   * Per-product highlights were dropped in favour of the shop-wide strip
+   * (now called "Highlights" in the console). Validation is whitelisted, so
+   * without this a seller who still had the old console page open when the
+   * new API went live would get "property highlights should not exist" and
+   * lose the save. The value is ignored and never stored.
+   *
+   * Safe to delete once no old console bundle can still be in a browser.
+   */
+  @ApiPropertyOptional({ deprecated: true, description: 'Ignored — removed.' })
+  @IsOptional()
+  @IsArray()
+  highlights?: unknown[];
 
   @ApiPropertyOptional({
     example: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',

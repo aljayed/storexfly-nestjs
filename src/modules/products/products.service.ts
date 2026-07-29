@@ -191,7 +191,6 @@ export class ProductsService {
         rating: dto.rating ?? 0,
         blurb: dto.blurb ?? '',
         images: images ?? undefined,
-        highlights: dto.highlights,
         videoUrl: dto.videoUrl || null,
         variantGroups: this.toVariantGroups(dto.variantGroups),
         packs: this.toPacks(dto.packs),
@@ -226,10 +225,9 @@ export class ProductsService {
       blurb: dto.blurb ?? undefined,
       images,
       // Present (incl. empty array) replaces the list; absent leaves it as-is.
-      highlights: dto.highlights ?? undefined,
       // Present-but-empty clears the video; absent leaves it unchanged.
       videoUrl: dto.videoUrl === undefined ? undefined : dto.videoUrl || null,
-      // Same replace-on-present semantics as highlights.
+      // Replace-on-present semantics.
       variantGroups: this.toVariantGroups(dto.variantGroups),
       packs: this.toPacks(dto.packs),
     };

@@ -35,7 +35,6 @@ const PRODUCTS: {
   rating: number;
   reviews: number;
   blurb: string;
-  highlights?: { icon?: string; title: string; subtitle?: string }[];
 }[] = [
   {
     name: 'Alphonso Mango Box',
@@ -50,23 +49,6 @@ const PRODUCTS: {
     reviews: 312,
     blurb:
       'The king of mangoes — buttery, fragrant Ratnagiri Alphonsos, hand-picked and ripened naturally.',
-    highlights: [
-      {
-        icon: 'truck',
-        title: 'Free next-day',
-        subtitle: 'Cold-chain delivery',
-      },
-      {
-        icon: 'zap',
-        title: 'Ripe guarantee',
-        subtitle: 'Or we replace it free',
-      },
-      {
-        icon: 'package',
-        title: 'Hand-packed',
-        subtitle: 'Picked same morning',
-      },
-    ],
   },
   {
     name: 'Kesar Mango Box',
@@ -546,7 +528,6 @@ async function seed(): Promise<void> {
           rating: p.rating,
           reviewsCount: p.reviews,
           blurb: p.blurb,
-          highlights: p.highlights ?? [],
         })
         .returning({
           id: schema.products.id,
