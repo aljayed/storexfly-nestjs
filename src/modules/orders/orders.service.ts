@@ -474,6 +474,239 @@ export class OrdersService {
     });
   }
 
+  /**
+   * Place an order from an accepted chat offer.
+   *
+   * Deliberately parallel to `checkout` — same shop lock, same guarded stock
+   * decrement, same customer stats, notifications and free-tier cap — with
+   * one difference: the line prices come from the offer, not the catalog.
+   * That is the whole point of an offer, and it's why this can't just call
+   * `checkout`, which re-prices from the catalog and would silently discard
+   * whatever the seller agreed.
+   *
+   * Stock is still taken at acceptance, never at offer time, so a standing
+   * offer can never oversell.
+   */
+  async placeFromOffer(args: {
+    offer: {
+      id: string;
+      shopId: string;
+      items: { productId: string; name: string; qty: number; unitPriceCents: number }[];
+      deliveryCents: number;
+      totalCents: number;
+    };
+    buyer: { id: string; name: string; email: string | null; phone: string | null };
+    address: { line: string; area: string; pincode?: string };
+    paymentMethod: string;
+    phone?: string;
+  }): Promise<{ order: OrderRow; paymentUrl?: string }> {
+    const { offer } = args;
+    const method = await this.paymentMethods.findEnabledByCode(
+      args.paymentMethod,
+    );
+    if (!method) {
+      throw new BadRequestException(
+        'That payment method is not available — please pick another.',
+      );
+    }
+    if (method.gateway === 'bkash' && !(await this.bkash.isConfigured())) {
+      throw new BadRequestException(
+        'bKash payments are temporarily unavailable — please pick another method.',
+      );
+    }
+    const phone = args.phone?.trim() || args.buyer.phone || '';
+    if (!phone) {
+      throw new BadRequestException(
+        'A phone number is required to place this order.',
+      );
+    }
+    const email = args.buyer.email ?? `${phone}@phone.local`;
+    const payStatus = method.gateway !== 'none' ? 'Pending' : 'Due';
+
+    const order = await this.db.transaction(async (tx) => {
+      const [shop] = await tx
+        .select({ live: shops.live, plan: shops.plan })
+        .from(shops)
+        .where(eq(shops.id, offer.shopId))
+        .for('update');
+      if (!shop?.live) {
+        throw new ForbiddenException('This shop is currently offline.');
+      }
+
+      let priorSalesCents = 0;
+      if (shop.plan === 'free') {
+        priorSalesCents = await this.lifetimeSalesCents(tx, offer.shopId);
+        if (priorSalesCents >= FREE_SALES_CAP_CENTS) {
+          throw new ForbiddenException(FREE_TIER_LIMIT_MESSAGE);
+        }
+      }
+
+      // Re-read the products under the lock: an offer can sit in a thread for
+      // days, and the item may since have been deleted, delisted, or switched
+      // to a payment kind that excludes the buyer's choice.
+      const ids = [...new Set(offer.items.map((i) => i.productId))];
+      const rows = await tx.query.products.findMany({
+        where: and(inArray(products.id, ids), eq(products.shopId, offer.shopId)),
+      });
+      const byId = new Map(rows.map((p) => [p.id, p]));
+
+      const lines: CheckoutCart['lines'] = [];
+      const unitsByProduct = new Map<string, number>();
+      for (const item of offer.items) {
+        const product = byId.get(item.productId);
+        if (!product || product.listingType !== 'sale') {
+          throw new ConflictException(
+            `“${item.name}” is no longer available — ask the seller for a new offer.`,
+          );
+        }
+        if (!product.paymentMethods.includes(method.kind as never)) {
+          throw new BadRequestException(
+            `“${product.name}” cannot be paid with that method — please pick another.`,
+          );
+        }
+        unitsByProduct.set(
+          product.id,
+          (unitsByProduct.get(product.id) ?? 0) + item.qty,
+        );
+        lines.push({
+          productId: product.id,
+          name: item.name,
+          qty: item.qty,
+          unitPriceCents: item.unitPriceCents,
+          variant: null,
+        });
+      }
+      for (const [productId, units] of unitsByProduct) {
+        const product = byId.get(productId)!;
+        if (product.stock < units) {
+          throw new ConflictException(
+            `Not enough stock of ${product.name} — ask the seller for a new offer.`,
+          );
+        }
+      }
+
+      if (offer.deliveryCents > 0) {
+        lines.push({
+          productId: null,
+          name: DELIVERY_LINE_NAME,
+          qty: 1,
+          unitPriceCents: offer.deliveryCents,
+          variant: null,
+        });
+      }
+
+      for (const [productId, units] of unitsByProduct) {
+        const updated = await tx
+          .update(products)
+          .set({ stock: sql`${products.stock} - ${units}` })
+          .where(and(eq(products.id, productId), gte(products.stock, units)))
+          .returning({ id: products.id });
+        if (!updated.length) {
+          throw new ConflictException('Not enough stock for this offer');
+        }
+      }
+
+      const placedAt = new Date();
+      const reference = await this.nextReference(tx, offer.shopId);
+      const totalUnits = [...unitsByProduct.values()].reduce((a, b) => a + b, 0);
+
+      const customerId = await this.customers.recordOrder(tx, {
+        shopId: offer.shopId,
+        name: args.buyer.name,
+        email,
+        phone,
+        city: args.address.area,
+        amountCents: offer.totalCents,
+        placedAt,
+      });
+
+      const [row] = await tx
+        .insert(orders)
+        .values({
+          reference,
+          shopId: offer.shopId,
+          customerId,
+          customerName: args.buyer.name,
+          email,
+          phone,
+          qty: totalUnits,
+          totalCents: offer.totalCents,
+          deliveryCents: offer.deliveryCents,
+          status: 'New',
+          pay: payStatus,
+          paymentMethod: args.paymentMethod,
+          channel: 'Store',
+          address: {
+            line: args.address.line,
+            area: args.address.area,
+            pincode: args.address.pincode ?? '',
+          },
+          placedAt,
+        })
+        .returning();
+
+      await tx.insert(orderItems).values(
+        lines.map((line) => ({
+          orderId: row.id,
+          productId: line.productId,
+          name: line.name,
+          qty: line.qty,
+          unitPriceCents: line.unitPriceCents,
+          variant: line.variant,
+        })),
+      );
+
+      if (
+        shop.plan === 'free' &&
+        priorSalesCents + offer.totalCents >= FREE_SALES_CAP_CENTS
+      ) {
+        await tx
+          .update(shops)
+          .set({ live: false })
+          .where(eq(shops.id, offer.shopId));
+      }
+
+      if (payStatus !== 'Pending') {
+        await this.notifications.orderEvent(
+          tx,
+          row,
+          'order_placed',
+          `Order ${row.reference} placed`,
+          `Your order has been placed. ${
+            method.kind === 'cod'
+              ? 'Pay in cash when it arrives.'
+              : 'The seller will confirm your payment shortly.'
+          }`,
+        );
+      }
+      return row;
+    });
+
+    // Hosted-gateway leg runs after the commit, exactly as in `checkout`.
+    if (method.gateway === 'bkash') {
+      try {
+        const created = await this.bkash.createPayment({
+          amountCents: order.totalCents,
+          invoiceNumber: `${order.reference.replace('#', '')}-${order.id.slice(0, 8)}`,
+          payerReference: phone.replace(/\D/g, ''),
+          callbackUrl: this.bkashCallbackUrl(),
+        });
+        await this.db.insert(gatewayPayments).values({
+          orderId: order.id,
+          provider: 'bkash',
+          paymentId: created.paymentId,
+          amountCents: order.totalCents,
+          payerReference: phone.replace(/\D/g, '').slice(0, 40),
+        });
+        return { order, paymentUrl: created.bkashUrl };
+      } catch (err) {
+        await this.voidPendingOrder(order.id);
+        throw err;
+      }
+    }
+    return { order };
+  }
+
   private checkoutResult(
     order: OrderRow,
     dto: CheckoutDto,

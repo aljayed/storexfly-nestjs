@@ -14,6 +14,7 @@ import {
   products,
   shops,
   type ChatAdjustmentSnapshotValue,
+  type ChatOfferSnapshotValue,
   type ChatMessageRow,
   type ChatMessageStatus,
   type ChatMessageType,
@@ -64,6 +65,7 @@ export interface MessageDto {
   product?: ChatProductSnapshotValue;
   order?: ChatOrderSnapshotValue;
   adjustment?: ChatAdjustmentSnapshotValue;
+  offer?: ChatOfferSnapshotValue;
   attachment?: {
     kind: 'image' | 'file';
     fileName: string;
@@ -426,6 +428,8 @@ export class MessagesService {
         return `📎 ${fields.attachment?.fileName ?? 'File'}`;
       case 'adjustment':
         return `💱 Order ${fields.adjustment?.displayId ?? ''} amount change`.trim();
+      case 'offer':
+        return `🧾 ${fields.offer?.itemsSummary ?? 'Order offer'}`;
       default:
         return '';
     }
@@ -444,6 +448,7 @@ export class MessagesService {
       type: ChatMessageType;
       text?: string;
       adjustment?: ChatAdjustmentSnapshotValue;
+      offer?: ChatOfferSnapshotValue;
     },
   ): Promise<void> {
     await this.db
@@ -467,6 +472,7 @@ export class MessagesService {
     const fields = {
       text: payload.text ?? null,
       adjustment: payload.adjustment ?? null,
+      offer: payload.offer ?? null,
     };
     const preview = this.previewOf(payload.type, fields);
     const buyerOnline = this.realtime.isOnline('buyer', buyerAccountId);
@@ -537,6 +543,30 @@ export class MessagesService {
       );
   }
 
+  /**
+   * Reflect an offer's outcome onto its card, so reopening the thread shows
+   * "Accepted"/"Rejected" rather than live buttons. Mirrors
+   * {@link updateAdjustmentStatus}.
+   */
+  async updateOfferStatus(
+    offerId: string,
+    status: ChatOfferSnapshotValue['status'],
+  ): Promise<void> {
+    await this.db
+      .update(chatMessages)
+      .set({
+        offer: sql`jsonb_set(${chatMessages.offer}, '{status}', ${JSON.stringify(
+          status,
+        )}::jsonb, false)`,
+      })
+      .where(
+        and(
+          eq(chatMessages.type, 'offer'),
+          sql`${chatMessages.offer}->>'offerId' = ${offerId}`,
+        ),
+      );
+  }
+
   private toDto(row: ChatMessageRow): MessageDto {
     return {
       id: row.id,
@@ -548,6 +578,7 @@ export class MessagesService {
       product: row.product ?? undefined,
       order: row.order ?? undefined,
       adjustment: row.adjustment ?? undefined,
+      offer: row.offer ?? undefined,
       attachment: row.attachment ?? undefined,
       status: row.status,
       sentAt: row.sentAt.toISOString(),

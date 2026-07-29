@@ -32,6 +32,10 @@ import { QuickRepliesService } from './quick-replies.service';
   // Exported so the platform can post shop-initiated cards (e.g. order-amount
   // changes) into a thread. Chat still imports no feature module — the
   // dependency is one-way (orders → chat).
-  exports: [MessagesService],
+  //
+  // The guard and its token service go out too, so a module layered on top
+  // (chat-offers) can protect its own routes with the same auth seam instead
+  // of re-implementing one. Still no inward dependency.
+  exports: [MessagesService, ChatAuthGuard, ChatTokenService],
 })
 export class ChatModule {}

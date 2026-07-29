@@ -43,6 +43,9 @@ export const chatMessageTypeEnum = pgEnum('chat_message_type', [
   // A shop-initiated order-amount change card. A decrease is auto-applied and
   // informational; an increase is an approval card the buyer acts on in-chat.
   'adjustment',
+  // A shop-initiated order offer: the seller proposes items at a price they
+  // set, and accepting it places the order. See `chatOrderOffers`.
+  'offer',
 ]);
 
 /** sent → delivered (recipient connected) → read. `sending` is client-only. */
@@ -103,6 +106,23 @@ export interface ChatAdjustmentSnapshotValue {
   currency: string;
   direction: 'increase' | 'decrease';
   status: 'pending' | 'approved' | 'rejected' | 'withdrawn';
+}
+
+/**
+ * Card summary of an order offer. Deliberately small — enough to render the
+ * bubble with a total and a status; the View screen fetches the full offer,
+ * which is the authoritative copy (see `chatOrderOffers`).
+ */
+export interface ChatOfferSnapshotValue {
+  offerId: string;
+  /** "2 × Alphonso Mango Box + 1 more" — precomputed for the bubble. */
+  itemsSummary: string;
+  itemCount: number;
+  total: number;
+  currency: string;
+  status: ChatOfferStatus;
+  /** ISO date; absent = the offer does not expire. */
+  expiresAt?: string;
 }
 
 /** Inline attachment (data URL, same storage approach as product images). */
@@ -173,6 +193,7 @@ export const chatMessages = pgTable(
     product: jsonb('product').$type<ChatProductSnapshotValue>(),
     order: jsonb('order').$type<ChatOrderSnapshotValue>(),
     adjustment: jsonb('adjustment').$type<ChatAdjustmentSnapshotValue>(),
+    offer: jsonb('offer').$type<ChatOfferSnapshotValue>(),
     attachment: jsonb('attachment').$type<ChatAttachmentValue>(),
     status: chatMessageStatusEnum('status').notNull().default('sent'),
     sentAt: timestamp('sent_at', { withTimezone: true }).notNull().defaultNow(),
@@ -184,6 +205,80 @@ export const chatMessages = pgTable(
       table.conversationId,
       table.sentAt,
     ),
+  ],
+);
+
+export const chatOfferStatusEnum = pgEnum('chat_offer_status', [
+  'pending',
+  'accepted',
+  'rejected',
+  'withdrawn',
+  'expired',
+]);
+
+/** One line of an offer, priced by the seller when they composed it. */
+export interface ChatOfferItemValue {
+  productId: string;
+  /** Copied in, so the card still reads correctly if the product is renamed. */
+  name: string;
+  qty: number;
+  unitPriceCents: number;
+}
+
+/**
+ * A seller's order proposal, sent into a chat thread. Accepting it places a
+ * real order at these prices.
+ *
+ * This is a table rather than only a card payload because it gates money: it
+ * is the single authority for what was offered and whether it has been used.
+ * Acceptance flips `status` under a row lock, so a buyer double-tapping
+ * "Accept" — or accepting on two devices — can only ever create one order.
+ * The message card carries a summary copy for rendering (see
+ * {@link ChatOfferSnapshotValue}); this row is what the accept path trusts.
+ *
+ * Prices are the seller's, not the catalog's — that is the point of an offer
+ * — but stock is still checked and decremented at acceptance, so an offer can
+ * never oversell.
+ */
+export const chatOrderOffers = pgTable(
+  'chat_order_offers',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    conversationId: uuid('conversation_id')
+      .notNull()
+      .references(() => chatConversations.id, { onDelete: 'cascade' }),
+    shopId: uuid('shop_id')
+      .notNull()
+      .references(() => shops.id, { onDelete: 'cascade' }),
+    buyerId: uuid('buyer_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+
+    items: jsonb('items').$type<ChatOfferItemValue[]>().notNull(),
+    itemsSubtotalCents: integer('items_subtotal_cents').notNull(),
+    /** Seller-set delivery charge for this offer (0 = free). */
+    deliveryCents: integer('delivery_cents').notNull().default(0),
+    totalCents: integer('total_cents').notNull(),
+    /** Optional seller note shown on the offer screen. */
+    note: varchar('note', { length: 300 }),
+
+    status: chatOfferStatusEnum('status').notNull().default('pending'),
+    /** Set once accepted — the order this offer became. */
+    orderId: uuid('order_id'),
+    /** Optional deadline; past it the offer can no longer be accepted. */
+    expiresAt: timestamp('expires_at', { withTimezone: true }),
+    respondedAt: timestamp('responded_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true })
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (table) => [
+    index('chat_order_offers_conversation_idx').on(table.conversationId),
+    index('chat_order_offers_shop_idx').on(table.shopId),
   ],
 );
 
@@ -243,3 +338,20 @@ export type ChatMessageRow = typeof chatMessages.$inferSelect;
 export type NewChatMessageRow = typeof chatMessages.$inferInsert;
 export type ChatQuickReplyRow = typeof chatQuickReplies.$inferSelect;
 export type NewChatQuickReplyRow = typeof chatQuickReplies.$inferInsert;
+export type ChatOfferStatus = (typeof chatOfferStatusEnum.enumValues)[number];
+export type ChatOrderOfferRow = typeof chatOrderOffers.$inferSelect;
+export type NewChatOrderOfferRow = typeof chatOrderOffers.$inferInsert;
+
+export const chatOrderOffersRelations = relations(
+  chatOrderOffers,
+  ({ one }) => ({
+    conversation: one(chatConversations, {
+      fields: [chatOrderOffers.conversationId],
+      references: [chatConversations.id],
+    }),
+    shop: one(shops, {
+      fields: [chatOrderOffers.shopId],
+      references: [shops.id],
+    }),
+  }),
+);

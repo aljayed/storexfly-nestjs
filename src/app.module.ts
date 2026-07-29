@@ -13,6 +13,7 @@ import { BuyerModule } from './modules/buyer/buyer.module';
 import { ChatModule } from './modules/chat/chat.module';
 import { CombosModule } from './modules/combos/combos.module';
 import { ShopCouponsModule } from './modules/shop-coupons/shop-coupons.module';
+import { ChatOffersModule } from './modules/chat-offers/chat-offers.module';
 import { CouponsModule } from './modules/coupons/coupons.module';
 import { ReferralsModule } from './modules/referrals/referrals.module';
 import { CustomersModule } from './modules/customers/customers.module';
@@ -62,6 +63,7 @@ import { UsersModule } from './modules/users/users.module';
     ProductsModule,
     CombosModule,
     ShopCouponsModule,
+    ChatOffersModule,
     GatewaysModule,
     NotificationsModule,
     OrdersModule,
