@@ -49,7 +49,14 @@ import { SteadfastService } from '../gateways/steadfast.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { MessagesService } from '../chat/messages.service';
 import { PaymentMethodsService } from '../settlements/payment-methods.service';
-import type { CheckoutDto } from './dto/checkout.dto';
+import {
+  ShopCouponsService,
+  normalizeCouponPhone,
+  type CouponBasis,
+} from '../shop-coupons/shop-coupons.service';
+import type { CouponQuoteResponse } from '../shop-coupons/dto/shop-coupon.response';
+import type { ShopCouponRow } from '../../database/schema';
+import type { CheckoutDto, CouponQuoteDto } from './dto/checkout.dto';
 import { CheckoutResultResponse } from './dto/checkout-result.response';
 import { OrderListResponse } from './dto/order-list.response';
 import { OrderResponse } from './dto/order.response';
@@ -134,6 +141,7 @@ export class OrdersService {
     private readonly courierSettings: ShopCourierSettingsService,
     private readonly config: ConfigService,
     private readonly messages: MessagesService,
+    private readonly shopCoupons: ShopCouponsService,
   ) {}
 
   /**
@@ -217,6 +225,13 @@ export class OrdersService {
           ? await this.buildComboCart(tx, dto, method.kind)
           : await this.buildProductCart(tx, dto, method.kind);
 
+      // A coupon takes money off the item subtotal (never delivery — the
+      // seller still owes the courier that). A code that doesn't apply is
+      // ignored rather than failing the order: the storefront previews it and
+      // shows the exact discount before the buyer commits, so a race here
+      // (the code expiring mid-checkout) should still place the order.
+      const applied = await this.applyCoupon(tx, dto, cart);
+
       const placedAt = new Date();
       const reference = await this.nextReference(tx, dto.shopId);
 
@@ -262,6 +277,8 @@ export class OrdersService {
           paymentMethod: dto.paymentMethod,
           mobileBankApp: dto.mobileBankApp,
           channel: 'Store',
+          couponCode: applied?.coupon.code ?? null,
+          discountCents: applied?.discountCents ?? 0,
           address: {
             line: dto.address.line,
             area: dto.address.area,
@@ -282,6 +299,16 @@ export class OrdersService {
           variant: line.variant,
         })),
       );
+
+      // Claim the redemption under the same lock that priced it, so the last
+      // use of a capped code can't be handed to two buyers at once.
+      if (applied) {
+        await this.shopCoupons.redeem(tx, applied.coupon, {
+          orderId: order.id,
+          phone: normalizeCouponPhone(dto.contact.phone),
+          discountCents: applied.discountCents,
+        });
+      }
 
       // Crossing the free-tier cap deactivates the shop (this order stands).
       if (
@@ -341,6 +368,112 @@ export class OrdersService {
     return this.checkoutResult(order, dto, {});
   }
 
+  /**
+   * Evaluate `dto.couponCode` against the priced cart and, if it applies, add
+   * the negative discount line and lower the total. Returns what was applied
+   * so the caller can record it on the order and claim the redemption.
+   *
+   * The discount line keeps the invariant every other line relies on: the
+   * line totals always sum to the order total, which is what cancel-restock,
+   * settlements and reporting read.
+   */
+  private async applyCoupon(
+    tx: OrdersTx,
+    dto: CheckoutDto,
+    cart: CheckoutCart,
+  ): Promise<{ coupon: ShopCouponRow; discountCents: number } | null> {
+    if (!dto.couponCode?.trim()) return null;
+
+    const result = await this.shopCoupons.evaluate(
+      tx,
+      dto.shopId,
+      dto.couponCode,
+      this.couponBasis(cart, {
+        comboId: dto.comboId,
+        phone: normalizeCouponPhone(dto.contact.phone),
+      }),
+    );
+    if (!('discountCents' in result)) return null;
+
+    cart.lines.push({
+      productId: null,
+      name: `Coupon ${result.coupon.code}`.slice(0, 200),
+      qty: 1,
+      unitPriceCents: -result.discountCents,
+      variant: result.coupon.description?.slice(0, 240) ?? null,
+    });
+    cart.totalCents -= result.discountCents;
+    return result;
+  }
+
+  /**
+   * Describe a priced cart to the coupon rules. `itemsSubtotalCents` excludes
+   * delivery (and is already net of any combo discount); `valueByProduct` is
+   * what a product-scoped code measures itself against.
+   */
+  private couponBasis(
+    cart: CheckoutCart,
+    opts: { comboId?: string; phone: string },
+  ): CouponBasis {
+    const valueByProduct = new Map<string, number>();
+    for (const line of cart.lines) {
+      if (!line.productId) continue;
+      valueByProduct.set(
+        line.productId,
+        (valueByProduct.get(line.productId) ?? 0) +
+          line.unitPriceCents * line.qty,
+      );
+    }
+    return {
+      itemsSubtotalCents: cart.totalCents - cart.deliveryCents,
+      valueByProduct,
+      comboId: opts.comboId,
+      phone: opts.phone,
+    };
+  }
+
+  /**
+   * Storefront preview: price the buyer's cart exactly as checkout would and
+   * report what the code takes off, without touching stock or redemptions.
+   *
+   * It runs the same cart builders as the real checkout, so the number shown
+   * is the number charged. Payment-method checks are skipped — the buyer may
+   * not have picked one yet, and the method can't change the discount.
+   */
+  async quoteCoupon(dto: CouponQuoteDto): Promise<CouponQuoteResponse> {
+    const shapes = [dto.productId, dto.comboId, dto.items].filter(Boolean);
+    if (shapes.length !== 1) {
+      throw new BadRequestException(
+        'Provide a product, a combo, or a cart of items to price.',
+      );
+    }
+    // A read-only transaction: the builders take a tx, and rolling it back
+    // guarantees a preview can never leave anything behind.
+    return this.db.transaction(async (tx) => {
+      const checkoutish = {
+        ...dto,
+        address: { line: '', area: dto.area ?? '', pincode: '' },
+      } as unknown as CheckoutDto;
+
+      const cart = dto.items
+        ? await this.buildItemsCart(tx, checkoutish, null)
+        : dto.comboId
+          ? await this.buildComboCart(tx, checkoutish, null)
+          : await this.buildProductCart(tx, checkoutish, null);
+
+      const result = await this.shopCoupons.evaluate(
+        tx,
+        dto.shopId,
+        dto.code,
+        this.couponBasis(cart, {
+          comboId: dto.comboId,
+          phone: normalizeCouponPhone(dto.phone),
+        }),
+      );
+      return this.shopCoupons.toQuote(dto.code, result);
+    });
+  }
+
   private checkoutResult(
     order: OrderRow,
     dto: CheckoutDto,
@@ -389,7 +522,7 @@ export class OrdersService {
   private priceProductPick(
     product: ProductRow,
     pick: { qty: number; variant?: Record<string, string>; packId?: string },
-    payKind: string,
+    payKind: string | null,
   ): { line: CheckoutCart['lines'][number]; units: number } {
     // Showcase items are advertised only — the sale happens offline, so
     // online checkout is never allowed for them.
@@ -399,8 +532,12 @@ export class OrdersService {
       );
     }
     // Sellers toggle payment *kinds* per product (COD / mobile banking /
-    // card); the picked method must belong to an allowed kind.
-    if (!product.paymentMethods.includes(payKind as never)) {
+    // card); the picked method must belong to an allowed kind. `null` means
+    // no method has been chosen yet (a coupon preview) — nothing to check.
+    if (
+      payKind !== null &&
+      !product.paymentMethods.includes(payKind as never)
+    ) {
       throw new BadRequestException(
         `“${product.name}” cannot be paid with that method — please pick another.`,
       );
@@ -456,7 +593,7 @@ export class OrdersService {
   private async buildProductCart(
     tx: OrdersTx,
     dto: CheckoutDto,
-    payKind: string,
+    payKind: string | null,
   ): Promise<CheckoutCart> {
     const product = await tx.query.products.findFirst({
       where: and(
@@ -500,7 +637,7 @@ export class OrdersService {
   private async buildItemsCart(
     tx: OrdersTx,
     dto: CheckoutDto,
-    payKind: string,
+    payKind: string | null,
   ): Promise<CheckoutCart> {
     const picks = dto.items!;
     const ids = [...new Set(picks.map((i) => i.productId))];
@@ -566,7 +703,7 @@ export class OrdersService {
   private async buildComboCart(
     tx: OrdersTx,
     dto: CheckoutDto,
-    payKind: string,
+    payKind: string | null,
   ): Promise<CheckoutCart> {
     const combo = await tx.query.combos.findFirst({
       where: and(eq(combos.id, dto.comboId!), eq(combos.shopId, dto.shopId)),
@@ -588,7 +725,10 @@ export class OrdersService {
         throw new ConflictException('This combo offer is no longer available.');
       }
       // A member that disallows the picked payment kind restricts the combo.
-      if (!product.paymentMethods.includes(payKind as never)) {
+      if (
+        payKind !== null &&
+        !product.paymentMethods.includes(payKind as never)
+      ) {
         throw new BadRequestException(
           'This combo cannot be paid with that method — please pick another.',
         );
@@ -1518,6 +1658,10 @@ export class OrdersService {
         .set({ stock: sql`${products.stock} + ${item.qty}` })
         .where(eq(products.id, item.productId));
     }
+    // Hand the coupon use back — a cancelled order shouldn't burn the buyer's
+    // one redemption, nor a slot from a capped code.
+    await this.shopCoupons.releaseForOrder(tx, order.id);
+
     const [row] = await tx
       .update(orders)
       .set({ status: 'Cancelled' })

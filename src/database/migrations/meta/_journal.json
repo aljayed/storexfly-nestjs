@@ -351,6 +351,13 @@
       "when": 1790208000000,
       "tag": "0052_chat_adjustment_card",
       "breakpoints": true
+    },
+    {
+      "idx": 53,
+      "version": "7",
+      "when": 1790294400000,
+      "tag": "0053_shop_coupons",
+      "breakpoints": true
     }
   ]
 }

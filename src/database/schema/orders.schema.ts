@@ -60,6 +60,12 @@ export const orders = pgTable(
     mobileBankApp: mobileBankAppEnum('mobile_bank_app'),
     channel: salesChannelEnum('channel').notNull().default('Store'),
     address: jsonb('address').$type<DeliveryAddressValue>(),
+    // ── Shop coupon the buyer redeemed (null = none) ───────────────
+    // The code is copied in so the order still reads correctly after the
+    // coupon is edited or deleted; `discountCents` is already subtracted
+    // from `totalCents` and also appears as a negative line item.
+    couponCode: varchar('coupon_code', { length: 40 }),
+    discountCents: integer('discount_cents').notNull().default(0),
     // ── Courier consignment (set when the seller books) ────────────
     // Which provider booked it ('steadfast' | 'pathao'); null on legacy
     // rows booked before per-shop couriers, which were all Steadfast.

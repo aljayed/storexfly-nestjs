@@ -18,7 +18,7 @@ import { RolesGuard } from '../../common/guards/roles.guard';
 import { AdminJwtAuthGuard } from '../../common/guards/admin-jwt-auth.guard';
 import { ShopScopeGuard } from '../../common/guards/shop-scope.guard';
 import { BookCourierDto } from './dto/book-courier.dto';
-import { CheckoutDto } from './dto/checkout.dto';
+import { CheckoutDto, CouponQuoteDto } from './dto/checkout.dto';
 import { OrderQueryDto } from './dto/order-query.dto';
 import { RequestAdjustmentDto } from './dto/request-adjustment.dto';
 import { UpdateOrderStatusDto } from './dto/update-order-status.dto';
@@ -37,6 +37,20 @@ export class OrdersController {
   @ApiOperation({ summary: 'Place an order (inline product-page checkout)' })
   checkout(@Body() dto: CheckoutDto) {
     return this.orders.checkout(dto);
+  }
+
+  /**
+   * Preview a discount code against the cart the buyer is looking at. Rate
+   * limited harder than checkout: this is the one endpoint that would let
+   * someone guess a shop's codes by brute force.
+   */
+  @Public()
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  @Post('checkout/coupon')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Check what a coupon code takes off this cart' })
+  quoteCoupon(@Body() dto: CouponQuoteDto) {
+    return this.orders.quoteCoupon(dto);
   }
 
   // ── Admin order pipeline ─────────────────────────────────────

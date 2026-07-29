@@ -50,7 +50,9 @@ export class OrderAdjustmentResponse {
   @ApiProperty() reason!: string;
   @ApiProperty({ enum: ['pending', 'approved', 'rejected', 'withdrawn'] })
   status!: string;
-  @ApiPropertyOptional({ description: 'When it was approved/declined/withdrawn' })
+  @ApiPropertyOptional({
+    description: 'When it was approved/declined/withdrawn',
+  })
   resolvedAt?: string;
   @ApiProperty({ description: 'When the seller requested the change' })
   createdAt!: string;
@@ -91,6 +93,15 @@ export class OrderResponse {
   @ApiProperty({ description: 'Delivery charge included in the total' })
   delivery!: number;
   @ApiPropertyOptional({
+    example: 'EID25',
+    description: 'Shop coupon the buyer redeemed (absent = none)',
+  })
+  couponCode?: string;
+  @ApiProperty({
+    description: 'Coupon discount already subtracted from the total',
+  })
+  discount!: number;
+  @ApiPropertyOptional({
     enum: ['steadfast', 'pathao'],
     description: 'Courier that booked the parcel (absent = none yet)',
   })
@@ -105,7 +116,8 @@ export class OrderResponse {
   courierStatus?: string;
   @ApiProperty({
     type: [OrderAdjustmentResponse],
-    description: 'Amount-change history (newest last); the pending one, if any, awaits buyer approval',
+    description:
+      'Amount-change history (newest last); the pending one, if any, awaits buyer approval',
   })
   adjustments!: OrderAdjustmentResponse[];
   @ApiProperty({
@@ -137,6 +149,8 @@ export class OrderResponse {
       address: row.address ?? undefined,
       date: row.placedAt.toISOString(),
       delivery: centsToDollars(row.deliveryCents),
+      couponCode: row.couponCode ?? undefined,
+      discount: centsToDollars(row.discountCents),
       courierProvider:
         row.courierProvider ??
         (row.courierConsignmentId ? 'steadfast' : undefined),

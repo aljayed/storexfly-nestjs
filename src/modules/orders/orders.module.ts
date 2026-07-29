@@ -4,6 +4,7 @@ import { CustomersModule } from '../customers/customers.module';
 import { GatewaysModule } from '../gateways/gateways.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { SettlementsModule } from '../settlements/settlements.module';
+import { ShopCouponsModule } from '../shop-coupons/shop-coupons.module';
 import { OrdersController } from './orders.controller';
 import { OrdersService } from './orders.service';
 import { PaymentsController } from './payments.controller';
@@ -16,6 +17,7 @@ import { PaymentsService } from './payments.service';
     GatewaysModule,
     NotificationsModule,
     ChatModule,
+    ShopCouponsModule,
   ],
   controllers: [OrdersController, PaymentsController],
   providers: [OrdersService, PaymentsService],

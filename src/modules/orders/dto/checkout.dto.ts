@@ -190,4 +190,78 @@ export class CheckoutDto {
   @IsOptional()
   @IsEnum(mobileBankAppEnum.enumValues)
   mobileBankApp?: MobileBankApp;
+
+  @ApiPropertyOptional({
+    example: 'EID25',
+    description:
+      "A discount code from this shop. Silently ignored if it doesn't apply " +
+      'to this order — the storefront previews it first via /checkout/coupon.',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(40)
+  couponCode?: string;
+}
+
+/**
+ * Preview a coupon against a cart before the buyer commits to the order. Same
+ * cart shape as a checkout, minus the parts that only matter once money moves.
+ */
+export class CouponQuoteDto {
+  @ApiProperty() @IsString() shopId!: string;
+
+  @ApiProperty({ example: 'EID25' })
+  @IsString()
+  @MaxLength(40)
+  code!: string;
+
+  @ApiPropertyOptional() @IsOptional() @IsString() productId?: string;
+
+  @ApiPropertyOptional({ type: [CheckoutItemDto] })
+  @IsOptional()
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(50)
+  @ValidateNested({ each: true })
+  @Type(() => CheckoutItemDto)
+  items?: CheckoutItemDto[];
+
+  @ApiPropertyOptional() @IsOptional() @IsString() comboId?: string;
+
+  @ApiPropertyOptional({ example: 1, minimum: 1 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  qty?: number;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsObject()
+  variant?: Record<string, string>;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(24)
+  packId?: string;
+
+  @ApiPropertyOptional({
+    description:
+      "The buyer's phone, so a per-customer usage cap is previewed honestly.",
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(24)
+  phone?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'District, to price delivery the same way checkout will. Only affects ' +
+      'the minimum-order check, which is measured on items alone.',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(240)
+  area?: string;
 }

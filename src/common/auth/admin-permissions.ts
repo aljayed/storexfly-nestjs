@@ -22,6 +22,7 @@ export type AdminPermission =
   | 'orders.manage'
   | 'customers.view'
   | 'combos.manage'
+  | 'coupons.manage'
   | 'chat.manage'
   | 'settings.manage'
   | 'settlements.view'
@@ -38,6 +39,7 @@ const FULL_ACCESS: AdminPermission[] = [
   'orders.manage',
   'customers.view',
   'combos.manage',
+  'coupons.manage',
   'chat.manage',
   'settings.manage',
   'settlements.view',

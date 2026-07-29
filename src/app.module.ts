@@ -12,6 +12,7 @@ import { AuthModule } from './modules/auth/auth.module';
 import { BuyerModule } from './modules/buyer/buyer.module';
 import { ChatModule } from './modules/chat/chat.module';
 import { CombosModule } from './modules/combos/combos.module';
+import { ShopCouponsModule } from './modules/shop-coupons/shop-coupons.module';
 import { CouponsModule } from './modules/coupons/coupons.module';
 import { ReferralsModule } from './modules/referrals/referrals.module';
 import { CustomersModule } from './modules/customers/customers.module';
@@ -60,6 +61,7 @@ import { UsersModule } from './modules/users/users.module';
     PlatformModule,
     ProductsModule,
     CombosModule,
+    ShopCouponsModule,
     GatewaysModule,
     NotificationsModule,
     OrdersModule,
