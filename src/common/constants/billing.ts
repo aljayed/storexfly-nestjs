@@ -14,9 +14,9 @@ export const PLATFORM_CURRENCY = 'BDT';
 
 // ── Free tier ─────────────────────────────────────────────────────
 // A shop on the free plan carries hard limits: one product in the catalog
-// and ৳5,000 of lifetime (non-cancelled) order value. The order that crosses
-// the cap still completes; the shop is then deactivated until it subscribes.
+// and 10 lifetime (non-cancelled) orders. The order that fills the last slot
+// still completes; the shop is then deactivated until it subscribes.
 export const FREE_MAX_PRODUCTS = 1;
-export const FREE_SALES_CAP_CENTS = 500_000;
+export const FREE_ORDER_CAP = 10;
 export const FREE_TIER_LIMIT_MESSAGE =
-  'This shop reached the free plan’s ৳5,000 sales limit and is paused. Subscribe to keep selling.';
+  'This shop used up the free plan’s 10 free orders and is paused. Subscribe to keep selling.';

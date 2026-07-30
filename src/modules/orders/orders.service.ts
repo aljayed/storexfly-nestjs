@@ -23,7 +23,7 @@ import {
 import { centsToDollars, dollarsToCents } from '../../common/utils/money.util';
 import { DELIVERY_LINE_NAME } from '../../common/utils/order-line.util';
 import {
-  FREE_SALES_CAP_CENTS,
+  FREE_ORDER_CAP,
   FREE_TIER_LIMIT_MESSAGE,
 } from '../../common/constants/billing';
 import { DRIZZLE } from '../../database/database.constants';
@@ -196,13 +196,13 @@ export class OrdersService {
         throw new ForbiddenException('This shop is currently offline.');
       }
 
-      // Free tier: a shop may sell up to ৳5,000 lifetime; the order that
-      // crosses the cap still goes through, then the shop is deactivated
-      // until the seller subscribes.
-      let priorSalesCents = 0;
+      // Free tier: a shop may take 10 orders as a trial; the order that fills
+      // the last slot still goes through, then the shop is deactivated until
+      // the seller subscribes.
+      let priorOrders = 0;
       if (shop.plan === 'free') {
-        priorSalesCents = await this.lifetimeSalesCents(tx, dto.shopId);
-        if (priorSalesCents >= FREE_SALES_CAP_CENTS) {
+        priorOrders = await this.lifetimeOrderCount(tx, dto.shopId);
+        if (priorOrders >= FREE_ORDER_CAP) {
           throw new ForbiddenException(FREE_TIER_LIMIT_MESSAGE);
         }
       }
@@ -310,11 +310,9 @@ export class OrdersService {
         });
       }
 
-      // Crossing the free-tier cap deactivates the shop (this order stands).
-      if (
-        shop.plan === 'free' &&
-        priorSalesCents + cart.totalCents >= FREE_SALES_CAP_CENTS
-      ) {
+      // Filling the free-tier order quota deactivates the shop (this order
+      // stands).
+      if (shop.plan === 'free' && priorOrders + 1 >= FREE_ORDER_CAP) {
         await tx
           .update(shops)
           .set({ live: false })
@@ -533,10 +531,10 @@ export class OrdersService {
         throw new ForbiddenException('This shop is currently offline.');
       }
 
-      let priorSalesCents = 0;
+      let priorOrders = 0;
       if (shop.plan === 'free') {
-        priorSalesCents = await this.lifetimeSalesCents(tx, offer.shopId);
-        if (priorSalesCents >= FREE_SALES_CAP_CENTS) {
+        priorOrders = await this.lifetimeOrderCount(tx, offer.shopId);
+        if (priorOrders >= FREE_ORDER_CAP) {
           throw new ForbiddenException(FREE_TIER_LIMIT_MESSAGE);
         }
       }
@@ -656,10 +654,7 @@ export class OrdersService {
         })),
       );
 
-      if (
-        shop.plan === 'free' &&
-        priorSalesCents + offer.totalCents >= FREE_SALES_CAP_CENTS
-      ) {
+      if (shop.plan === 'free' && priorOrders + 1 >= FREE_ORDER_CAP) {
         await tx
           .update(shops)
           .set({ live: false })
@@ -731,18 +726,18 @@ export class OrdersService {
     return `${apiUrl.replace(/\/$/, '')}/${prefix}/payments/bkash/callback`;
   }
 
-  /** Lifetime sales (everything not cancelled) — the free-tier cap metric. */
-  private async lifetimeSalesCents(
+  /** Lifetime orders (everything not cancelled) — the free-tier cap metric. */
+  private async lifetimeOrderCount(
     executor: OrdersTx | DrizzleDB,
     shopId: string,
   ): Promise<number> {
-    const [{ cents }] = await executor
+    const [{ n }] = await executor
       .select({
-        cents: sql<string>`coalesce(sum(${orders.totalCents}) filter (where ${orders.status} <> 'Cancelled'), 0)`,
+        n: sql<string>`count(*) filter (where ${orders.status} <> 'Cancelled')`,
       })
       .from(orders)
       .where(eq(orders.shopId, shopId));
-    return Number(cents);
+    return Number(n);
   }
 
   /**

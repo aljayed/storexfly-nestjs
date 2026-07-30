@@ -36,10 +36,10 @@ export class SubscriptionPaymentResponse {
 
 /** Free-plan usage numbers rendered on the Subscription page. */
 export class FreeTierUsageResponse {
-  @ApiProperty({ example: 3250, description: 'Lifetime sales so far (৳)' })
-  salesUsed!: number;
-  @ApiProperty({ example: 5000, description: 'Lifetime sales cap (৳)' })
-  salesCap!: number;
+  @ApiProperty({ example: 4, description: 'Orders taken so far' })
+  ordersUsed!: number;
+  @ApiProperty({ example: 10, description: 'Free-trial order cap' })
+  ordersCap!: number;
   @ApiProperty({ example: 1 }) productsUsed!: number;
   @ApiProperty({ example: 1 }) maxProducts!: number;
 }
@@ -103,8 +103,8 @@ export class SubscriptionResponse {
   static freeTier(
     shop: ShopRow,
     usage: {
-      salesCents: number;
-      salesCapCents: number;
+      ordersCount: number;
+      ordersCap: number;
       productsCount: number;
       maxProducts: number;
       monthlyFeeCents: number;
@@ -115,8 +115,8 @@ export class SubscriptionResponse {
       shopId: shop.id,
       plan: 'free',
       freeTier: {
-        salesUsed: usage.salesCents / 100,
-        salesCap: usage.salesCapCents / 100,
+        ordersUsed: usage.ordersCount,
+        ordersCap: usage.ordersCap,
         productsUsed: usage.productsCount,
         maxProducts: usage.maxProducts,
       },

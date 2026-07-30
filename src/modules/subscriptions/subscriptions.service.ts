@@ -14,7 +14,7 @@ import {
 import { and, asc, count, desc, eq, isNull, lte, sql } from 'drizzle-orm';
 import {
   FREE_MAX_PRODUCTS,
-  FREE_SALES_CAP_CENTS,
+  FREE_ORDER_CAP,
   FREE_TIER_LIMIT_MESSAGE,
   PLATFORM_CURRENCY,
 } from '../../common/constants/billing';
@@ -251,15 +251,15 @@ export class SubscriptionsService implements OnModuleInit, OnModuleDestroy {
     return this.toResponse(sub);
   }
 
-  /** Free-tier usage numbers for one shop (products used, sales vs cap). */
+  /** Free-tier usage numbers for one shop (products used, orders vs cap). */
   private async freeTierUsage(shopId: string): Promise<{
-    salesCents: number;
+    ordersCount: number;
     productsCount: number;
   }> {
-    const [[{ cents }], [{ n }]] = await Promise.all([
+    const [[{ placed }], [{ n }]] = await Promise.all([
       this.db
         .select({
-          cents: sql<string>`coalesce(sum(${orders.totalCents}) filter (where ${orders.status} <> 'Cancelled'), 0)`,
+          placed: sql<string>`count(*) filter (where ${orders.status} <> 'Cancelled')`,
         })
         .from(orders)
         .where(eq(orders.shopId, shopId)),
@@ -268,14 +268,14 @@ export class SubscriptionsService implements OnModuleInit, OnModuleDestroy {
         .from(products)
         .where(eq(products.shopId, shopId)),
     ]);
-    return { salesCents: Number(cents), productsCount: Number(n) };
+    return { ordersCount: Number(placed), productsCount: Number(n) };
   }
 
   private async freeTierResponse(shop: ShopRow): Promise<SubscriptionResponse> {
     const usage = await this.freeTierUsage(shop.id);
     return SubscriptionResponse.freeTier(shop, {
-      salesCents: usage.salesCents,
-      salesCapCents: FREE_SALES_CAP_CENTS,
+      ordersCount: usage.ordersCount,
+      ordersCap: FREE_ORDER_CAP,
       productsCount: usage.productsCount,
       maxProducts: FREE_MAX_PRODUCTS,
       monthlyFeeCents: await this.billing.monthlyFeeCents(),
@@ -522,14 +522,14 @@ export class SubscriptionsService implements OnModuleInit, OnModuleDestroy {
 
   /**
    * Turn the storefront on/off. Going live requires a non-cancelled sub
-   * (paid plan) or headroom under the sales cap (free plan).
+   * (paid plan) or free orders left in the trial (free plan).
    */
   async setShopLive(shopId: string, live: boolean): Promise<{ live: boolean }> {
     if (live) {
       const shop = await this.requireShop(shopId);
       if (shop.plan === 'free') {
         const usage = await this.freeTierUsage(shopId);
-        if (usage.salesCents >= FREE_SALES_CAP_CENTS) {
+        if (usage.ordersCount >= FREE_ORDER_CAP) {
           throw new ForbiddenException(FREE_TIER_LIMIT_MESSAGE);
         }
       } else {
