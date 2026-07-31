@@ -163,6 +163,15 @@ export class ChatOffersService {
     });
     const byId = new Map(rows.map((p) => [p.id, p]));
 
+    // The seller may quote their own delivery for this offer, the way they
+    // may quote their own prices. Both zones are stamped onto every item's
+    // snapshot, so the accept-time lookup — highest rate among the items —
+    // finds the agreed number whichever line it reads.
+    const overrideDhaka =
+      dto.deliveryDhaka === undefined ? undefined : dollarsToCents(dto.deliveryDhaka);
+    const overrideOutside =
+      dto.deliveryOutside === undefined ? undefined : dollarsToCents(dto.deliveryOutside);
+
     const items: ChatOfferItemValue[] = [];
     for (const pick of dto.items) {
       const product = byId.get(pick.productId);
@@ -191,8 +200,8 @@ export class ChatOffersService {
         unit: product.unit,
         slug: product.slug,
         videoUrl: product.videoUrl ?? undefined,
-        deliveryDhakaCents: product.deliveryDhakaCents,
-        deliveryOutsideCents: product.deliveryOutsideCents,
+        deliveryDhakaCents: overrideDhaka ?? product.deliveryDhakaCents,
+        deliveryOutsideCents: overrideOutside ?? product.deliveryOutsideCents,
       });
     }
 

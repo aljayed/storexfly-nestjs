@@ -55,6 +55,26 @@ export class CreateOfferDto {
   @Type(() => OfferItemDto)
   items!: OfferItemDto[];
 
+  @ApiPropertyOptional({
+    example: 70,
+    description:
+      "Delivery inside Dhaka in ৳, overriding the items' own rate for this " +
+      'offer. 0 = free. Omit to use whatever the items charge.',
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @Min(0)
+  deliveryDhaka?: number;
+
+  @ApiPropertyOptional({
+    example: 120,
+    description: "Delivery outside Dhaka in ৳. Same rules as deliveryDhaka.",
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @Min(0)
+  deliveryOutside?: number;
+
   @ApiPropertyOptional({ example: 'Special price for you — valid today only.' })
   @IsOptional()
   @IsString()
