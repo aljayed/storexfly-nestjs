@@ -191,6 +191,8 @@ export class ChatOffersService {
         unit: product.unit,
         slug: product.slug,
         videoUrl: product.videoUrl ?? undefined,
+        deliveryDhakaCents: product.deliveryDhakaCents,
+        deliveryOutsideCents: product.deliveryOutsideCents,
       });
     }
 
@@ -198,11 +200,15 @@ export class ChatOffersService {
       (s, i) => s + i.unitPriceCents * i.qty,
       0,
     );
-    const deliveryCents = dto.delivery ? dollarsToCents(dto.delivery) : 0;
-    const totalCents = itemsSubtotalCents + deliveryCents;
-    if (totalCents <= 0) {
+    if (itemsSubtotalCents <= 0) {
       throw new BadRequestException('An offer must come to more than 0');
     }
+    // Delivery is not the seller's to set here: it depends on where this is
+    // going, and nobody knows that until the buyer confirms their district on
+    // the View screen. The offer therefore carries the items only, and the
+    // charge is quoted (and written back) at accept time.
+    const deliveryCents = 0;
+    const totalCents = itemsSubtotalCents;
 
     const expiresAt = dto.expiresAt ? new Date(dto.expiresAt) : null;
     if (expiresAt && expiresAt.getTime() <= Date.now()) {
@@ -242,7 +248,7 @@ export class ChatOffersService {
         tone: items[0].tone,
         slug: items[0].slug,
         videoUrl: items[0].videoUrl,
-        delivery: row.deliveryCents / 100,
+        freeDelivery: this.deliversFree(items),
       },
     });
 
@@ -257,6 +263,42 @@ export class ChatOffersService {
     const first = items[0];
     const head = `${first.qty} × ${first.name}`;
     return items.length > 1 ? `${head} + ${items.length - 1} more` : head;
+  }
+
+  // ── Delivery ─────────────────────────────────────────────────────
+
+  /**
+   * What delivery costs for a district. An offer ships as one parcel, so it
+   * costs the highest rate among its items rather than one per line — the
+   * same rule as checkout (`OrdersService.deliveryFeeCents`), applied to the
+   * rates snapshotted when the offer was composed.
+   *
+   * `legacyCents` covers offers made while the seller still set one flat
+   * charge: those items carry no rates, and that agreed number stands.
+   */
+  private deliveryFor(
+    items: ChatOfferItemValue[],
+    area: string,
+    legacyCents: number,
+  ): number {
+    const rated = items.filter(
+      (i) => i.deliveryDhakaCents !== undefined || i.deliveryOutsideCents !== undefined,
+    );
+    if (!rated.length) return legacyCents;
+    const inDhaka = area.trim().toLowerCase() === 'dhaka';
+    return Math.max(
+      0,
+      ...rated.map(
+        (i) => (inDhaka ? i.deliveryDhakaCents : i.deliveryOutsideCents) ?? 0,
+      ),
+    );
+  }
+
+  /** True when the offer delivers free wherever it goes — both zones at 0. */
+  private deliversFree(items: ChatOfferItemValue[]): boolean {
+    return items.every(
+      (i) => !(i.deliveryDhakaCents ?? 0) && !(i.deliveryOutsideCents ?? 0),
+    );
   }
 
   // ── Both sides: read one offer ───────────────────────────────────
@@ -348,6 +390,16 @@ export class ChatOffersService {
     });
     if (!buyer) throw new NotFoundException('Account not found');
 
+    // Now that we know where it is going, delivery can be priced. The buyer
+    // saw this same number on the View screen before pressing Accept, but it
+    // is recomputed here — the client's arithmetic is never the authority.
+    const deliveryCents = this.deliveryFor(
+      row.items,
+      dto.address.area,
+      row.deliveryCents,
+    );
+    const totalCents = row.itemsSubtotalCents + deliveryCents;
+
     let placed;
     try {
       placed = await this.orders.placeFromOffer({
@@ -355,8 +407,8 @@ export class ChatOffersService {
           id: row.id,
           shopId: row.shopId,
           items: row.items,
-          deliveryCents: row.deliveryCents,
-          totalCents: row.totalCents,
+          deliveryCents,
+          totalCents,
         },
         buyer,
         address: {
@@ -378,9 +430,11 @@ export class ChatOffersService {
       throw err;
     }
 
+    // Record what was actually agreed, so the offer row and the order it
+    // became carry the same numbers.
     const [updated] = await this.db
       .update(chatOrderOffers)
-      .set({ orderId: placed.order.id })
+      .set({ orderId: placed.order.id, deliveryCents, totalCents })
       .where(eq(chatOrderOffers.id, row.id))
       .returning();
 

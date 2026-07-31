@@ -132,8 +132,10 @@ export interface ChatOfferSnapshotValue {
       falls back to the video's still when the item has no photo. */
   slug?: string;
   videoUrl?: string;
-  /** Delivery in the offer's currency — 0 means the seller made it free. */
-  delivery?: number;
+  /** True when every item on the offer delivers free, so the card can say so
+      without knowing where the buyer is. Otherwise delivery is unknown until
+      they confirm their district on the View screen. */
+  freeDelivery?: boolean;
 }
 
 /** Inline attachment (data URL, same storage approach as product images). */
@@ -244,6 +246,12 @@ export interface ChatOfferItemValue {
   slug?: string;
   /** The item's video, shown on the card when it has no photo. */
   videoUrl?: string;
+  /** The item's zone delivery charges as they stood when the offer was made.
+      Delivery is quoted from these once the buyer confirms their district, so
+      a later edit to the product can't change the price of a live offer.
+      Absent on offers from when the seller set one flat charge instead. */
+  deliveryDhakaCents?: number;
+  deliveryOutsideCents?: number;
 }
 
 /**
@@ -277,8 +285,11 @@ export const chatOrderOffers = pgTable(
 
     items: jsonb('items').$type<ChatOfferItemValue[]>().notNull(),
     itemsSubtotalCents: integer('items_subtotal_cents').notNull(),
-    /** Seller-set delivery charge for this offer (0 = free). */
+    /** Delivery charged on this offer. 0 until the buyer confirms where it is
+        going — the charge comes from the items' zone rates and their district,
+        the same rule checkout applies — then written here with the total. */
     deliveryCents: integer('delivery_cents').notNull().default(0),
+    /** Items only until accepted; delivery is added once the district is known. */
     totalCents: integer('total_cents').notNull(),
     /** Optional seller note shown on the offer screen. */
     note: varchar('note', { length: 300 }),

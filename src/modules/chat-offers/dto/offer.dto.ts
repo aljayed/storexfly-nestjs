@@ -55,15 +55,6 @@ export class CreateOfferDto {
   @Type(() => OfferItemDto)
   items!: OfferItemDto[];
 
-  @ApiPropertyOptional({
-    example: 70,
-    description: 'Delivery charge in ৳ (0 = free delivery).',
-  })
-  @IsOptional()
-  @Type(() => Number)
-  @Min(0)
-  delivery?: number;
-
   @ApiPropertyOptional({ example: 'Special price for you — valid today only.' })
   @IsOptional()
   @IsString()
@@ -123,6 +114,27 @@ export class StartWithCustomerDto {
   email?: string;
 }
 
+/**
+ * What the offer charges to deliver to a zone: one parcel, so the highest
+ * rate among its items. Offers made while the seller set one flat charge
+ * carry no per-item rates — that agreed number stands for both zones.
+ */
+function zoneRate(
+  row: ChatOrderOfferRow,
+  zone: 'dhaka' | 'outside',
+): number {
+  const rated = row.items.filter(
+    (i) => i.deliveryDhakaCents !== undefined || i.deliveryOutsideCents !== undefined,
+  );
+  if (!rated.length) return row.deliveryCents;
+  return Math.max(
+    0,
+    ...rated.map(
+      (i) => (zone === 'dhaka' ? i.deliveryDhakaCents : i.deliveryOutsideCents) ?? 0,
+    ),
+  );
+}
+
 /** Full offer, as the View screen renders it. */
 export class OfferResponse {
   @ApiProperty() id!: string;
@@ -144,8 +156,18 @@ export class OfferResponse {
     slug?: string;
   }[];
   @ApiProperty() itemsSubtotal!: number;
-  @ApiProperty() delivery!: number;
-  @ApiProperty() total!: number;
+  @ApiProperty({
+    description:
+      'Delivery actually charged. 0 until the buyer confirms their district ' +
+      'and accepts; quote from deliveryDhaka/deliveryOutside before that.',
+  })
+  delivery!: number;
+  @ApiProperty({ description: 'Items plus delivery once accepted; items only before.' })
+  total!: number;
+  @ApiProperty({ description: "The offer's delivery charge inside Dhaka." })
+  deliveryDhaka!: number;
+  @ApiProperty({ description: "The offer's delivery charge outside Dhaka." })
+  deliveryOutside!: number;
   @ApiPropertyOptional() note?: string;
   @ApiPropertyOptional() expiresAt?: string;
   @ApiPropertyOptional({ description: 'Order reference once accepted.' })
@@ -186,6 +208,8 @@ export class OfferResponse {
       itemsSubtotal: centsToDollars(row.itemsSubtotalCents),
       delivery: centsToDollars(row.deliveryCents),
       total: centsToDollars(row.totalCents),
+      deliveryDhaka: centsToDollars(zoneRate(row, 'dhaka')),
+      deliveryOutside: centsToDollars(zoneRate(row, 'outside')),
       note: row.note ?? undefined,
       expiresAt: row.expiresAt?.toISOString(),
       orderReference: extra.orderReference,
