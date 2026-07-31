@@ -128,6 +128,10 @@ export interface ChatOfferSnapshotValue {
   imageUrl?: string;
   emoji?: string;
   tone?: string;
+  /** First line's slug and video — the card links to the product page, and
+      falls back to the video's still when the item has no photo. */
+  slug?: string;
+  videoUrl?: string;
   /** Delivery in the offer's currency — 0 means the seller made it free. */
   delivery?: number;
 }
@@ -236,6 +240,10 @@ export interface ChatOfferItemValue {
   emoji?: string;
   tone?: string;
   unit?: string;
+  /** Storefront slug, so the card can link through to the product page. */
+  slug?: string;
+  /** The item's video, shown on the card when it has no photo. */
+  videoUrl?: string;
 }
 
 /**

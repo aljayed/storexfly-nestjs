@@ -189,6 +189,8 @@ export class ChatOffersService {
         emoji: product.emoji,
         tone: product.tone,
         unit: product.unit,
+        slug: product.slug,
+        videoUrl: product.videoUrl ?? undefined,
       });
     }
 
@@ -233,10 +235,13 @@ export class ChatOffersService {
         currency: shop.currency,
         status: 'pending',
         expiresAt: expiresAt?.toISOString(),
-        // The first line's cover fronts the card.
+        // The first line fronts the card — its media, and its slug so the
+        // card can be tapped through to the product page.
         imageUrl: items[0].imageUrl,
         emoji: items[0].emoji,
         tone: items[0].tone,
+        slug: items[0].slug,
+        videoUrl: items[0].videoUrl,
         delivery: row.deliveryCents / 100,
       },
     });

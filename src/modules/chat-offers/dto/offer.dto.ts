@@ -141,6 +141,7 @@ export class OfferResponse {
     emoji?: string;
     tone?: string;
     unit?: string;
+    slug?: string;
   }[];
   @ApiProperty() itemsSubtotal!: number;
   @ApiProperty() delivery!: number;
@@ -180,6 +181,7 @@ export class OfferResponse {
         emoji: i.emoji,
         tone: i.tone,
         unit: i.unit,
+        slug: i.slug,
       })),
       itemsSubtotal: centsToDollars(row.itemsSubtotalCents),
       delivery: centsToDollars(row.deliveryCents),
