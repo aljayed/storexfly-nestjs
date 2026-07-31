@@ -123,6 +123,13 @@ export interface ChatOfferSnapshotValue {
   status: ChatOfferStatus;
   /** ISO date; absent = the offer does not expire. */
   expiresAt?: string;
+  /** Cover of the first line, so the card shows what's being offered.
+      Absent on offers sent before cards carried an image. */
+  imageUrl?: string;
+  emoji?: string;
+  tone?: string;
+  /** Delivery in the offer's currency — 0 means the seller made it free. */
+  delivery?: number;
 }
 
 /** Inline attachment (data URL, same storage approach as product images). */
@@ -223,6 +230,12 @@ export interface ChatOfferItemValue {
   name: string;
   qty: number;
   unitPriceCents: number;
+  /** Cover snapshot, for the thumbnails on the card and View screen. Optional
+      because offers written before thumbnails existed have none. */
+  imageUrl?: string;
+  emoji?: string;
+  tone?: string;
+  unit?: string;
 }
 
 /**

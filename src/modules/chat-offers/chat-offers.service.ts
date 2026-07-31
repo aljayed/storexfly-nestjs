@@ -185,6 +185,10 @@ export class ChatOffersService {
         name: product.name,
         qty: pick.qty,
         unitPriceCents,
+        imageUrl: product.images?.[0],
+        emoji: product.emoji,
+        tone: product.tone,
+        unit: product.unit,
       });
     }
 
@@ -229,6 +233,11 @@ export class ChatOffersService {
         currency: shop.currency,
         status: 'pending',
         expiresAt: expiresAt?.toISOString(),
+        // The first line's cover fronts the card.
+        imageUrl: items[0].imageUrl,
+        emoji: items[0].emoji,
+        tone: items[0].tone,
+        delivery: row.deliveryCents / 100,
       },
     });
 

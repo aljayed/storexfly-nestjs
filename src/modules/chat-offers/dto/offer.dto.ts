@@ -136,6 +136,11 @@ export class OfferResponse {
     qty: number;
     unitPrice: number;
     lineTotal: number;
+    /** Cover snapshot for the line's thumbnail; absent on older offers. */
+    imageUrl?: string;
+    emoji?: string;
+    tone?: string;
+    unit?: string;
   }[];
   @ApiProperty() itemsSubtotal!: number;
   @ApiProperty() delivery!: number;
@@ -171,6 +176,10 @@ export class OfferResponse {
         qty: i.qty,
         unitPrice: centsToDollars(i.unitPriceCents),
         lineTotal: centsToDollars(i.unitPriceCents * i.qty),
+        imageUrl: i.imageUrl,
+        emoji: i.emoji,
+        tone: i.tone,
+        unit: i.unit,
       })),
       itemsSubtotal: centsToDollars(row.itemsSubtotalCents),
       delivery: centsToDollars(row.deliveryCents),
