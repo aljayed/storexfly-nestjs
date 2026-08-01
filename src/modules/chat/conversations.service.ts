@@ -41,8 +41,13 @@ export interface ConversationDto {
     subtitle: string;
     emoji: string;
     tone: string;
-    /** Host-app link for the "open" chevron on the context strip. */
+    /** Host-app link behind the origin menu's "view details". */
     url: string;
+    /** Product origins only — enough for the origin menu to show the item
+     * as a card rather than an emoji and a name. */
+    imageUrl?: string;
+    price?: number;
+    unit?: string;
   };
   lastMessage?: {
     type: string;
@@ -388,6 +393,9 @@ export class ConversationsService {
           emoji: p.emoji,
           tone: p.tone,
           url: `/shop/${row.shop.handle}/p/${p.slug}`,
+          imageUrl: p.images?.[0],
+          price: centsToDollars(p.priceCents),
+          unit: p.unit,
         });
       } else {
         const o = orderRows.find((x) => x.id === row.originRefId);
