@@ -27,7 +27,7 @@ export class BuyerRegisterDto {
   @ApiProperty({ example: 'aarav@gmail.com' })
   @IsEmail()
   @Transform(lower)
-  @MaxLength(320)
+  @MaxLength(254)
   email!: string;
 
   @ApiProperty({ example: 'min 8 chars' })

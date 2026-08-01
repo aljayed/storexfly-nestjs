@@ -22,7 +22,7 @@ export class AdminLoginDto {
 
   @ApiProperty({ example: 'maya@mango-shop.com' })
   @IsEmail({}, { message: 'Enter a valid email address' })
-  @MaxLength(320)
+  @MaxLength(254)
   email!: string;
 
   @ApiProperty({ example: 'sup3rsecret' })

@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsEmail, IsString, Length, Matches } from 'class-validator';
+import { IsEmail, IsString, Length, Matches, MaxLength } from 'class-validator';
 
 /** Proving a phone number on the signed-in account (shop-creation gate). */
 export class VerifyPhoneStartDto {
@@ -20,6 +20,7 @@ export class VerifyPhoneConfirmDto extends VerifyPhoneStartDto {
 export class VerifyEmailStartDto {
   @ApiProperty({ example: 'seller@example.com' })
   @IsEmail()
+  @MaxLength(254)
   email!: string;
 }
 

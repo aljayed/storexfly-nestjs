@@ -80,7 +80,7 @@ export class UpdateShopDto {
   @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
   @ValidateIf((o: UpdateShopDto) => !!o.supportEmail)
   @IsEmail()
-  @MaxLength(320)
+  @MaxLength(254)
   supportEmail?: string;
 
   // Buyer-facing support phone (free-form so sellers can format as they like).

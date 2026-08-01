@@ -10,7 +10,7 @@ export class EmailOtpVerifyDto {
   @ApiProperty({ example: 'maya@example.com' })
   @IsEmail({}, { message: 'Enter a valid email address' })
   @Transform(lower)
-  @MaxLength(320)
+  @MaxLength(254)
   email!: string;
 
   @ApiProperty({ example: '123456' })

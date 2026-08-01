@@ -68,7 +68,7 @@ export class UpdateShopPathaoDto {
   @ApiPropertyOptional({ description: 'Pathao merchant account email' })
   @IsOptional()
   @IsString()
-  @MaxLength(320)
+  @MaxLength(254)
   username?: string;
   @ApiPropertyOptional({
     description: 'Write-only; omit to keep the stored value',

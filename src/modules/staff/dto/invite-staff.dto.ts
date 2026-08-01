@@ -9,7 +9,7 @@ import {
 export class InviteStaffDto {
   @ApiProperty({ example: 'rafi@example.com' })
   @IsEmail({}, { message: 'Enter a valid email address' })
-  @MaxLength(320)
+  @MaxLength(254)
   email!: string;
 
   @ApiProperty({

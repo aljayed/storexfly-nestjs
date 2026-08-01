@@ -130,7 +130,7 @@ export class StartWithCustomerDto {
   @ApiPropertyOptional({ example: 'buyer@example.com' })
   @IsOptional()
   @IsString()
-  @MaxLength(320)
+  @MaxLength(254)
   email?: string;
 }
 
