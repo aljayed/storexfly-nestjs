@@ -1,5 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { DRIZZLE } from '../../database/database.constants';
 import type { DrizzleDB } from '../../database/drizzle.types';
 import { users, type NewUserRow, type UserRow } from '../../database/schema';
@@ -38,12 +38,40 @@ export class UsersService {
     return this.db.query.users.findFirst({ where: eq(users.phone, phone) });
   }
 
+  /**
+   * The account that has already proven this number, if any. Used to keep one
+   * verified phone tied to one account — otherwise a single number could
+   * unlock free shops on an unlimited number of throwaway signups.
+   */
+  async findByVerifiedPhone(phone: string): Promise<UserRow | undefined> {
+    return this.db.query.users.findFirst({
+      where: and(eq(users.phone, phone), eq(users.phoneVerified, true)),
+    });
+  }
+
+  /** Records a phone number the account just proved by SMS OTP. */
+  async setVerifiedPhone(id: string, phone: string): Promise<UserRow> {
+    const [row] = await this.db
+      .update(users)
+      .set({ phone, phoneVerified: true })
+      .where(eq(users.id, id))
+      .returning();
+    return row;
+  }
+
+  /** Records an email address the account just proved by emailed OTP. */
+  async setVerifiedEmail(id: string, email: string): Promise<UserRow> {
+    const [row] = await this.db
+      .update(users)
+      .set({ email: email.toLowerCase(), emailVerified: true })
+      .where(eq(users.id, id))
+      .returning();
+    return row;
+  }
+
   /** Replaces the stored password hash (used by the reset-password flow). */
   async updatePassword(id: string, passwordHash: string): Promise<void> {
-    await this.db
-      .update(users)
-      .set({ passwordHash })
-      .where(eq(users.id, id));
+    await this.db.update(users).set({ passwordHash }).where(eq(users.id, id));
   }
 
   async create(data: NewUserRow): Promise<UserRow> {

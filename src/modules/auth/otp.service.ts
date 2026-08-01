@@ -20,43 +20,62 @@ export class OtpService {
   private readonly ttlMs = 5 * 60 * 1000;
   private readonly maxAttempts = 5;
 
-  async issue(phone: string): Promise<void> {
+  /**
+   * False until `dispatch()` really talks to an SMS gateway. While it is
+   * false callers may show the issued code to the user (dummy verification) —
+   * flip it to true the moment SMS goes live so codes stop leaking into
+   * responses.
+   */
+  readonly smsEnabled = false;
+
+  /**
+   * Issues a code for `phone` within `scope` and returns it. Scopes keep
+   * flows apart, so a code sent to confirm a number on an existing account
+   * can never be replayed against the passwordless sign-in endpoint.
+   */
+  async issue(phone: string, scope = 'signin'): Promise<string> {
     // CSPRNG, 6 digits: Math.random is predictable enough to make a 4-digit
     // code guessable, which would let an attacker log in as any phone account.
     const code = String(randomInt(0, 1_000_000)).padStart(6, '0');
-    this.store.set(phone, {
+    this.store.set(this.key(scope, phone), {
       code,
       expiresAt: Date.now() + this.ttlMs,
       attempts: 0,
     });
     await this.dispatch(phone, code);
+    return code;
   }
 
   /** Returns true if the code matches and is unexpired; consumes it on success. */
-  verify(phone: string, code: string): boolean {
-    const entry = this.store.get(phone);
+  verify(phone: string, code: string, scope = 'signin'): boolean {
+    const key = this.key(scope, phone);
+    const entry = this.store.get(key);
     if (!entry) return false;
     if (Date.now() > entry.expiresAt) {
-      this.store.delete(phone);
+      this.store.delete(key);
       return false;
     }
     entry.attempts += 1;
     if (entry.attempts > this.maxAttempts) {
-      this.store.delete(phone);
+      this.store.delete(key);
       return false;
     }
     if (!constantTimeEquals(entry.code, code)) {
       return false;
     }
-    this.store.delete(phone);
+    this.store.delete(key);
     return true;
+  }
+
+  private key(scope: string, phone: string): string {
+    return `${scope}:${phone.trim()}`;
   }
 
   private async dispatch(phone: string, code: string): Promise<void> {
     if (process.env.NODE_ENV !== 'production') {
       this.logger.debug(`OTP for ${phone}: ${code}`);
     }
-    // TODO: integrate SMS gateway (Twilio/Vonage) here.
+    // TODO: integrate SMS gateway (Twilio/Vonage) here, then set smsEnabled.
     return Promise.resolve();
   }
 }

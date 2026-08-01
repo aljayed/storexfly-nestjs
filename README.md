@@ -107,6 +107,11 @@ src/
 | POST | `/auth/phone/verify` | Verify OTP → token |
 | GET | `/auth/google` | Google OAuth redirect |
 | GET | `/auth/google/callback` | OAuth callback → Vue redirect with `?token=` |
+| GET | `/auth/verify/status` | Which contact details are verified (Bearer) |
+| POST | `/auth/verify/phone/start` | OTP to a number the account wants to verify (Bearer) |
+| POST | `/auth/verify/phone/confirm` | Confirm the code → phone marked verified |
+| POST | `/auth/verify/email/start` | Emailed OTP for an address the account wants to verify |
+| POST | `/auth/verify/email/confirm` | Confirm the code → email marked verified |
 | GET | `/auth/me` | Hydrate seller principal (Bearer) |
 | POST | `/auth/logout` | Stateless (client discards token) |
 | POST | `/auth/admin/login` | Admin stage 1 → 2FA ticket |
@@ -117,7 +122,7 @@ src/
 | Method | Path | Auth |
 |---|---|---|
 | GET | `/shops/check-handle?handle=` | Public |
-| POST | `/shops` | Seller JWT |
+| POST | `/shops` | Seller JWT — needs a verified email **and** phone (403 `ContactVerificationRequired` otherwise). `plan: 'free'` is accepted only for the seller's first shop; every later shop needs a paid credit (402) |
 | GET | `/shops/mine` | Seller JWT |
 | GET | `/shops/:handle` | Public (storefront + featured products) |
 | PATCH | `/shops/:id` | Seller JWT (owner only) |

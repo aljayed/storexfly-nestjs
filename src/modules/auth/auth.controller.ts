@@ -33,6 +33,12 @@ import { LoginDto } from './dto/login.dto';
 import { ForgotPasswordDto, ResetPasswordDto } from './dto/password-reset.dto';
 import { PhoneStartDto, PhoneVerifyDto } from './dto/phone.dto';
 import { RegisterDto } from './dto/register.dto';
+import {
+  VerifyEmailConfirmDto,
+  VerifyEmailStartDto,
+  VerifyPhoneConfirmDto,
+  VerifyPhoneStartDto,
+} from './dto/verify-contact.dto';
 import { GoogleOAuthFailureFilter } from './filters/google-oauth-failure.filter';
 import { GoogleOAuthGuard } from './guards/google-oauth.guard';
 import { PasswordResetService } from './password-reset.service';
@@ -140,6 +146,76 @@ export class AuthController {
     const url = new URL(redirect);
     url.searchParams.set('token', token);
     res.redirect(url.toString());
+  }
+
+  // ── Contact verification (required before creating a shop) ──
+  @ApiBearerAuth()
+  @Get('verify/status')
+  @ApiOperation({
+    summary:
+      'Which contact details the account has verified (shop-creation gate)',
+  })
+  verifyStatus(@CurrentUser() user: SellerPrincipal) {
+    return this.auth.contactStatus(user.id);
+  }
+
+  @ApiBearerAuth()
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
+  @Post('verify/phone/start')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary:
+      'Send an OTP to a phone number the signed-in account wants to verify',
+  })
+  verifyPhoneStart(
+    @CurrentUser() user: SellerPrincipal,
+    @Body() dto: VerifyPhoneStartDto,
+  ) {
+    return this.auth.startPhoneVerification(user.id, dto.phone);
+  }
+
+  @ApiBearerAuth()
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  @Post('verify/phone/confirm')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Confirm the phone OTP and mark the number verified',
+  })
+  @ApiOkResponse({ type: UserResponse })
+  verifyPhoneConfirm(
+    @CurrentUser() user: SellerPrincipal,
+    @Body() dto: VerifyPhoneConfirmDto,
+  ) {
+    return this.auth.confirmPhoneVerification(user.id, dto.phone, dto.code);
+  }
+
+  @ApiBearerAuth()
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
+  @Post('verify/email/start')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Email an OTP to an address the signed-in account wants to verify',
+  })
+  verifyEmailStart(
+    @CurrentUser() user: SellerPrincipal,
+    @Body() dto: VerifyEmailStartDto,
+  ) {
+    return this.auth.startEmailVerification(user.id, dto.email);
+  }
+
+  @ApiBearerAuth()
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  @Post('verify/email/confirm')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Confirm the emailed OTP and mark the email verified',
+  })
+  @ApiOkResponse({ type: UserResponse })
+  verifyEmailConfirm(
+    @CurrentUser() user: SellerPrincipal,
+    @Body() dto: VerifyEmailConfirmDto,
+  ) {
+    return this.auth.confirmEmailVerification(user.id, dto.email, dto.code);
   }
 
   @ApiBearerAuth()

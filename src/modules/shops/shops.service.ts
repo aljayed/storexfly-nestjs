@@ -10,6 +10,7 @@ import {
 } from '@nestjs/common';
 import { and, count, desc, eq, ne, notInArray, sql } from 'drizzle-orm';
 import { BRAND_SWATCHES } from '../../common/constants/brand-swatches';
+import { contactComplete } from '../../common/utils/contact-verification.util';
 import { centsToDollars } from '../../common/utils/money.util';
 import { handleize } from '../../common/utils/slug.util';
 import { DRIZZLE } from '../../database/database.constants';
@@ -96,16 +97,19 @@ export class ShopsService {
 
   async create(ownerId: string, dto: CreateShopDto): Promise<ShopResponse> {
     const plan = dto.plan ?? 'paid';
+    // Both a verified email and a verified phone, whatever the plan — an
+    // account nobody can be reached on has no business opening a storefront.
+    await this.assertContactVerified(ownerId);
     if (plan === 'free') {
-      // One free shop per seller — the tier exists to try the product, not
-      // to run a fleet of capped shops.
-      const existingFree = await this.db.query.shops.findFirst({
-        where: and(eq(shops.ownerId, ownerId), eq(shops.plan, 'free')),
+      // The free tier is a first-shop trial, not a way to run a fleet of
+      // capped shops: any existing shop (free or paid) means this one is paid.
+      const existing = await this.db.query.shops.findFirst({
+        where: eq(shops.ownerId, ownerId),
         columns: { id: true },
       });
-      if (existingFree) {
+      if (existing) {
         throw new ForbiddenException(
-          'You already have a free shop. Upgrade it, or create this one on the paid plan.',
+          'The free plan is only for your first shop. Subscribe to open another one.',
         );
       }
     } else if (
@@ -155,6 +159,36 @@ export class ShopsService {
       await this.subscriptionsService.activateForNewShop(ownerId, row.id);
     }
     return ShopResponse.fromRow(row);
+  }
+
+  /**
+   * Shop creation requires a verified email and a verified phone number on
+   * the account. The 403 carries a machine-readable `error` so the wizard can
+   * drop the seller back onto the verification step (which re-reads
+   * /auth/verify/status for the per-field detail) instead of matching on the
+   * message text.
+   */
+  private async assertContactVerified(ownerId: string): Promise<void> {
+    const user = await this.db.query.users.findFirst({
+      where: eq(users.id, ownerId),
+      columns: {
+        email: true,
+        emailVerified: true,
+        phone: true,
+        phoneVerified: true,
+      },
+    });
+    if (!user) {
+      throw new ForbiddenException('Account no longer exists');
+    }
+    if (!contactComplete(user)) {
+      throw new ForbiddenException({
+        statusCode: HttpStatus.FORBIDDEN,
+        error: 'ContactVerificationRequired',
+        message:
+          'Verify your email address and phone number before creating a shop.',
+      });
+    }
   }
 
   /**

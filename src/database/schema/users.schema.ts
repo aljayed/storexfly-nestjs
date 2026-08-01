@@ -53,8 +53,10 @@ export const users = pgTable(
     googleId: varchar('google_id', { length: 64 }),
     isAdmin: boolean('is_admin').notNull().default(false),
     emailVerified: boolean('email_verified').notNull().default(false),
-    // True once the buyer proves the phone number (SMS OTP). No phone-verify
-    // step exists yet, so always false — kept so it drops in without a backfill.
+    // True once the account proves the phone number by OTP
+    // (/auth/verify/phone/*). Required, together with `emailVerified`, before
+    // the account may create a shop. The SMS gateway is still a stub, so the
+    // code is handed back to the caller rather than texted.
     phoneVerified: boolean('phone_verified').notNull().default(false),
     // Saved checkout details (autofill the storefront order form). All optional.
     // Phone holds the bare 10 digits after +880 (same format checkout captures).

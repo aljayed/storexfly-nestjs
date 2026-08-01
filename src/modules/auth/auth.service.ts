@@ -4,6 +4,10 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import * as bcrypt from 'bcryptjs';
+import {
+  contactComplete,
+  type ContactStatus,
+} from '../../common/utils/contact-verification.util';
 import type { UserRow } from '../../database/schema';
 import { BlockedWordsService } from '../blocked-words/blocked-words.service';
 import { UserResponse } from '../users/dto/user.response';
@@ -16,6 +20,9 @@ import { TokenService } from './token.service';
 
 const BCRYPT_ROUNDS = 12;
 const REGISTER_OTP_SCOPE = 'seller-register';
+/** OTP scopes for proving contact details on an *existing* account. */
+const VERIFY_PHONE_SCOPE = 'account-phone';
+const VERIFY_EMAIL_SCOPE = 'account-email';
 
 export interface AuthResult {
   user: UserResponse;
@@ -117,6 +124,125 @@ export class AuthService {
       });
     }
     return this.toAuthResult(user);
+  }
+
+  // ── Contact verification (prerequisite for creating a shop) ────
+  //
+  // A shop may only be opened by an account with one verified email *and*
+  // one verified phone number, both unique to that account. Registration
+  // already proves the email; the phone is proved here. The SMS side is a
+  // stub — {@link OtpService} has no gateway yet, so while `smsEnabled` is
+  // false the issued code comes back in the response and the console shows
+  // it. Nothing else about the flow changes when real SMS lands.
+
+  async contactStatus(userId: string): Promise<ContactStatus> {
+    const user = await this.requireUser(userId);
+    return {
+      email: user.email ?? undefined,
+      emailVerified: user.emailVerified,
+      phone: user.phone ?? undefined,
+      phoneVerified: user.phoneVerified,
+      complete: contactComplete(user),
+    };
+  }
+
+  /** Sends a code to a number the signed-in account wants to prove. */
+  async startPhoneVerification(
+    userId: string,
+    phone: string,
+  ): Promise<{ ok: true; devCode?: string }> {
+    const user = await this.requireUser(userId);
+    const owner = await this.users.findByVerifiedPhone(phone);
+    if (owner && owner.id !== user.id) {
+      throw new ConflictException(
+        'This phone number is already verified on another account',
+      );
+    }
+    const code = await this.otp.issue(phone, VERIFY_PHONE_SCOPE);
+    return this.otp.smsEnabled ? { ok: true } : { ok: true, devCode: code };
+  }
+
+  /** Confirms the code and stores the number as verified on the account. */
+  async confirmPhoneVerification(
+    userId: string,
+    phone: string,
+    code: string,
+  ): Promise<UserResponse> {
+    const user = await this.requireUser(userId);
+    if (!this.otp.verify(phone, code, VERIFY_PHONE_SCOPE)) {
+      throw new UnauthorizedException('Invalid or expired code');
+    }
+    // Re-check on confirm: another account could have verified the same
+    // number between the two calls.
+    const owner = await this.users.findByVerifiedPhone(phone);
+    if (owner && owner.id !== user.id) {
+      throw new ConflictException(
+        'This phone number is already verified on another account',
+      );
+    }
+    return UserResponse.fromRow(
+      await this.users.setVerifiedPhone(user.id, phone),
+    );
+  }
+
+  /**
+   * Emails a code to an address the signed-in account wants to prove. Used by
+   * phone-first accounts (which have no email yet) and by anyone changing the
+   * address their shop is opened under.
+   */
+  async startEmailVerification(
+    userId: string,
+    email: string,
+  ): Promise<{ ok: true }> {
+    const user = await this.requireUser(userId);
+    const existing = await this.users.findByEmail(email);
+    if (existing && existing.id !== user.id) {
+      throw new ConflictException('An account with this email already exists');
+    }
+    await this.emailOtp.start<{ userId: string; email: string }>(
+      VERIFY_EMAIL_SCOPE,
+      email,
+      { userId: user.id, email },
+      {
+        subject: 'Verify your email',
+        heading: 'Verify your email',
+        intro: 'Use this code to confirm your email on Hoomri:',
+      },
+    );
+    return { ok: true };
+  }
+
+  async confirmEmailVerification(
+    userId: string,
+    email: string,
+    code: string,
+  ): Promise<UserResponse> {
+    const user = await this.requireUser(userId);
+    const pending = this.emailOtp.verify<{ userId: string; email: string }>(
+      VERIFY_EMAIL_SCOPE,
+      email,
+      code,
+    );
+    // The code is bound to the account that requested it — a code emailed to
+    // one seller can't be pasted into another's session.
+    if (!pending || pending.userId !== user.id) {
+      throw new UnauthorizedException('Invalid or expired code');
+    }
+    const existing = await this.users.findByEmail(pending.email);
+    if (existing && existing.id !== user.id) {
+      throw new ConflictException('An account with this email already exists');
+    }
+    return UserResponse.fromRow(
+      await this.users.setVerifiedEmail(user.id, pending.email),
+    );
+  }
+
+  private async requireUser(userId: string): Promise<UserRow> {
+    const user = await this.users.findById(userId);
+    if (!user) {
+      throw new UnauthorizedException('Account no longer exists');
+    }
+    return user;
   }
 
   async me(userId: string): Promise<UserResponse> {

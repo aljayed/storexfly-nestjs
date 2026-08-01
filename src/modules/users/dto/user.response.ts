@@ -10,6 +10,9 @@ export class UserResponse {
   @ApiProperty({ enum: ['email', 'google', 'phone'] })
   via!: 'email' | 'google' | 'phone';
   @ApiPropertyOptional() isAdmin?: boolean;
+  // Shop creation needs both proven — the console reads them off /auth/me.
+  @ApiProperty() emailVerified!: boolean;
+  @ApiProperty() phoneVerified!: boolean;
 
   static fromRow(row: UserRow): UserResponse {
     return {
@@ -19,6 +22,8 @@ export class UserResponse {
       phone: row.phone ?? undefined,
       via: row.via,
       isAdmin: row.isAdmin,
+      emailVerified: row.emailVerified,
+      phoneVerified: row.phoneVerified,
     };
   }
 }
