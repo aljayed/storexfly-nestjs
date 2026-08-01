@@ -35,10 +35,42 @@ export const subscriptions = pgTable(
       .notNull()
       .references(() => users.id, { onDelete: 'cascade' }),
     status: subscriptionStatusEnum('status').notNull().default('active'),
-    // Monthly fee in integer paisa (BDT cents), copied from the operator-set
-    // platform price when the subscription opens and re-priced with it.
+    /**
+     * Which rung of the plan ladder the shop is on right now
+     * (`subscription_plans.code`). Kept as a code rather than an FK so a
+     * retired plan can never orphan a live subscription.
+     */
+    planCode: varchar('plan_code', { length: 32 }).notNull().default('starter'),
+    // Monthly fee in integer paisa (BDT cents), copied from the plan's price
+    // when the subscription opens or changes plan, and re-priced with it.
     amountCents: integer('amount_cents').notNull().default(59900),
     currency: varchar('currency', { length: 3 }).notNull().default('BDT'),
+    /**
+     * A downgrade the seller picked, parked until the paid-up period ends —
+     * they keep the plan they paid for until it expires. Cleared when applied
+     * (or when they change their mind and pick another plan).
+     */
+    scheduledPlanCode: varchar('scheduled_plan_code', { length: 32 }),
+    /**
+     * When true, reaching 100% of the plan's sales cap moves the shop up one
+     * rung automatically (charging the prorated difference) instead of
+     * pausing it. Off by default — an upgrade costs money, so it is opt-in.
+     */
+    autoScale: boolean('auto_scale').notNull().default(false),
+    /**
+     * Pairs with `autoScale`: every billing date the plan drops back to the
+     * entry rung and only that is charged, then auto-scale climbs again as
+     * the month's sales come in — so a quiet month costs the entry price
+     * rather than last month's peak. Meaningless (and forced off) without
+     * auto-scale, which is what puts the shop back up.
+     */
+    autoReset: boolean('auto_reset').notNull().default(false),
+    /**
+     * When the shop's sales first passed the cap in the current period, with
+     * auto-scale off. Starts the grace clock; cleared when the seller
+     * upgrades or the period rolls over and the meter resets.
+     */
+    capExceededAt: timestamp('cap_exceeded_at', { withTimezone: true }),
     // When true the platform collects the renewal automatically on the due
     // date (dummy gateway). When false the sub goes past_due until the seller
     // pays manually from the console.
@@ -82,7 +114,9 @@ export const subscriptions = pgTable(
  * exists (a "credit" the create-shop call consumes — `consumedAt`/`shopId`
  * are filled in at that point). `renewal` rows cover one billing period
  * (`periodStart`..`periodEnd`) and record whether they were auto-debited or
- * paid manually after the due date.
+ * paid manually after the due date. `upgrade` rows are the prorated
+ * difference charged when a shop moves up the plan ladder mid-period —
+ * `periodStart`..`periodEnd` is the remainder of the period they cover.
  */
 export const subscriptionPayments = pgTable(
   'subscription_payments',
@@ -99,6 +133,8 @@ export const subscriptionPayments = pgTable(
     }),
     type: platformPaymentTypeEnum('type').notNull(),
     method: platformPaymentMethodEnum('method').notNull().default('manual'),
+    /** Plan this payment bought, denormalized so the ledger stays readable. */
+    planCode: varchar('plan_code', { length: 32 }),
     // The amount actually charged, after any coupon discount.
     amountCents: integer('amount_cents').notNull(),
     currency: varchar('currency', { length: 3 }).notNull().default('BDT'),

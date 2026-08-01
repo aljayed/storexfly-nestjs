@@ -11,8 +11,20 @@ import {
   type OnModuleDestroy,
   type OnModuleInit,
 } from '@nestjs/common';
-import { and, asc, count, desc, eq, isNull, lte, sql } from 'drizzle-orm';
 import {
+  and,
+  asc,
+  count,
+  desc,
+  eq,
+  gte,
+  isNull,
+  lt,
+  ne,
+  sql,
+} from 'drizzle-orm';
+import {
+  CAP_GRACE_MS,
   FREE_MAX_PRODUCTS,
   FREE_ORDER_CAP,
   FREE_TIER_LIMIT_MESSAGE,
@@ -30,7 +42,10 @@ import {
   type SubscriptionPaymentRow,
   type SubscriptionRow,
 } from '../../database/schema';
-import { BillingSettingsService } from '../billing/billing-settings.service';
+import {
+  BillingSettingsService,
+  type PlanView,
+} from '../billing/billing-settings.service';
 import { CouponsService } from '../coupons/coupons.service';
 import { ReferralsService } from '../referrals/referrals.service';
 import {
@@ -60,6 +75,16 @@ function addOneMonth(from: Date, anchorDay: number): Date {
   const lastDay = new Date(year, month + 1, 0).getDate();
   next.setFullYear(year, month, Math.min(anchorDay, lastDay));
   return next;
+}
+
+/** The mirror of `addOneMonth`: one calendar month before `from`. */
+function subOneMonth(from: Date, anchorDay: number): Date {
+  const prev = new Date(from);
+  const year = prev.getFullYear();
+  const month = prev.getMonth() - 1;
+  const lastDay = new Date(year, month + 1, 0).getDate();
+  prev.setFullYear(year, month, Math.min(anchorDay, lastDay));
+  return prev;
 }
 
 @Injectable()
@@ -107,9 +132,10 @@ export class SubscriptionsService implements OnModuleInit, OnModuleDestroy {
       return ShopCreditResponse.fromRow(existing);
     }
 
-    // Read the fee once so the coupon check and the charge can never see two
-    // different prices, even if the operator changes it mid-request.
-    const feeCents = await this.billing.monthlyFeeCents();
+    // Read the entry plan once so the coupon check and the charge can never
+    // see two different prices, even if the operator re-prices mid-request.
+    const entry = await this.billing.entryPlan();
+    const feeCents = entry.priceCents;
     let coupon: { id: string; code: string } | undefined;
     let discountCents = 0;
     if (couponCode?.trim()) {
@@ -129,6 +155,7 @@ export class SubscriptionsService implements OnModuleInit, OnModuleDestroy {
         userId,
         type: 'shop_creation',
         method: 'manual',
+        planCode: entry.code,
         amountCents: feeCents - discountCents,
         currency: PLATFORM_CURRENCY,
         couponId: coupon?.id,
@@ -179,6 +206,9 @@ export class SubscriptionsService implements OnModuleInit, OnModuleDestroy {
         HttpStatus.PAYMENT_REQUIRED,
       );
     }
+    // A new shop always starts on the entry rung; it climbs from the console
+    // (or on its own, once the seller turns auto-scale on).
+    const entry = await this.billing.entryPlan();
     const startedAt = new Date();
     const [sub] = await this.db
       .insert(subscriptions)
@@ -186,7 +216,8 @@ export class SubscriptionsService implements OnModuleInit, OnModuleDestroy {
         shopId,
         ownerId: userId,
         status: 'active',
-        amountCents: await this.billing.monthlyFeeCents(),
+        planCode: entry.code,
+        amountCents: entry.priceCents,
         currency: PLATFORM_CURRENCY,
         startedAt,
         nextBillingAt: addOneMonth(startedAt, startedAt.getDate()),
@@ -194,7 +225,12 @@ export class SubscriptionsService implements OnModuleInit, OnModuleDestroy {
       .returning();
     await this.db
       .update(subscriptionPayments)
-      .set({ consumedAt: new Date(), shopId, subscriptionId: sub.id })
+      .set({
+        consumedAt: new Date(),
+        shopId,
+        subscriptionId: sub.id,
+        planCode: entry.code,
+      })
       .where(eq(subscriptionPayments.id, credit.id));
     return sub;
   }
@@ -272,13 +308,18 @@ export class SubscriptionsService implements OnModuleInit, OnModuleDestroy {
   }
 
   private async freeTierResponse(shop: ShopRow): Promise<SubscriptionResponse> {
-    const usage = await this.freeTierUsage(shop.id);
+    const [usage, entry, plans] = await Promise.all([
+      this.freeTierUsage(shop.id),
+      this.billing.entryPlan(),
+      this.billing.plans(),
+    ]);
     return SubscriptionResponse.freeTier(shop, {
       ordersCount: usage.ordersCount,
       ordersCap: FREE_ORDER_CAP,
       productsCount: usage.productsCount,
       maxProducts: FREE_MAX_PRODUCTS,
-      monthlyFeeCents: await this.billing.monthlyFeeCents(),
+      entryPlan: entry,
+      plans,
     });
   }
 
@@ -311,6 +352,11 @@ export class SubscriptionsService implements OnModuleInit, OnModuleDestroy {
     const anchorDay = sub.startedAt.getDate();
     const periodStart = sub.nextBillingAt;
     const periodEnd = addOneMonth(periodStart, anchorDay);
+    // The period being paid for is the first one not yet bought, so a parked
+    // downgrade (or auto-reset) applies to it — the seller pays that plan's
+    // price from here.
+    const rollover = await this.rolloverPlan(sub);
+    const chargeCents = rollover?.priceCents ?? sub.amountCents;
     // Guarded like `settle`: a double-submitted "Pay now" charges once.
     const [updated] = await this.db
       .update(subscriptions)
@@ -322,6 +368,13 @@ export class SubscriptionsService implements OnModuleInit, OnModuleDestroy {
         pendingCouponId: null,
         pendingCouponCode: null,
         pendingDiscountCents: 0,
+        // A new period is a fresh sales allowance.
+        capExceededAt: null,
+        ...(rollover && {
+          planCode: rollover.code,
+          amountCents: rollover.priceCents,
+          scheduledPlanCode: null,
+        }),
       })
       .where(
         and(
@@ -341,7 +394,8 @@ export class SubscriptionsService implements OnModuleInit, OnModuleDestroy {
       shopId: sub.shopId,
       type: 'renewal',
       method: 'manual',
-      amountCents: sub.amountCents - sub.pendingDiscountCents,
+      planCode: updated.planCode,
+      amountCents: Math.max(0, chargeCents - sub.pendingDiscountCents),
       currency: sub.currency,
       couponId: sub.pendingCouponId ?? undefined,
       couponCode: sub.pendingCouponCode ?? undefined,
@@ -385,6 +439,11 @@ export class SubscriptionsService implements OnModuleInit, OnModuleDestroy {
     }
     const now = new Date();
     const lapsed = sub.nextBillingAt <= now;
+    // Resuming into a fresh month starts the plan the next period would have
+    // started on — a parked downgrade, or the entry plan under auto-reset.
+    // Resuming inside a period they already paid for changes nothing yet.
+    const rollover = lapsed ? await this.rolloverPlan(sub) : null;
+    const chargeCents = rollover?.priceCents ?? sub.amountCents;
     // Guarded on status so a double-submitted resume charges once — the
     // loser matches zero rows and just reloads the fresh state.
     const [reactivated] = await this.db
@@ -399,6 +458,12 @@ export class SubscriptionsService implements OnModuleInit, OnModuleDestroy {
               pendingCouponId: null,
               pendingCouponCode: null,
               pendingDiscountCents: 0,
+              capExceededAt: null,
+              ...(rollover && {
+                planCode: rollover.code,
+                amountCents: rollover.priceCents,
+                scheduledPlanCode: null,
+              }),
             }
           : { status: 'active', cancelledAt: null },
       )
@@ -424,7 +489,8 @@ export class SubscriptionsService implements OnModuleInit, OnModuleDestroy {
         shopId: sub.shopId,
         type: 'renewal',
         method: 'manual',
-        amountCents: sub.amountCents - sub.pendingDiscountCents,
+        planCode: reactivated.planCode,
+        amountCents: Math.max(0, chargeCents - sub.pendingDiscountCents),
         currency: sub.currency,
         couponId: sub.pendingCouponId ?? undefined,
         couponCode: sub.pendingCouponCode ?? undefined,
@@ -450,6 +516,324 @@ export class SubscriptionsService implements OnModuleInit, OnModuleDestroy {
       .where(eq(subscriptions.id, sub.id))
       .returning();
     return this.toResponse(await this.settle(updated));
+  }
+
+  // ── Plan ladder ────────────────────────────────────────────────
+
+  /**
+   * The billing period the sales meter measures: the month ending on the
+   * scheduled payment date. A past_due shop keeps measuring the period it
+   * last paid for until the dues clear, which is also the period its cap
+   * applies to.
+   */
+  private periodWindow(sub: SubscriptionRow): { start: Date; end: Date } {
+    // Invariant this relies on: `nextBillingAt` always sits on the anchor day,
+    // so stepping one month back lands exactly on the previous billing date.
+    // Every writer preserves it — the anchor only ever advances through
+    // `addOneMonth`, and the two places that re-anchor (`activateForNewShop`,
+    // a lapsed `resume`) set `startedAt` in the same breath. Write an
+    // off-anchor date straight into the column and this window drifts, so
+    // don't (see the note on hand-seeding billing dates in test data).
+    const anchorDay = sub.startedAt.getDate();
+    return {
+      start: subOneMonth(sub.nextBillingAt, anchorDay),
+      end: sub.nextBillingAt,
+    };
+  }
+
+  /**
+   * What the shop sold in one window: the value of every order placed in it
+   * that wasn't cancelled. Cancelled orders never counted against the cap, so
+   * cancelling one gives the allowance back.
+   */
+  private async periodSalesCents(
+    shopId: string,
+    start: Date,
+    end: Date,
+  ): Promise<number> {
+    const [row] = await this.db
+      .select({ total: sql<string>`coalesce(sum(${orders.totalCents}), 0)` })
+      .from(orders)
+      .where(
+        and(
+          eq(orders.shopId, shopId),
+          ne(orders.status, 'Cancelled'),
+          gte(orders.placedAt, start),
+          lt(orders.placedAt, end),
+        ),
+      );
+    return Number(row?.total ?? 0);
+  }
+
+  /**
+   * Move a shop along the plan ladder.
+   *
+   * Up is instant: the shop is on the new plan the moment this returns, and
+   * pays only the difference for the days left in the period it already
+   * bought. The billing date never moves.
+   *
+   * Down is parked: the seller keeps the plan they paid for until it expires,
+   * and the cheaper plan takes over at the next renewal. Picking the current
+   * plan again cancels a parked downgrade.
+   */
+  async changePlan(
+    shopId: string,
+    code: string,
+  ): Promise<SubscriptionResponse> {
+    const sub = await this.settle(await this.requireByShop(shopId));
+    if (sub.status === 'cancelled') {
+      throw new ForbiddenException(
+        'This subscription is cancelled. Resume it before changing plan.',
+      );
+    }
+    const sellable = await this.billing.plans();
+    const target = sellable.find((p) => p.code === code);
+    if (!target) {
+      throw new BadRequestException('That plan is not available.');
+    }
+
+    // Same plan: the seller changed their mind about a parked downgrade.
+    if (target.code === sub.planCode) {
+      if (!sub.scheduledPlanCode) {
+        return this.toResponse(sub);
+      }
+      const [cleared] = await this.db
+        .update(subscriptions)
+        .set({ scheduledPlanCode: null })
+        .where(eq(subscriptions.id, sub.id))
+        .returning();
+      return this.toResponse(cleared);
+    }
+
+    const current = await this.billing.planByCode(sub.planCode);
+    if (target.priceCents > current.priceCents) {
+      return this.toResponse(await this.applyUpgrade(sub, target, 'manual'));
+    }
+
+    const [scheduled] = await this.db
+      .update(subscriptions)
+      .set({ scheduledPlanCode: target.code })
+      .where(eq(subscriptions.id, sub.id))
+      .returning();
+    return this.toResponse(scheduled);
+  }
+
+  /**
+   * Enable or disable auto-scale. Turning it on evaluates the cap straight
+   * away, so a shop already over its allowance moves up immediately rather
+   * than waiting for the next sweep. Turning it off also switches auto-reset
+   * off: without auto-scale nothing would ever lift the shop back up, so a
+   * lone auto-reset would strand it on the entry plan.
+   */
+  async setAutoScale(
+    shopId: string,
+    enabled: boolean,
+  ): Promise<SubscriptionResponse> {
+    const sub = await this.settle(await this.requireByShop(shopId));
+    if (sub.autoScale === enabled) {
+      return this.toResponse(sub);
+    }
+    const [updated] = await this.db
+      .update(subscriptions)
+      .set({ autoScale: enabled, ...(enabled ? {} : { autoReset: false }) })
+      .where(eq(subscriptions.id, sub.id))
+      .returning();
+    return this.toResponse(await this.enforceCap(updated));
+  }
+
+  /**
+   * Enable or disable auto-reset — "start every month on the entry plan".
+   * Only meaningful alongside auto-scale, which is what climbs back up, so
+   * enabling it without auto-scale is refused rather than silently ignored.
+   * Nothing is charged or changed today: the reset lands on the next
+   * billing date.
+   */
+  async setAutoReset(
+    shopId: string,
+    enabled: boolean,
+  ): Promise<SubscriptionResponse> {
+    const sub = await this.settle(await this.requireByShop(shopId));
+    if (enabled && !sub.autoScale) {
+      throw new BadRequestException(
+        'Turn on auto-scale first — without it nothing would move your shop back up after a reset.',
+      );
+    }
+    if (sub.autoReset === enabled) {
+      return this.toResponse(sub);
+    }
+    const [updated] = await this.db
+      .update(subscriptions)
+      .set({ autoReset: enabled })
+      .where(eq(subscriptions.id, sub.id))
+      .returning();
+    return this.toResponse(updated);
+  }
+
+  /**
+   * Which plan the *next* billing period starts on, or null to stay put.
+   *
+   * A downgrade the seller picked by hand wins — it is an explicit choice for
+   * that period. Otherwise auto-reset drops the shop back to the entry plan,
+   * from which auto-scale climbs again as the new month's sales arrive.
+   */
+  private async rolloverPlan(sub: SubscriptionRow): Promise<PlanView | null> {
+    if (sub.scheduledPlanCode) {
+      return this.billing.planByCode(sub.scheduledPlanCode);
+    }
+    if (!sub.autoReset) {
+      return null;
+    }
+    const entry = await this.billing.entryPlan();
+    return entry.code === sub.planCode ? null : entry;
+  }
+
+  /**
+   * Put a subscription on a dearer plan now and charge the prorated
+   * difference for the rest of the current period. `method` records whether
+   * the seller pressed the button or auto-scale did it for them.
+   */
+  private async applyUpgrade(
+    sub: SubscriptionRow,
+    plan: PlanView,
+    method: 'auto' | 'manual',
+  ): Promise<SubscriptionRow> {
+    const now = new Date();
+    const { start, end } = this.periodWindow(sub);
+    // Days already paid for at the old price cost nothing extra; an overdue
+    // period has no days left, so the upgrade is free until the renewal.
+    const remainingMs = Math.max(0, end.getTime() - now.getTime());
+    const periodMs = Math.max(1, end.getTime() - start.getTime());
+    const deltaCents = Math.max(0, plan.priceCents - sub.amountCents);
+    const chargeCents = Math.round((deltaCents * remainingMs) / periodMs);
+
+    // Guarded on the plan we based the proration on: a double-submitted
+    // upgrade (or a sweep racing the console) charges the difference once.
+    const [updated] = await this.db
+      .update(subscriptions)
+      .set({
+        planCode: plan.code,
+        amountCents: plan.priceCents,
+        // Moving up satisfies whatever the shop had outstanding, and clears
+        // any downgrade the seller had parked.
+        scheduledPlanCode: null,
+        capExceededAt: null,
+      })
+      .where(
+        and(
+          eq(subscriptions.id, sub.id),
+          eq(subscriptions.planCode, sub.planCode),
+        ),
+      )
+      .returning();
+    if (!updated) {
+      const fresh = await this.db.query.subscriptions.findFirst({
+        where: eq(subscriptions.id, sub.id),
+      });
+      return fresh ?? sub;
+    }
+
+    if (chargeCents > 0) {
+      await this.db.insert(subscriptionPayments).values({
+        userId: sub.ownerId,
+        subscriptionId: sub.id,
+        shopId: sub.shopId,
+        type: 'upgrade',
+        method,
+        planCode: plan.code,
+        amountCents: chargeCents,
+        currency: sub.currency,
+        periodStart: now,
+        periodEnd: end,
+        paidAt: now,
+      });
+    }
+    this.logger.log(
+      `Subscription ${sub.id} upgraded to ${plan.code} (${method}), charged ${chargeCents / 100} BDT prorated`,
+    );
+    // Only lift a pause this system caused: the shop was forced offline
+    // because its grace over the old cap ran out, and the upgrade fixes
+    // exactly that. A storefront the seller switched off themselves — or one
+    // parked for unpaid dues — stays off.
+    const pausedByCap =
+      sub.status === 'active' &&
+      !!sub.capExceededAt &&
+      now.getTime() - sub.capExceededAt.getTime() > CAP_GRACE_MS;
+    if (pausedByCap) {
+      await this.db
+        .update(shops)
+        .set({ live: true })
+        .where(and(eq(shops.id, sub.shopId), eq(shops.live, false)));
+    }
+    return updated;
+  }
+
+  /**
+   * Compare the period's sales with the plan's cap and act on the result.
+   *
+   * Over the cap with auto-scale on: move up a rung (repeatedly, if a very
+   * big month jumps two). Over it with auto-scale off: start the grace clock
+   * and, once it runs out, pause the storefront until the seller upgrades or
+   * the period rolls over. Back under the cap (an order was cancelled): stop
+   * the clock.
+   */
+  private async enforceCap(sub: SubscriptionRow): Promise<SubscriptionRow> {
+    if (sub.status === 'cancelled') {
+      return sub;
+    }
+    const plan = await this.billing.planByCode(sub.planCode);
+    if (plan.salesCapCents === null) {
+      // Top of the ladder — nothing to enforce, so no clock should be running.
+      return sub.capExceededAt ? this.clearCapClock(sub) : sub;
+    }
+    const { start, end } = this.periodWindow(sub);
+    const sales = await this.periodSalesCents(sub.shopId, start, end);
+    if (sales < plan.salesCapCents) {
+      return sub.capExceededAt ? this.clearCapClock(sub) : sub;
+    }
+
+    if (sub.autoScale) {
+      const next = await this.billing.nextPlanUp(plan.code);
+      if (next) {
+        // Each hop strictly climbs the ladder, so this terminates at the top.
+        return this.enforceCap(await this.applyUpgrade(sub, next, 'auto'));
+      }
+    }
+
+    const now = new Date();
+    let current = sub;
+    if (!current.capExceededAt) {
+      const [started] = await this.db
+        .update(subscriptions)
+        .set({ capExceededAt: now })
+        .where(
+          and(
+            eq(subscriptions.id, sub.id),
+            isNull(subscriptions.capExceededAt),
+          ),
+        )
+        .returning();
+      current = started ?? current;
+      this.logger.log(
+        `Shop ${sub.shopId} passed the ${plan.code} sales cap — grace started`,
+      );
+    }
+    const since = current.capExceededAt ?? now;
+    if (now.getTime() - since.getTime() > CAP_GRACE_MS) {
+      await this.db
+        .update(shops)
+        .set({ live: false })
+        .where(and(eq(shops.id, sub.shopId), eq(shops.live, true)));
+    }
+    return current;
+  }
+
+  private async clearCapClock(sub: SubscriptionRow): Promise<SubscriptionRow> {
+    const [cleared] = await this.db
+      .update(subscriptions)
+      .set({ capExceededAt: null })
+      .where(eq(subscriptions.id, sub.id))
+      .returning();
+    return cleared ?? sub;
   }
 
   // ── Renewal coupon ─────────────────────────────────────────────
@@ -555,12 +939,22 @@ export class SubscriptionsService implements OnModuleInit, OnModuleDestroy {
   // ── Billing engine ─────────────────────────────────────────────
 
   /**
-   * Bring a subscription up to date. While the due date is in the past:
-   * auto-debit collects each elapsed period (dummy gateway — always
-   * succeeds) and rolls the anchor forward; without auto-debit the sub is
-   * parked in past_due until the seller pays manually.
+   * Bring a subscription up to date, then check it against its plan's sales
+   * cap. Both run on every console read and on the hourly sweep, so a shop is
+   * never more than an hour behind either.
    */
   private async settle(sub: SubscriptionRow): Promise<SubscriptionRow> {
+    return this.enforceCap(await this.settleBilling(sub));
+  }
+
+  /**
+   * The billing half. While the due date is in the past: auto-debit collects
+   * each elapsed period (dummy gateway — always succeeds) and rolls the
+   * anchor forward; without auto-debit the sub is parked in past_due until
+   * the seller pays manually. A period that rolls over also applies any
+   * parked downgrade and resets the sales meter.
+   */
+  private async settleBilling(sub: SubscriptionRow): Promise<SubscriptionRow> {
     if (sub.status === 'cancelled') {
       return sub;
     }
@@ -596,6 +990,12 @@ export class SubscriptionsService implements OnModuleInit, OnModuleDestroy {
       return sub;
     }
 
+    // A parked downgrade — or auto-reset — takes effect with the first period
+    // the shop hasn't paid for, so the renewals collected below are charged at
+    // that plan's price, not the one the seller is leaving.
+    const rollover = collected.length > 0 ? await this.rolloverPlan(sub) : null;
+    const chargeCents = rollover?.priceCents ?? sub.amountCents;
+
     // Optimistic guard: the update only wins while `nextBillingAt` is still
     // what we based the charges on. If the hourly sweep and a console read
     // settle concurrently, exactly one records the renewals — the loser
@@ -609,6 +1009,14 @@ export class SubscriptionsService implements OnModuleInit, OnModuleDestroy {
           pendingCouponId: null,
           pendingCouponCode: null,
           pendingDiscountCents: 0,
+          // A new period is a fresh sales allowance: whatever cap breach the
+          // old one ended on no longer applies.
+          capExceededAt: null,
+          ...(rollover && {
+            planCode: rollover.code,
+            amountCents: rollover.priceCents,
+            scheduledPlanCode: null,
+          }),
         }),
       })
       .where(
@@ -635,8 +1043,11 @@ export class SubscriptionsService implements OnModuleInit, OnModuleDestroy {
           shopId: sub.shopId,
           type: 'renewal' as const,
           method: 'auto' as const,
+          planCode: updated.planCode,
           amountCents:
-            sub.amountCents - (i === 0 ? sub.pendingDiscountCents : 0),
+            // A coupon bought at the old price can't exceed a cheaper new
+            // one — the renewal must never be a refund.
+            Math.max(0, chargeCents - (i === 0 ? sub.pendingDiscountCents : 0)),
           currency: sub.currency,
           couponId: (i === 0 ? sub.pendingCouponId : null) ?? undefined,
           couponCode: (i === 0 ? sub.pendingCouponCode : null) ?? undefined,
@@ -653,16 +1064,18 @@ export class SubscriptionsService implements OnModuleInit, OnModuleDestroy {
     return updated;
   }
 
-  /** Background sweep: settle every non-cancelled subscription that is due. */
+  /**
+   * Background sweep over every non-cancelled subscription: collects what is
+   * due and checks each shop against its plan's sales cap. The cap half is
+   * why this can't be narrowed to subscriptions that are due — a shop that
+   * outgrows its plan mid-period has nothing due at all.
+   */
   private async sweepDueSubscriptions(): Promise<void> {
     try {
-      const due = await this.db.query.subscriptions.findMany({
-        where: and(
-          eq(subscriptions.status, 'active'),
-          lte(subscriptions.nextBillingAt, new Date()),
-        ),
+      const live = await this.db.query.subscriptions.findMany({
+        where: ne(subscriptions.status, 'cancelled'),
       });
-      for (const sub of due) {
+      for (const sub of live) {
         await this.settle(sub);
       }
     } catch (err) {
@@ -703,13 +1116,15 @@ export class SubscriptionsService implements OnModuleInit, OnModuleDestroy {
     while (nextBillingAt <= now) {
       nextBillingAt = addOneMonth(nextBillingAt, anchorDay);
     }
+    const entry = await this.billing.entryPlan();
     const [created] = await this.db
       .insert(subscriptions)
       .values({
         shopId,
         ownerId: shop.ownerId,
         status: 'active',
-        amountCents: await this.billing.monthlyFeeCents(),
+        planCode: entry.code,
+        amountCents: entry.priceCents,
         currency: PLATFORM_CURRENCY,
         startedAt,
         nextBillingAt,
@@ -721,16 +1136,38 @@ export class SubscriptionsService implements OnModuleInit, OnModuleDestroy {
   private async toResponse(
     sub: SubscriptionRow,
   ): Promise<SubscriptionResponse> {
-    const [shop, payments] = await Promise.all([
-      this.db.query.shops.findFirst({
-        where: eq(shops.id, sub.shopId),
-        columns: { live: true },
-      }),
-      this.db.query.subscriptionPayments.findMany({
-        where: eq(subscriptionPayments.subscriptionId, sub.id),
-        orderBy: [desc(subscriptionPayments.paidAt)],
-      }),
-    ]);
-    return SubscriptionResponse.fromRows(sub, shop?.live ?? false, payments);
+    const { start, end } = this.periodWindow(sub);
+    const [shop, payments, plan, plans, entryPlan, salesCents] =
+      await Promise.all([
+        this.db.query.shops.findFirst({
+          where: eq(shops.id, sub.shopId),
+          columns: { live: true },
+        }),
+        this.db.query.subscriptionPayments.findMany({
+          where: eq(subscriptionPayments.subscriptionId, sub.id),
+          orderBy: [desc(subscriptionPayments.paidAt)],
+        }),
+        this.billing.planByCode(sub.planCode),
+        this.billing.plans(),
+        this.billing.entryPlan(),
+        this.periodSalesCents(sub.shopId, start, end),
+      ]);
+    const scheduled = sub.scheduledPlanCode
+      ? (plans.find((p) => p.code === sub.scheduledPlanCode) ?? null)
+      : null;
+    // What the next renewal will actually bill for — a parked downgrade or an
+    // auto-reset changes it, so the console must not quote today's price.
+    const nextPlan = await this.rolloverPlan(sub);
+    return SubscriptionResponse.fromRows(sub, shop?.live ?? false, payments, {
+      plan,
+      plans,
+      scheduledPlan: scheduled,
+      nextPlan,
+      entryPlan,
+      salesCents,
+      periodStart: start,
+      periodEnd: end,
+      graceMs: CAP_GRACE_MS,
+    });
   }
 }

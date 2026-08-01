@@ -25,10 +25,14 @@ import type { SellerPrincipal } from '../../common/types/principal';
 import { CouponsService } from '../coupons/coupons.service';
 import { CouponPreviewResponse } from '../coupons/dto/coupon.response';
 import { ApplyCouponDto } from './dto/apply-coupon.dto';
+import { ChangePlanDto } from './dto/change-plan.dto';
 import { PayShopCreditDto } from './dto/pay-shop-credit.dto';
 import { SetAutoDebitDto } from './dto/set-auto-debit.dto';
+import { SetAutoResetDto } from './dto/set-auto-reset.dto';
+import { SetAutoScaleDto } from './dto/set-auto-scale.dto';
 import { SetShopLiveDto } from './dto/set-shop-live.dto';
 import {
+  PlanResponse,
   ShopCreditResponse,
   SubscriptionResponse,
 } from './dto/subscription.response';
@@ -49,9 +53,19 @@ export class SubscriptionsController {
   // has signed in, so this is the one billing route with no principal.
   @Public()
   @Get('billing/pricing')
-  @ApiOperation({ summary: 'The platform monthly per-shop fee' })
+  @ApiOperation({
+    summary: 'The entry monthly per-shop fee, plus the whole plan ladder',
+  })
   pricing() {
     return this.billing.pricing();
+  }
+
+  @Public()
+  @Get('billing/plans')
+  @ApiOperation({ summary: 'The plans on sale, cheapest first' })
+  @ApiOkResponse({ type: [PlanResponse] })
+  async plans() {
+    return (await this.billing.plans()).map(PlanResponse.from);
   }
 
   // ── Seller (onboarding wizard) ────────────────────────────────
@@ -170,6 +184,47 @@ export class SubscriptionsController {
   @ApiOkResponse({ type: SubscriptionResponse })
   removeCoupon(@Param('shopId') shopId: string) {
     return this.subscriptions.removeCoupon(shopId);
+  }
+
+  @Public()
+  @UseGuards(AdminJwtAuthGuard, ShopScopeGuard, RolesGuard)
+  @RequirePerm('subscription.manage')
+  @ApiBearerAuth()
+  @Post('shops/:shopId/subscription/plan')
+  @ApiOperation({
+    summary:
+      'Admin: change plan — up starts now (prorated), down starts at the next renewal',
+  })
+  @ApiOkResponse({ type: SubscriptionResponse })
+  changePlan(@Param('shopId') shopId: string, @Body() dto: ChangePlanDto) {
+    return this.subscriptions.changePlan(shopId, dto.code);
+  }
+
+  @Public()
+  @UseGuards(AdminJwtAuthGuard, ShopScopeGuard, RolesGuard)
+  @RequirePerm('subscription.manage')
+  @ApiBearerAuth()
+  @Patch('shops/:shopId/subscription/auto-scale')
+  @ApiOperation({
+    summary: 'Admin: toggle automatic upgrade at 100% of the sales cap',
+  })
+  @ApiOkResponse({ type: SubscriptionResponse })
+  setAutoScale(@Param('shopId') shopId: string, @Body() dto: SetAutoScaleDto) {
+    return this.subscriptions.setAutoScale(shopId, dto.enabled);
+  }
+
+  @Public()
+  @UseGuards(AdminJwtAuthGuard, ShopScopeGuard, RolesGuard)
+  @RequirePerm('subscription.manage')
+  @ApiBearerAuth()
+  @Patch('shops/:shopId/subscription/auto-reset')
+  @ApiOperation({
+    summary:
+      'Admin: toggle "start every period on the entry plan" (needs auto-scale)',
+  })
+  @ApiOkResponse({ type: SubscriptionResponse })
+  setAutoReset(@Param('shopId') shopId: string, @Body() dto: SetAutoResetDto) {
+    return this.subscriptions.setAutoReset(shopId, dto.enabled);
   }
 
   @Public()

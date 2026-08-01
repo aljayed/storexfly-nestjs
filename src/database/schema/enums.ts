@@ -166,9 +166,12 @@ export const subscriptionStatusEnum = pgEnum('subscription_status', [
   'cancelled',
 ]);
 
+// 'upgrade' = the prorated difference charged when a shop moves up a plan
+// mid-period. Enum values are append-only in Postgres, so it sits last.
 export const platformPaymentTypeEnum = pgEnum('platform_payment_type', [
   'shop_creation',
   'renewal',
+  'upgrade',
 ]);
 
 export const platformPaymentMethodEnum = pgEnum('platform_payment_method', [

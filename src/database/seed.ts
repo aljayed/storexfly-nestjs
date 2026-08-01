@@ -3,7 +3,11 @@ import * as bcrypt from 'bcryptjs';
 import { drizzle } from 'drizzle-orm/postgres-js';
 import { authenticator } from 'otplib';
 import postgres from 'postgres';
-import { DEFAULT_MONTHLY_FEE_CENTS } from '../common/constants/billing';
+import {
+  DEFAULT_MONTHLY_FEE_CENTS,
+  ENTRY_PLAN_CODE,
+  PLAN_TIERS,
+} from '../common/constants/billing';
 import { BRAND_SWATCHES } from '../common/constants/brand-swatches';
 import { dollarsToCents } from '../common/utils/money.util';
 import { handleize } from '../common/utils/slug.util';
@@ -481,6 +485,22 @@ async function seed(): Promise<void> {
     await db.delete(schema.shops);
     await db.delete(schema.users);
 
+    // The plan ladder is seeded by migration 0058 and re-priceable by the
+    // operator, so it is topped up rather than wiped with the demo data.
+    console.log('Ensuring the subscription plan ladder…');
+    await db
+      .insert(schema.subscriptionPlans)
+      .values(
+        PLAN_TIERS.map((tier, i) => ({
+          code: tier.code,
+          name: tier.name,
+          salesCapCents: tier.salesCapCents,
+          priceCents: tier.priceCents,
+          sortOrder: i + 1,
+        })),
+      )
+      .onConflictDoNothing({ target: schema.subscriptionPlans.code });
+
     console.log('Creating owner + shop…');
     const passwordHash = await bcrypt.hash('password123', 12);
     const [owner] = await db
@@ -623,6 +643,7 @@ async function seed(): Promise<void> {
         shopId: shop.id,
         ownerId: owner.id,
         status: 'active',
+        planCode: ENTRY_PLAN_CODE,
         amountCents: DEFAULT_MONTHLY_FEE_CENTS,
         currency: 'BDT',
         autoDebit: true,
@@ -637,6 +658,7 @@ async function seed(): Promise<void> {
         shopId: shop.id,
         type: 'shop_creation',
         method: 'manual',
+        planCode: ENTRY_PLAN_CODE,
         amountCents: DEFAULT_MONTHLY_FEE_CENTS,
         currency: 'BDT',
         paidAt: new Date('2026-03-12T10:00:00Z'),
@@ -648,6 +670,7 @@ async function seed(): Promise<void> {
         shopId: shop.id,
         type: 'renewal' as const,
         method: 'auto' as const,
+        planCode: ENTRY_PLAN_CODE,
         amountCents: DEFAULT_MONTHLY_FEE_CENTS,
         currency: 'BDT',
         periodStart: new Date(`${day}T10:00:00Z`),
