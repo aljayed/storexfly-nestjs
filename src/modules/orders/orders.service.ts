@@ -109,6 +109,18 @@ function normalizePhone(raw: string | null | undefined): string {
   return (raw ?? '').replace(/\D/g, '').replace(/^880/, '').replace(/^0+/, '');
 }
 
+/**
+ * Units to take off one variant option's own counter. Only options the seller
+ * chose to track produce these — untracked options live purely off the
+ * product-level `stock` column.
+ */
+interface VariantDeduction {
+  productId: string;
+  groupId: string;
+  optionId: string;
+  units: number;
+}
+
 /** Priced line items + stock deductions computed for one checkout. */
 interface CheckoutCart {
   /** Order total in cents including delivery (lines always sum to this). */
@@ -119,12 +131,22 @@ interface CheckoutCart {
   totalUnits: number;
   /** Per-product stock decrements to apply. */
   deductions: { productId: string; units: number }[];
+  /** Per-option decrements, on top of the product-level ones above. */
+  variantDeductions: VariantDeduction[];
   lines: {
     productId: string | null;
     name: string;
     qty: number;
+    /**
+     * Physical units this line takes out of stock — `qty` × the pack size,
+     * so it only differs from `qty` for multi-buy packs. Null on the lines
+     * that aren't stock at all (delivery, coupon, combo adjustment).
+     */
+    units: number | null;
     unitPriceCents: number;
     variant: string | null;
+    /** `{ groupId: optionId }` of what was picked — null when no variants. */
+    variantPick: Record<string, string> | null;
   }[];
 }
 
@@ -249,6 +271,9 @@ export class OrdersService {
           throw new ConflictException('Not enough stock for this quantity');
         }
       }
+      // Options that carry their own counter come off it too — the product
+      // total above is the ceiling, this is the per-choice availability.
+      await this.applyVariantStock(tx, cart.variantDeductions, -1);
 
       const customerId = await this.customers.recordOrder(tx, {
         shopId: dto.shopId,
@@ -295,8 +320,10 @@ export class OrdersService {
           productId: line.productId,
           name: line.name,
           qty: line.qty,
+          units: line.units,
           unitPriceCents: line.unitPriceCents,
           variant: line.variant,
+          variantPick: line.variantPick,
         })),
       );
 
@@ -397,8 +424,10 @@ export class OrdersService {
       productId: null,
       name: `Coupon ${result.coupon.code}`.slice(0, 200),
       qty: 1,
+      units: null,
       unitPriceCents: -result.discountCents,
       variant: result.coupon.description?.slice(0, 240) ?? null,
+      variantPick: null,
     });
     cart.totalCents -= result.discountCents;
     return result;
@@ -570,8 +599,12 @@ export class OrdersService {
           productId: product.id,
           name: item.name,
           qty: item.qty,
+          // Offers are priced per unit — no packs, so picks are units.
+          units: item.qty,
           unitPriceCents: item.unitPriceCents,
           variant: null,
+          // A seller's chat offer names whole products, never a variant.
+          variantPick: null,
         });
       }
       for (const [productId, units] of unitsByProduct) {
@@ -588,8 +621,10 @@ export class OrdersService {
           productId: null,
           name: DELIVERY_LINE_NAME,
           qty: 1,
+          units: null,
           unitPriceCents: offer.deliveryCents,
           variant: null,
+          variantPick: null,
         });
       }
 
@@ -649,8 +684,10 @@ export class OrdersService {
           productId: line.productId,
           name: line.name,
           qty: line.qty,
+          units: line.units,
           unitPriceCents: line.unitPriceCents,
           variant: line.variant,
+          variantPick: line.variantPick,
         })),
       );
 
@@ -751,7 +788,12 @@ export class OrdersService {
     product: ProductRow,
     pick: { qty: number; variant?: Record<string, string>; packId?: string },
     payKind: string | null,
-  ): { line: CheckoutCart['lines'][number]; units: number } {
+  ): {
+    line: CheckoutCart['lines'][number];
+    units: number;
+    /** Options the buyer picked that carry their own stock counter. */
+    tracked: { groupId: string; optionId: string }[];
+  } {
     // Showcase items are advertised only — the sale happens offline, so
     // online checkout is never allowed for them.
     if (product.listingType === 'showcase') {
@@ -773,6 +815,8 @@ export class OrdersService {
 
     // One option per variant group is mandatory once a product defines groups.
     const parts: string[] = [];
+    const variantPick: Record<string, string> = {};
+    const tracked: { groupId: string; optionId: string }[] = [];
     let deltaCents = 0;
     for (const group of product.variantGroups ?? []) {
       const option = group.options.find(
@@ -785,6 +829,12 @@ export class OrdersService {
       }
       deltaCents += option.priceDeltaCents;
       parts.push(`${group.name}: ${option.label}`);
+      variantPick[group.id] = option.id;
+      // Only options the seller counts individually need their own decrement;
+      // the rest ride on the product-level total.
+      if (typeof option.stock === 'number') {
+        tracked.push({ groupId: group.id, optionId: option.id });
+      }
     }
 
     // A pack re-prices the line: qty counts packs, each consuming pack.units.
@@ -807,11 +857,77 @@ export class OrdersService {
         productId: product.id,
         name: product.name,
         qty: pick.qty,
+        units: unitsPerPick * pick.qty,
         unitPriceCents,
         variant: parts.length ? parts.join(' · ').slice(0, 240) : null,
+        variantPick: Object.keys(variantPick).length ? variantPick : null,
       },
       units: unitsPerPick * pick.qty,
+      tracked,
     };
+  }
+
+  /**
+   * Take units off (or, with a positive `sign`, hand them back to) the
+   * per-option counters inside `products.variant_groups`.
+   *
+   * The counters live in jsonb, so there is no column to guard with a `>=`
+   * predicate the way product-level stock is. Instead the product row is
+   * locked before the read-modify-write, which serializes concurrent
+   * checkouts of the same product regardless of which shop lock they came
+   * through. Deltas for the same option are summed first so a cart holding
+   * the same variant on two lines is checked once, against the total.
+   */
+  private async applyVariantStock(
+    tx: OrdersTx,
+    deductions: VariantDeduction[],
+    sign: 1 | -1,
+  ): Promise<void> {
+    if (!deductions.length) return;
+    const byProduct = new Map<string, Map<string, number>>();
+    for (const d of deductions) {
+      const key = `${d.groupId} ${d.optionId}`;
+      const forProduct =
+        byProduct.get(d.productId) ?? new Map<string, number>();
+      forProduct.set(key, (forProduct.get(key) ?? 0) + d.units);
+      byProduct.set(d.productId, forProduct);
+    }
+
+    // Always take the row locks in id order: a checkout and a cancellation
+    // touching the same two products can then never hold half of each other's
+    // locks (the shop lock only serializes checkouts, not cancels).
+    for (const [productId, wanted] of [...byProduct].sort(([a], [b]) =>
+      a < b ? -1 : a > b ? 1 : 0,
+    )) {
+      const [row] = await tx
+        .select({ variantGroups: products.variantGroups })
+        .from(products)
+        .where(eq(products.id, productId))
+        .for('update');
+      if (!row) continue;
+
+      const groups = (row.variantGroups ?? []).map((g) => ({
+        ...g,
+        options: g.options.map((o) => {
+          const units = wanted.get(`${g.id} ${o.id}`);
+          // Untouched options, and ones the seller has since stopped tracking,
+          // pass through unchanged.
+          if (!units || typeof o.stock !== 'number') return o;
+          const next = o.stock + sign * units;
+          if (next < 0) {
+            throw new ConflictException(
+              `Only ${o.stock} left of “${o.label}” — please lower the quantity.`,
+            );
+          }
+          return { ...o, stock: next };
+        }),
+      }));
+
+      await tx
+        .update(products)
+        .set({ variantGroups: groups })
+        .where(eq(products.id, productId));
+    }
   }
 
   /**
@@ -833,7 +949,7 @@ export class OrdersService {
       throw new NotFoundException('Product not found in this shop');
     }
 
-    const { line, units } = this.priceProductPick(
+    const { line, units, tracked } = this.priceProductPick(
       product,
       { qty: dto.qty ?? 1, variant: dto.variant, packId: dto.packId },
       payKind,
@@ -851,6 +967,11 @@ export class OrdersService {
       deliveryCents,
       totalUnits: units,
       deductions: [{ productId: product.id, units }],
+      variantDeductions: tracked.map((t) => ({
+        productId: product.id,
+        ...t,
+        units,
+      })),
       lines,
     };
   }
@@ -884,14 +1005,24 @@ export class OrdersService {
     // The same product can appear on several lines (different variants), so
     // stock is only sound once every line's units are summed per product.
     const unitsByProduct = new Map<string, number>();
+    const variantDeductions: VariantDeduction[] = [];
     for (const pick of picks) {
       const product = byId.get(pick.productId)!;
-      const { line, units } = this.priceProductPick(product, pick, payKind);
+      const { line, units, tracked } = this.priceProductPick(
+        product,
+        pick,
+        payKind,
+      );
       lines.push(line);
       unitsByProduct.set(
         product.id,
         (unitsByProduct.get(product.id) ?? 0) + units,
       );
+      // Summed per option by applyVariantStock, so two lines sharing a
+      // variant are checked against their combined units.
+      for (const t of tracked) {
+        variantDeductions.push({ productId: product.id, ...t, units });
+      }
     }
     for (const [productId, units] of unitsByProduct) {
       const product = byId.get(productId)!;
@@ -917,6 +1048,7 @@ export class OrdersService {
         productId,
         units,
       })),
+      variantDeductions,
       lines,
     };
   }
@@ -974,8 +1106,11 @@ export class OrdersService {
         productId: product.id,
         name: product.name,
         qty: units,
+        // Combo member lines are already written in units.
+        units,
         unitPriceCents: product.priceCents,
         variant: `Combo: ${combo.name}`.slice(0, 240),
+        variantPick: null,
       });
     }
 
@@ -991,8 +1126,10 @@ export class OrdersService {
           200,
         ),
         qty: 1,
+        units: null,
         unitPriceCents: adjustCents,
         variant: null,
+        variantPick: null,
       });
     }
 
@@ -1007,6 +1144,9 @@ export class OrdersService {
       deliveryCents,
       totalUnits,
       deductions,
+      // A combo names whole products, never a variant choice, so there is no
+      // per-option counter to move.
+      variantDeductions: [],
       lines,
     };
   }
@@ -1040,8 +1180,10 @@ export class OrdersService {
       productId: null,
       name: DELIVERY_LINE_NAME,
       qty: 1,
+      units: null,
       unitPriceCents: deliveryCents,
       variant: inDhaka ? 'Inside Dhaka' : 'Outside Dhaka',
+      variantPick: null,
     });
   }
 
@@ -1879,13 +2021,29 @@ export class OrdersService {
     });
     // Put the reserved stock back for every line that still points at a
     // live product (productId is null once a product has been deleted).
+    const returns: VariantDeduction[] = [];
     for (const item of items) {
       if (!item.productId) continue;
+      // Give back what the line actually took: `units` for anything placed
+      // since that column existed, `qty` for older rows — which is also all
+      // those orders ever had deducted for non-pack lines.
+      const units = item.units ?? item.qty;
       await tx
         .update(products)
-        .set({ stock: sql`${products.stock} + ${item.qty}` })
+        .set({ stock: sql`${products.stock} + ${units}` })
         .where(eq(products.id, item.productId));
+      // Lines placed before per-option stock existed have no pick recorded;
+      // those only ever moved the product-level counter, so there is nothing
+      // else to give back.
+      for (const [groupId, optionId] of Object.entries(
+        item.variantPick ?? {},
+      )) {
+        returns.push({ productId: item.productId, groupId, optionId, units });
+      }
     }
+    // Options the seller has stopped tracking since the order are skipped by
+    // applyVariantStock rather than resurrected with a count.
+    await this.applyVariantStock(tx, returns, 1);
     // Hand the coupon use back — a cancelled order shouldn't burn the buyer's
     // one redemption, nor a slot from a capped code.
     await this.shopCoupons.releaseForOrder(tx, order.id);

@@ -372,6 +372,20 @@
       "when": 1790467200000,
       "tag": "0055_chat_order_offers",
       "breakpoints": true
+    },
+    {
+      "idx": 56,
+      "version": "7",
+      "when": 1790553600000,
+      "tag": "0056_variant_option_stock_image",
+      "breakpoints": true
+    },
+    {
+      "idx": 57,
+      "version": "7",
+      "when": 1790640000000,
+      "tag": "0057_order_item_units",
+      "breakpoints": true
     }
   ]
 }

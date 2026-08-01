@@ -25,12 +25,26 @@ export interface ProductVariantOption {
   id: string;
   label: string;
   priceDeltaCents: number;
+  /**
+   * Photo shown in the gallery while this option is selected (a `/api/media`
+   * URL — the same absorbed-storage path product photos take). Absent = the
+   * option has no picture of its own and the gallery stays put.
+   */
+  image?: string | null;
+  /**
+   * Units left of this specific choice. `null`/absent = untracked, in which
+   * case only the product-level `stock` limits it. When several groups track
+   * stock the smallest tracked number wins — see `variantStockFor` in the
+   * orders service.
+   */
+  stock?: number | null;
 }
 
 /**
  * A buyer-facing option group (e.g. "Size" or "Color"). A product carries at
  * most 2 groups; the buyer picks exactly one option per group and the deltas
- * add onto the base unit price. Stock stays product-level (total units).
+ * add onto the base unit price. Product-level `stock` is always the ceiling;
+ * an option may additionally track its own count (see `stock` above).
  */
 export interface ProductVariantGroup {
   id: string;

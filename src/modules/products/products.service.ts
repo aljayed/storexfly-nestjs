@@ -45,21 +45,36 @@ export class ProductsService {
     private readonly combos: CombosService,
   ) {}
 
-  /** Normalize variant-group DTOs to storage shape, assigning stable ids. */
-  private toVariantGroups(
+  /**
+   * Normalize variant-group DTOs to storage shape, assigning stable ids.
+   * Option photos go through the same absorb step as the gallery, so a
+   * freshly-picked base64 image is uploaded once and only its URL is stored;
+   * an already-absorbed `/media` URL passes straight through.
+   */
+  private async toVariantGroups(
     dtos?: VariantGroupDto[],
-  ): ProductVariantGroup[] | undefined {
+  ): Promise<ProductVariantGroup[] | undefined> {
     if (dtos === undefined) return undefined;
-    return dtos.map((g) => ({
-      id: g.id || shortId(),
-      name: g.name.trim(),
-      options: g.options.map((o) => ({
-        id: o.id || shortId(),
-        label: o.label.trim(),
-        priceDeltaCents:
-          o.priceDelta !== undefined ? dollarsToCents(o.priceDelta) : 0,
+    return Promise.all(
+      dtos.map(async (g) => ({
+        id: g.id || shortId(),
+        name: g.name.trim(),
+        options: await Promise.all(
+          g.options.map(async (o) => ({
+            id: o.id || shortId(),
+            label: o.label.trim(),
+            priceDeltaCents:
+              o.priceDelta !== undefined ? dollarsToCents(o.priceDelta) : 0,
+            // '' clears a previously-set photo; absent leaves it unset.
+            image: o.image
+              ? ((await this.storage.absorb(o.image, 'products')) ?? null)
+              : null,
+            // Undefined and null both mean "don't track this option".
+            stock: o.stock ?? null,
+          })),
+        ),
       })),
-    }));
+    );
   }
 
   /** Normalize pack DTOs to storage shape, assigning stable ids. */
@@ -192,7 +207,7 @@ export class ProductsService {
         blurb: dto.blurb ?? '',
         images: images ?? undefined,
         videoUrl: dto.videoUrl || null,
-        variantGroups: this.toVariantGroups(dto.variantGroups),
+        variantGroups: await this.toVariantGroups(dto.variantGroups),
         packs: this.toPacks(dto.packs),
       })
       .returning();
@@ -228,7 +243,7 @@ export class ProductsService {
       // Present-but-empty clears the video; absent leaves it unchanged.
       videoUrl: dto.videoUrl === undefined ? undefined : dto.videoUrl || null,
       // Replace-on-present semantics.
-      variantGroups: this.toVariantGroups(dto.variantGroups),
+      variantGroups: await this.toVariantGroups(dto.variantGroups),
       packs: this.toPacks(dto.packs),
     };
     if (dto.price !== undefined) {

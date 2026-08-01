@@ -8,6 +8,10 @@ export interface PublicVariantOption {
   id: string;
   label: string;
   priceDelta: number;
+  /** Photo to show while this option is picked (absent = none). */
+  image?: string;
+  /** Units left of this choice; absent = untracked (product stock rules). */
+  stock?: number;
 }
 
 /** Public variant group ("Size" with its options). */
@@ -116,6 +120,8 @@ export class ProductResponse {
           id: o.id,
           label: o.label,
           priceDelta: centsToDollars(o.priceDeltaCents),
+          image: o.image ?? undefined,
+          stock: o.stock ?? undefined,
         })),
       })),
       packs: (row.packs ?? []).map((p) => ({

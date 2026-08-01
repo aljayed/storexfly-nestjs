@@ -54,6 +54,31 @@ export class VariantOptionDto {
   @Min(-1_000_000)
   @Max(1_000_000)
   priceDelta?: number;
+
+  @ApiPropertyOptional({
+    description:
+      'Photo shown when this option is picked — a base64 data URL (absorbed ' +
+      'into storage on save) or an existing /media URL. Empty string clears it.',
+  })
+  @IsOptional()
+  @IsString()
+  // Same per-photo ceiling as the product gallery.
+  @MaxLength(3_000_000)
+  image?: string;
+
+  @ApiPropertyOptional({
+    example: 12,
+    description:
+      'Units left of this choice. Omit or null to leave it untracked, in ' +
+      'which case only the product-level stock applies.',
+  })
+  @IsOptional()
+  @ValidateIf((_, v) => v !== null)
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  @Max(1_000_000)
+  stock?: number | null;
 }
 
 /** A buyer-facing option group (e.g. "Size" with S / M / L). */
