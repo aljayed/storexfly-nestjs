@@ -79,6 +79,21 @@ export class VariantOptionDto {
   @Min(0)
   @Max(1_000_000)
   stock?: number | null;
+
+  @ApiPropertyOptional({
+    type: [String],
+    description:
+      'Option ids in the other group this choice is sold with ("Black only ' +
+      'comes with 8/256 and 16/512"). Omit or leave empty for every ' +
+      'combination. Ids that are not in the other group are dropped on save.',
+  })
+  @IsOptional()
+  @ValidateIf((_, v) => v !== null)
+  @IsArray()
+  @ArrayMaxSize(12)
+  @IsString({ each: true })
+  @MaxLength(24, { each: true })
+  onlyWith?: string[] | null;
 }
 
 /** A buyer-facing option group (e.g. "Size" with S / M / L). */

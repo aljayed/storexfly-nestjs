@@ -38,6 +38,17 @@ export interface ProductVariantOption {
    * orders service.
    */
   stock?: number | null;
+  /**
+   * Option ids in the *other* group this one is sold with — "Black only comes
+   * with 8/256 and 16/512". Absent or empty = sold with every combination,
+   * which is what every product written before this field existed means.
+   *
+   * Groups are otherwise independent axes, so without this a product offers
+   * the full cross-product; this narrows it without turning variants into a
+   * matrix. Only one group should carry the lists (the dependent one) —
+   * the storefront reads them in that direction.
+   */
+  onlyWith?: string[] | null;
 }
 
 /**

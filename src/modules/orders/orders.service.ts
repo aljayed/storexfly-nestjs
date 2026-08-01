@@ -837,6 +837,25 @@ export class OrdersService {
       }
     }
 
+    // Not every pair of options exists: a colour may only be made in some of
+    // the configurations. The storefront greys those out, so reaching here
+    // means a stale page or a hand-made request — either way the combination
+    // can't be shipped, so it can't be sold.
+    for (const group of product.variantGroups ?? []) {
+      const option = group.options.find((o) => o.id === variantPick[group.id])!;
+      if (!option.onlyWith?.length) continue;
+      const partner = (product.variantGroups ?? []).find(
+        (g) => g.id !== group.id,
+      );
+      const partnerPick = partner ? variantPick[partner.id] : undefined;
+      if (partnerPick && !option.onlyWith.includes(partnerPick)) {
+        const chosen = partner?.options.find((o) => o.id === partnerPick);
+        throw new ConflictException(
+          `“${option.label}” isn’t available with ${chosen?.label ?? 'that option'} — please pick another combination.`,
+        );
+      }
+    }
+
     // A pack re-prices the line: qty counts packs, each consuming pack.units.
     let unitsPerPick = 1;
     let unitPriceCents = Math.max(0, product.priceCents + deltaCents);

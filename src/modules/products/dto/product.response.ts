@@ -12,6 +12,11 @@ export interface PublicVariantOption {
   image?: string;
   /** Units left of this choice; absent = untracked (product stock rules). */
   stock?: number;
+  /**
+   * Option ids in the other group this choice is sold with. Absent = every
+   * combination, which is what all products without the restriction mean.
+   */
+  onlyWith?: string[];
 }
 
 /** Public variant group ("Size" with its options). */
@@ -122,6 +127,7 @@ export class ProductResponse {
           priceDelta: centsToDollars(o.priceDeltaCents),
           image: o.image ?? undefined,
           stock: o.stock ?? undefined,
+          onlyWith: o.onlyWith?.length ? o.onlyWith : undefined,
         })),
       })),
       packs: (row.packs ?? []).map((p) => ({

@@ -55,7 +55,7 @@ export class ProductsService {
     dtos?: VariantGroupDto[],
   ): Promise<ProductVariantGroup[] | undefined> {
     if (dtos === undefined) return undefined;
-    return Promise.all(
+    const groups = await Promise.all(
       dtos.map(async (g) => ({
         id: g.id || shortId(),
         name: g.name.trim(),
@@ -71,10 +71,40 @@ export class ProductsService {
               : null,
             // Undefined and null both mean "don't track this option".
             stock: o.stock ?? null,
+            onlyWith: o.onlyWith ?? null,
           })),
         ),
       })),
     );
+    return this.settleOnlyWith(groups);
+  }
+
+  /**
+   * Second pass over the saved groups: `onlyWith` points at option ids in the
+   * *other* group, which only makes sense once both groups have their ids.
+   *
+   * Anything dangling is dropped rather than rejected — an id can legitimately
+   * disappear when the seller deletes an option in the same save, and a stale
+   * reference must not be allowed to make a colour unbuyable. A list that ends
+   * up covering every option (or nothing at all) means "no restriction", and
+   * is stored as null so the storefront has one case to read, not three.
+   */
+  private settleOnlyWith(groups: ProductVariantGroup[]): ProductVariantGroup[] {
+    return groups.map((g, i) => {
+      const other = groups.length === 2 ? groups[1 - i] : undefined;
+      const validIds = new Set(other?.options.map((o) => o.id) ?? []);
+      return {
+        ...g,
+        options: g.options.map((o) => {
+          const kept = (o.onlyWith ?? []).filter((id) => validIds.has(id));
+          return {
+            ...o,
+            onlyWith:
+              kept.length === 0 || kept.length === validIds.size ? null : kept,
+          };
+        }),
+      };
+    });
   }
 
   /** Normalize pack DTOs to storage shape, assigning stable ids. */
