@@ -351,18 +351,122 @@ export class SubscriptionsService implements OnModuleInit, OnModuleDestroy {
       return this.toResponse(await this.settle(switched));
     }
 
-    if (sub.dueCents > 0) {
-      throw new BadRequestException(
-        'Settle your outstanding commission bill before moving back to pre-paid credit.',
+    // Leaving the verified track closes the month that is part-way through.
+    // The shop has been selling on credit it hasn't paid for yet, so that
+    // commission is settled on the way out — otherwise a seller could take a
+    // month of orders post-paid and hop back to pre-paid owing nothing.
+    const now = new Date();
+    const owed = await this.commissionOwed(sub, now);
+    if (owed.total > 0) {
+      const [settled] = await this.db
+        .update(subscriptions)
+        .set({
+          billingMode: 'credits',
+          dueCents: 0,
+          dueSince: null,
+          duePeriodStart: null,
+          duePeriodEnd: null,
+          status: 'active',
+          // The next stint on the verified track starts a fresh month, so
+          // nothing billed here can be billed again.
+          startedAt: now,
+          nextBillingAt: addOneMonth(now, now.getDate()),
+        })
+        .where(
+          and(
+            eq(subscriptions.id, sub.id),
+            eq(subscriptions.billingMode, 'commission'),
+          ),
+        )
+        .returning();
+      if (!settled) {
+        throw new ConflictException(
+          'Your billing just changed — refresh to see the latest state.',
+        );
+      }
+      // One row for the final part-month, and one for anything already
+      // issued and still unpaid, so the ledger keeps them distinguishable.
+      if (owed.accruedCents > 0) {
+        await this.db.insert(subscriptionPayments).values({
+          userId: sub.ownerId,
+          subscriptionId: sub.id,
+          shopId: sub.shopId,
+          type: 'commission',
+          method: 'manual',
+          amountCents: owed.accruedCents,
+          billableSalesCents: owed.billableSalesCents,
+          currency: sub.currency,
+          periodStart: owed.periodStart,
+          periodEnd: now,
+          paidAt: now,
+        });
+      }
+      if (sub.dueCents > 0) {
+        await this.db.insert(subscriptionPayments).values({
+          userId: sub.ownerId,
+          subscriptionId: sub.id,
+          shopId: sub.shopId,
+          type: 'commission',
+          method: 'manual',
+          amountCents: sub.dueCents,
+          currency: sub.currency,
+          periodStart: sub.duePeriodStart,
+          periodEnd: sub.duePeriodEnd,
+          paidAt: now,
+        });
+      }
+      // Paying up lifts a pause the unpaid bill caused.
+      await this.liftPause(sub.shopId);
+      this.logger.log(
+        `Shop ${shopId} moved back to the credits track, settling ${owed.total / 100} BDT of commission`,
       );
+      return this.toResponse(await this.settle(settled));
     }
+
     const [switched] = await this.db
       .update(subscriptions)
-      .set({ billingMode: 'credits' })
+      .set({
+        billingMode: 'credits',
+        startedAt: now,
+        nextBillingAt: addOneMonth(now, now.getDate()),
+      })
       .where(eq(subscriptions.id, sub.id))
       .returning();
     this.logger.log(`Shop ${shopId} moved back to the credits track`);
     return this.toResponse(await this.settle(switched));
+  }
+
+  /**
+   * What a shop on the verified track would have to pay to leave right now:
+   * the commission earned since its current month started, plus any bill
+   * already issued and still unpaid. Quoted to the console before the switch
+   * and charged by it, so the seller sees the figure before agreeing to it.
+   */
+  private async commissionOwed(
+    sub: SubscriptionRow,
+    now: Date,
+  ): Promise<{
+    periodStart: Date;
+    billableSalesCents: number;
+    accruedCents: number;
+    dueCents: number;
+    total: number;
+  }> {
+    const periodStart = subOneMonth(sub.nextBillingAt, sub.startedAt.getDate());
+    const billableSalesCents =
+      sub.billingMode === 'commission'
+        ? await this.billableSalesCents(sub, periodStart, now)
+        : 0;
+    const accruedCents = Math.round(
+      (billableSalesCents * sub.commissionBps) / 10_000,
+    );
+    return {
+      periodStart,
+      billableSalesCents,
+      accruedCents,
+      dueCents: sub.dueCents,
+      total: accruedCents + sub.dueCents,
+    };
   }
 
   // ── Paying a commission bill ───────────────────────────────────
