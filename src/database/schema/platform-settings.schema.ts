@@ -33,10 +33,10 @@ export const platformSettings = pgTable('platform_settings', {
   logoDark: text('logo_dark'),
   // Browser-tab icon, stored inline as a data URL. null = the app's default.
   favicon: text('favicon'),
-  // The monthly per-shop platform fee, in integer paisa. Operator-editable
-  // from the console; every quote, charge and price label reads it, so there
-  // is exactly one price live at a time.
-  monthlyFeeCents: integer('monthly_fee_cents').notNull().default(59900),
+  // What a verified merchant pays on the post-paid track, in basis points
+  // (150 = 1.5%). Operator-editable from the console; every quote and every
+  // monthly bill reads it, so exactly one rate is live at a time.
+  commissionBps: integer('commission_bps').notNull().default(150),
   // Legacy gateway fee rates in basis points. Live rates now live per-method
   // on `payment_methods`; these only seed that table's first migration and
   // back old paid-settlement snapshots.

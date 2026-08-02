@@ -19,8 +19,10 @@ import { Public } from '../../common/decorators/public.decorator';
 import { PlatformJwtAuthGuard } from '../../common/guards/platform-jwt-auth.guard';
 import {
   BillingSettingsService,
+  MAX_COMMISSION_BPS,
   MAX_PACK_PRICE_CENTS,
   MAX_SALES_CREDIT_CENTS,
+  MIN_COMMISSION_BPS,
   MIN_PACK_PRICE_CENTS,
   MIN_SALES_CREDIT_CENTS,
 } from '../billing/billing-settings.service';
@@ -77,6 +79,19 @@ export class UpdateCreditPackDto {
   active?: boolean;
 }
 
+export class UpdateCommissionDto {
+  @ApiPropertyOptional({
+    example: 150,
+    description: "The verified track's rate in basis points (150 = 1.5%)",
+    minimum: MIN_COMMISSION_BPS,
+    maximum: MAX_COMMISSION_BPS,
+  })
+  @IsInt()
+  @Min(MIN_COMMISSION_BPS)
+  @Max(MAX_COMMISSION_BPS)
+  commissionBps!: number;
+}
+
 /**
  * Operator console: the credit packs sellers buy. Re-pricing a pack only
  * changes what is on the shelf from here on — credit a seller already bought
@@ -107,5 +122,15 @@ export class PlatformBillingController {
   @ApiOperation({ summary: 'Platform: re-price or retire one credit pack' })
   updatePack(@Param('id') id: string, @Body() dto: UpdateCreditPackDto) {
     return this.billing.updatePack(id, dto);
+  }
+
+  @Patch('commission')
+  @ApiOperation({
+    summary:
+      "Platform: set the verified track's rate (re-rates every live post-paid shop)",
+  })
+  async updateCommission(@Body() dto: UpdateCommissionDto) {
+    await this.billing.updateCommissionBps(dto.commissionBps);
+    return this.billing.pricing();
   }
 }

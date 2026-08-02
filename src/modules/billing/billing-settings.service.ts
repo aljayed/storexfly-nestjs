@@ -1,5 +1,5 @@
 import { Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
-import { asc, eq } from 'drizzle-orm';
+import { and, asc, eq, ne } from 'drizzle-orm';
 import {
   COMMISSION_BPS,
   CREDIT_BALANCE_CAP_CENTS,
@@ -9,7 +9,12 @@ import {
 } from '../../common/constants/billing';
 import { DRIZZLE } from '../../database/database.constants';
 import type { DrizzleDB } from '../../database/drizzle.types';
-import { creditPacks, type CreditPackRow } from '../../database/schema';
+import {
+  creditPacks,
+  platformSettings,
+  subscriptions,
+  type CreditPackRow,
+} from '../../database/schema';
 
 /** Bounds an operator typo can't escape: ৳1 … ৳1,00,000 for one pack. */
 export const MIN_PACK_PRICE_CENTS = 100;
@@ -18,6 +23,10 @@ export const MAX_PACK_PRICE_CENTS = 10_000_000;
 /** Bounds on the selling a pack pays for: ৳1,000 … ৳100 crore. */
 export const MIN_SALES_CREDIT_CENTS = 100_000;
 export const MAX_SALES_CREDIT_CENTS = 100_000_000_000;
+
+/** Bounds on the verified track's rate: 0.01% … 30%, in basis points. */
+export const MIN_COMMISSION_BPS = 1;
+export const MAX_COMMISSION_BPS = 3_000;
 
 /** One pack on the shelf, as the console and the landing page read it. */
 export interface CreditPackView {
@@ -108,6 +117,7 @@ export class BillingSettingsService {
   private static readonly CACHE_TTL_MS = 60_000;
   private readonly logger = new Logger(BillingSettingsService.name);
   private cached: { packs: CreditPackView[]; at: number } | null = null;
+  private cachedRate: { bps: number; at: number } | null = null;
 
   constructor(@Inject(DRIZZLE) private readonly db: DrizzleDB) {}
 
@@ -165,17 +175,50 @@ export class BillingSettingsService {
     );
   }
 
+  // ── The verified track's rate ─────────────────────────────────
+
+  /**
+   * What a verified merchant pays on the post-paid track, in basis points.
+   * Operator-set on the platform_settings singleton; `COMMISSION_BPS` is only
+   * the seed and the read-failure fallback, so a settings hiccup quotes the
+   * launch rate rather than breaking a page or a bill.
+   */
+  async commissionBps(): Promise<number> {
+    const now = Date.now();
+    if (
+      this.cachedRate &&
+      now - this.cachedRate.at < BillingSettingsService.CACHE_TTL_MS
+    ) {
+      return this.cachedRate.bps;
+    }
+    try {
+      const row = await this.db.query.platformSettings.findFirst({
+        orderBy: [asc(platformSettings.id)],
+        columns: { commissionBps: true },
+      });
+      const bps = row?.commissionBps ?? COMMISSION_BPS;
+      this.cachedRate = { bps, at: now };
+      return bps;
+    } catch (err) {
+      this.logger.error(
+        `Falling back to the seeded commission rate: ${String(err)}`,
+      );
+      return this.cachedRate?.bps ?? COMMISSION_BPS;
+    }
+  }
+
   // ── Pricing (what the landing page and the console quote) ──────
 
   async pricing(): Promise<PricingView> {
-    const [packs, entryPack] = await Promise.all([
+    const [packs, entryPack, bps] = await Promise.all([
       this.packs(),
       this.entryPack(),
+      this.commissionBps(),
     ]);
     return {
       currency: PLATFORM_CURRENCY,
-      commissionPct: COMMISSION_BPS / 100,
-      commissionBps: COMMISSION_BPS,
+      commissionPct: bps / 100,
+      commissionBps: bps,
       creditCapCents: CREDIT_BALANCE_CAP_CENTS,
       creditCap: CREDIT_BALANCE_CAP_CENTS / 100,
       packs,
@@ -222,5 +265,47 @@ export class BillingSettingsService {
     );
     this.cached = null;
     return toView(row);
+  }
+
+  /**
+   * Set the verified track's rate. The platform runs one rate, so every shop
+   * currently on the post-paid track is moved to it in the same breath —
+   * otherwise a merchant who verified last month would keep being billed at a
+   * rate the platform no longer offers.
+   *
+   * Note this reaches into the month already in progress: a shop billed on the
+   * 12th is billed for that whole month at the new rate, days already sold
+   * included. The console says so, because it is the operator's call.
+   */
+  async updateCommissionBps(bps: number): Promise<number> {
+    const settings = await this.db.query.platformSettings.findFirst({
+      orderBy: [asc(platformSettings.id)],
+      columns: { id: true },
+    });
+    if (!settings) {
+      throw new NotFoundException('Platform settings row not found');
+    }
+    await this.db
+      .update(platformSettings)
+      .set({ commissionBps: bps })
+      .where(eq(platformSettings.id, settings.id));
+
+    const rerated = await this.db
+      .update(subscriptions)
+      .set({ commissionBps: bps })
+      .where(
+        and(
+          eq(subscriptions.billingMode, 'commission'),
+          ne(subscriptions.status, 'cancelled'),
+          ne(subscriptions.commissionBps, bps),
+        ),
+      )
+      .returning({ id: subscriptions.id });
+    this.logger.log(
+      `Commission rate set to ${bps / 100}%; re-rated ${rerated.length} verified shop(s)`,
+    );
+
+    this.cachedRate = null;
+    return bps;
   }
 }

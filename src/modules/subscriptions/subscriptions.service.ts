@@ -11,7 +11,6 @@ import {
 } from '@nestjs/common';
 import { and, count, desc, eq, gte, lt, ne, sql } from 'drizzle-orm';
 import {
-  COMMISSION_BPS,
   COMMISSION_DUE_GRACE_MS,
   CREDIT_BALANCE_CAP_CENTS,
   FREE_MAX_PRODUCTS,
@@ -121,6 +120,9 @@ export class SubscriptionsService implements OnModuleInit, OnModuleDestroy {
     shopId: string,
   ): Promise<SubscriptionRow> {
     const now = new Date();
+    // Snapshotted now and re-snapshotted whenever the shop joins the verified
+    // track, so a rate change never has to walk every credits shop.
+    const bps = await this.billing.commissionBps();
     const [sub] = await this.db
       .insert(subscriptions)
       .values({
@@ -129,7 +131,7 @@ export class SubscriptionsService implements OnModuleInit, OnModuleDestroy {
         status: 'active',
         billingMode: 'credits',
         currency: PLATFORM_CURRENCY,
-        commissionBps: COMMISSION_BPS,
+        commissionBps: bps,
         creditGrantedCents: 0,
         meterStartAt: now,
         startedAt: now,
@@ -334,7 +336,9 @@ export class SubscriptionsService implements OnModuleInit, OnModuleDestroy {
         .update(subscriptions)
         .set({
           billingMode: 'commission',
-          commissionBps: COMMISSION_BPS,
+          // Today's operator rate. `updateCommissionBps` re-rates live
+          // post-paid shops, so this stays in step afterwards.
+          commissionBps: await this.billing.commissionBps(),
           startedAt: now,
           nextBillingAt: addOneMonth(now, now.getDate()),
           // A commission shop is never paused for an empty balance.
