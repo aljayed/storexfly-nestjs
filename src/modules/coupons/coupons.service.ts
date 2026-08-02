@@ -24,7 +24,18 @@ import { CouponPreviewResponse, CouponResponse } from './dto/coupon.response';
 const DEFAULT_COUPON = {
   code: 'HOOMRI75',
   percentOff: 75,
-  description: '75% off the first payment when creating a shop',
+  description: "75% off a seller's first payment",
+};
+
+/**
+ * The launch offer on credit packs. The landing page advertises this code, but
+ * only while it is genuinely redeemable — see {@link CouponsService.launchOffer}
+ * — so deactivating or deleting it here takes the offer off the page too.
+ */
+export const LAUNCH_COUPON = {
+  code: 'LAUNCH50',
+  percentOff: 50,
+  description: 'Launch offer: 50% off any credit pack',
 };
 
 /** Why a coupon cannot be redeemed right now (seller-facing copy). */
@@ -73,11 +84,11 @@ export class CouponsService implements OnModuleInit {
     try {
       const inserted = await this.db
         .insert(coupons)
-        .values(DEFAULT_COUPON)
+        .values([DEFAULT_COUPON, LAUNCH_COUPON])
         .onConflictDoNothing({ target: coupons.code })
-        .returning({ id: coupons.id });
-      if (inserted.length > 0) {
-        this.logger.log(`Seeded default coupon ${DEFAULT_COUPON.code}`);
+        .returning({ code: coupons.code });
+      for (const row of inserted) {
+        this.logger.log(`Seeded coupon ${row.code}`);
       }
     } catch (err) {
       this.logger.error('Failed to ensure default coupon', err as Error);
@@ -137,6 +148,32 @@ export class CouponsService implements OnModuleInit {
     return { deleted: true };
   }
 
+  /**
+   * The launch offer, or null when it isn't redeemable right now — deleted,
+   * deactivated, expired or fully redeemed. The public pricing route serves
+   * this, so the landing page never advertises a code that would be refused
+   * at checkout.
+   */
+  async launchOffer(): Promise<{ code: string; percentOff: number } | null> {
+    try {
+      const row = await this.db.query.coupons.findFirst({
+        where: eq(coupons.code, LAUNCH_COUPON.code),
+      });
+      if (!row || !row.active) return null;
+      if (row.expiresAt && row.expiresAt <= new Date()) return null;
+      if (
+        row.maxRedemptions !== null &&
+        row.redemptions >= row.maxRedemptions
+      ) {
+        return null;
+      }
+      return { code: row.code, percentOff: row.percentOff };
+    } catch {
+      // A catalogue hiccup should quiet the offer, never break the page.
+      return null;
+    }
+  }
+
   // ── Redemption ─────────────────────────────────────────────────
 
   /**
@@ -191,18 +228,19 @@ export class CouponsService implements OnModuleInit {
     return { ok: true, coupon, discountCents };
   }
 
-  /** Coupon check against the one-off shop-creation fee. */
-  async checkForShopCreation(
+  /**
+   * Seller-facing dry run for the coupon field at credit-pack checkout.
+   * Defaults to the entry pack's price, which is what the console quotes
+   * before the seller has picked a pack.
+   */
+  async preview(
     code: string,
     userId: string,
-  ): Promise<CouponCheck> {
-    return this.check(code, userId, await this.billing.monthlyFeeCents());
-  }
-
-  /** Seller-facing dry run for the onboarding wizard's coupon field. */
-  async preview(code: string, userId: string): Promise<CouponPreviewResponse> {
-    const feeCents = await this.billing.monthlyFeeCents();
-    const check = await this.checkForShopCreation(code, userId);
+    amountCents?: number,
+  ): Promise<CouponPreviewResponse> {
+    const feeCents =
+      amountCents ?? (await this.billing.entryPack())?.priceCents ?? 0;
+    const check = await this.check(code, userId, feeCents);
     if (!check.ok) {
       return {
         valid: false,

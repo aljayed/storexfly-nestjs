@@ -1,246 +1,225 @@
 import { Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
-import { and, asc, eq, ne, sql } from 'drizzle-orm';
+import { asc, eq } from 'drizzle-orm';
 import {
-  DEFAULT_MONTHLY_FEE_CENTS,
-  ENTRY_PLAN_CODE,
-  PLAN_TIERS,
+  COMMISSION_BPS,
+  CREDIT_BALANCE_CAP_CENTS,
+  CREDIT_PACKS,
+  ENTRY_PACK_CODE,
+  PLATFORM_CURRENCY,
 } from '../../common/constants/billing';
 import { DRIZZLE } from '../../database/database.constants';
 import type { DrizzleDB } from '../../database/drizzle.types';
-import {
-  subscriptionPlans,
-  subscriptions,
-  type SubscriptionPlanRow,
-} from '../../database/schema';
+import { creditPacks, type CreditPackRow } from '../../database/schema';
 
-/** Bounds an operator typo can't escape: ৳1 … ৳100,000 per month. */
-export const MIN_MONTHLY_FEE_CENTS = 100;
-export const MAX_MONTHLY_FEE_CENTS = 10_000_000;
+/** Bounds an operator typo can't escape: ৳1 … ৳1,00,000 for one pack. */
+export const MIN_PACK_PRICE_CENTS = 100;
+export const MAX_PACK_PRICE_CENTS = 10_000_000;
 
-/** Bounds on a plan's monthly sales cap: ৳1,000 … ৳100 crore. */
-export const MIN_SALES_CAP_CENTS = 100_000;
-export const MAX_SALES_CAP_CENTS = 100_000_000_000;
+/** Bounds on the selling a pack pays for: ৳1,000 … ৳100 crore. */
+export const MIN_SALES_CREDIT_CENTS = 100_000;
+export const MAX_SALES_CREDIT_CENTS = 100_000_000_000;
 
-/** One rung of the ladder, as the console and the landing page read it. */
-export interface PlanView {
+/** One pack on the shelf, as the console and the landing page read it. */
+export interface CreditPackView {
   id: string;
   code: string;
   name: string;
-  /** Monthly sales ceiling in paisa; null = uncapped. */
-  salesCapCents: number | null;
-  /** Monthly sales ceiling in whole taka; null = uncapped. */
-  salesCap: number | null;
+  /** Selling this pack pays for, in paisa. */
+  salesCreditCents: number;
+  /** Selling this pack pays for, in whole taka, e.g. 100000. */
+  salesCredit: number;
   priceCents: number;
-  /** Monthly price in whole taka, e.g. 599. */
+  /** What the pack costs in whole taka, e.g. 1899. */
   price: number;
+  /**
+   * The pack as a share of the sales it covers, e.g. 1.9 for ৳1,899 per
+   * ৳1,00,000 — the number a seller weighs against the commission rate.
+   */
+  ratePct: number;
+  badge: string | null;
   sortOrder: number;
   active: boolean;
 }
 
 export interface PricingView {
-  /** Entry-plan monthly fee in whole taka, e.g. 599. */
-  monthlyFee: number;
-  monthlyFeeCents: number;
   currency: string;
-  /** The whole ladder, cheapest first. */
-  plans: PlanView[];
+  /** The verified track's rate as a percentage, e.g. 1.5. */
+  commissionPct: number;
+  commissionBps: number;
+  /** The most credit a shop may hold at once, in paisa and in taka. */
+  creditCapCents: number;
+  creditCap: number;
+  /** The packs on sale, cheapest first. */
+  packs: CreditPackView[];
+  /** The cheapest pack — what "from ৳X" quotes. */
+  entryPack: CreditPackView | null;
 }
 
-/** The seeded ladder, used when the catalog table can't be read. */
-const FALLBACK_PLANS: PlanView[] = PLAN_TIERS.map((tier, i) => ({
-  id: tier.code,
-  code: tier.code,
-  name: tier.name,
-  salesCapCents: tier.salesCapCents,
-  salesCap: tier.salesCapCents === null ? null : tier.salesCapCents / 100,
-  priceCents: tier.priceCents,
-  price: tier.priceCents / 100,
-  sortOrder: i + 1,
-  active: true,
-}));
+function round2(n: number): number {
+  return Math.round(n * 100) / 100;
+}
 
-function toView(row: SubscriptionPlanRow): PlanView {
+function toView(row: CreditPackRow): CreditPackView {
   return {
     id: row.id,
     code: row.code,
     name: row.name,
-    salesCapCents: row.salesCapCents,
-    salesCap: row.salesCapCents === null ? null : row.salesCapCents / 100,
+    salesCreditCents: row.salesCreditCents,
+    salesCredit: row.salesCreditCents / 100,
     priceCents: row.priceCents,
     price: row.priceCents / 100,
+    ratePct: round2((row.priceCents / row.salesCreditCents) * 100),
+    badge: row.badge,
     sortOrder: row.sortOrder,
     active: row.active,
   };
 }
 
+/** The seeded shelf, used when the catalogue table can't be read. */
+const FALLBACK_PACKS: CreditPackView[] = CREDIT_PACKS.map((seed, i) =>
+  toView({
+    id: seed.code,
+    code: seed.code,
+    name: seed.name,
+    salesCreditCents: seed.salesCreditCents,
+    priceCents: seed.priceCents,
+    badge: seed.badge ?? null,
+    sortOrder: i + 1,
+    active: true,
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  }),
+);
+
 /**
- * The plan catalog: five rungs priced by monthly sales, read from
- * `subscription_plans` rather than constants so the operator can re-price a
- * tier from the console without a deploy. Every quote and charge resolves a
- * plan through here.
+ * The credit-pack catalogue and the commission rate — everything the platform
+ * charges for. Read from `credit_packs` rather than constants so the operator
+ * can re-price a pack from the console without a deploy; every quote and
+ * every charge resolves a pack through here.
  *
- * Cached in memory: the catalog is read on hot paths (every subscription view,
- * every coupon preview, every landing-page hit) but changes about never.
- * `updatePlan()` is the only writer, so it refreshes the cache directly; a
- * stale catalog can therefore only survive on another API instance, and only
- * until the TTL expires.
+ * Cached in memory: the catalogue is read on hot paths (every subscription
+ * view, every coupon preview, every landing-page hit) but changes about never.
+ * `updatePack()` is the only writer, so it clears the cache directly; a stale
+ * catalogue can therefore only survive on another API instance, and only until
+ * the TTL expires.
  */
 @Injectable()
 export class BillingSettingsService {
   private static readonly CACHE_TTL_MS = 60_000;
   private readonly logger = new Logger(BillingSettingsService.name);
-  private cached: { plans: PlanView[]; at: number } | null = null;
+  private cached: { packs: CreditPackView[]; at: number } | null = null;
 
   constructor(@Inject(DRIZZLE) private readonly db: DrizzleDB) {}
 
-  // ── Catalog ───────────────────────────────────────────────────
+  // ── Catalogue ─────────────────────────────────────────────────
 
-  /** Every plan, cheapest first — retired ones included. */
-  async allPlans(): Promise<PlanView[]> {
+  /** Every pack, cheapest first — retired ones included. */
+  async allPacks(): Promise<CreditPackView[]> {
     const now = Date.now();
     if (
       this.cached &&
       now - this.cached.at < BillingSettingsService.CACHE_TTL_MS
     ) {
-      return this.cached.plans;
+      return this.cached.packs;
     }
     try {
-      const rows = await this.db.query.subscriptionPlans.findMany({
-        orderBy: [asc(subscriptionPlans.sortOrder)],
+      const rows = await this.db.query.creditPacks.findMany({
+        orderBy: [asc(creditPacks.sortOrder)],
       });
-      const plans = rows.length ? rows.map(toView) : FALLBACK_PLANS;
-      this.cached = { plans, at: now };
-      return plans;
+      const packs = rows.length ? rows.map(toView) : FALLBACK_PACKS;
+      this.cached = { packs, at: now };
+      return packs;
     } catch (err) {
-      // Never let a catalog read failure block a checkout — quote the seeded
-      // ladder and let the next call retry.
+      // Never let a catalogue read failure block a purchase — quote the
+      // seeded shelf and let the next call retry.
       this.logger.error(
-        `Falling back to the seeded plan ladder: ${String(err)}`,
+        `Falling back to the seeded credit packs: ${String(err)}`,
       );
-      return this.cached?.plans ?? FALLBACK_PLANS;
+      return this.cached?.packs ?? FALLBACK_PACKS;
     }
   }
 
-  /** The plans on sale, cheapest first — what a seller may pick. */
-  async plans(): Promise<PlanView[]> {
-    return (await this.allPlans()).filter((p) => p.active);
+  /** The packs on sale, cheapest first — what a seller may buy. */
+  async packs(): Promise<CreditPackView[]> {
+    return (await this.allPacks()).filter((p) => p.active);
   }
 
-  /**
-   * One plan by code. Falls back to the entry plan for an unknown code so a
-   * subscription pointing at a deleted rung still renders and still bills.
-   */
-  async planByCode(code: string | null | undefined): Promise<PlanView> {
-    const all = await this.allPlans();
-    return all.find((p) => p.code === code) ?? (await this.entryPlan());
+  /** One pack by code, or null when the code names nothing on sale. */
+  async packByCode(
+    code: string | null | undefined,
+  ): Promise<CreditPackView | null> {
+    if (!code) {
+      return null;
+    }
+    return (await this.allPacks()).find((p) => p.code === code) ?? null;
   }
 
-  /** The rung a shop lands on when it first subscribes (the cheapest one). */
-  async entryPlan(): Promise<PlanView> {
-    const sellable = await this.plans();
+  /** The cheapest pack on sale — what "from ৳X" quotes. */
+  async entryPack(): Promise<CreditPackView | null> {
+    const sellable = await this.packs();
     return (
-      sellable.find((p) => p.code === ENTRY_PLAN_CODE) ??
+      sellable.find((p) => p.code === ENTRY_PACK_CODE) ??
       sellable[0] ??
-      FALLBACK_PLANS[0]
+      FALLBACK_PACKS[0] ??
+      null
     );
   }
 
-  /**
-   * The next rung up from `code`, or null at the top of the ladder — what
-   * auto-scale moves a shop onto when its sales reach the cap.
-   */
-  async nextPlanUp(code: string): Promise<PlanView | null> {
-    const sellable = await this.plans();
-    const current = sellable.find((p) => p.code === code);
-    // A shop on a retired rung climbs to the cheapest sellable rung that is
-    // dearer than what it pays today.
-    const from = current?.sortOrder ?? -1;
-    return sellable.find((p) => p.sortOrder > from) ?? null;
-  }
-
-  // ── Pricing (the entry price, quoted before a plan is picked) ──
-
-  /**
-   * The entry plan's price in paisa. This is what the landing page, the
-   * create-shop wizard and every coupon preview quote, since a new shop
-   * always starts on the entry rung.
-   */
-  async monthlyFeeCents(): Promise<number> {
-    try {
-      return (await this.entryPlan()).priceCents;
-    } catch {
-      return DEFAULT_MONTHLY_FEE_CENTS;
-    }
-  }
+  // ── Pricing (what the landing page and the console quote) ──────
 
   async pricing(): Promise<PricingView> {
-    const [plans, entry] = await Promise.all([this.plans(), this.entryPlan()]);
+    const [packs, entryPack] = await Promise.all([
+      this.packs(),
+      this.entryPack(),
+    ]);
     return {
-      monthlyFee: entry.priceCents / 100,
-      monthlyFeeCents: entry.priceCents,
-      currency: 'BDT',
-      plans,
+      currency: PLATFORM_CURRENCY,
+      commissionPct: COMMISSION_BPS / 100,
+      commissionBps: COMMISSION_BPS,
+      creditCapCents: CREDIT_BALANCE_CAP_CENTS,
+      creditCap: CREDIT_BALANCE_CAP_CENTS / 100,
+      packs,
+      entryPack,
     };
   }
 
   // ── Operator edits ────────────────────────────────────────────
 
   /**
-   * Re-price or re-cap one rung. Live subscriptions sitting on that rung are
-   * re-priced in the same breath — the platform sells one ladder, so a shop
-   * that signed up last month must not keep paying last month's price.
-   * Cancelled subscriptions and recorded payments keep their historical
-   * amounts.
+   * Re-price a pack, change how much selling it buys, or retire it. Nothing
+   * already sold is touched: credit a seller bought is theirs at the price
+   * they paid, and the ledger keeps its historical amounts. Only what is on
+   * the shelf from here on changes.
    */
-  async updatePlan(
+  async updatePack(
     id: string,
     patch: {
       name?: string;
       priceCents?: number;
-      salesCapCents?: number | null;
+      salesCreditCents?: number;
+      badge?: string | null;
       active?: boolean;
     },
-  ): Promise<PlanView> {
+  ): Promise<CreditPackView> {
     const [row] = await this.db
-      .update(subscriptionPlans)
+      .update(creditPacks)
       .set({
         ...(patch.name !== undefined && { name: patch.name }),
         ...(patch.priceCents !== undefined && { priceCents: patch.priceCents }),
-        ...(patch.salesCapCents !== undefined && {
-          salesCapCents: patch.salesCapCents,
+        ...(patch.salesCreditCents !== undefined && {
+          salesCreditCents: patch.salesCreditCents,
         }),
+        ...(patch.badge !== undefined && { badge: patch.badge }),
         ...(patch.active !== undefined && { active: patch.active }),
       })
-      .where(eq(subscriptionPlans.id, id))
+      .where(eq(creditPacks.id, id))
       .returning();
     if (!row) {
-      throw new NotFoundException('Plan not found');
+      throw new NotFoundException('Credit pack not found');
     }
-
-    if (patch.priceCents !== undefined) {
-      const cents = patch.priceCents;
-      const repriced = await this.db
-        .update(subscriptions)
-        .set({
-          amountCents: cents,
-          // A coupon applied at the old price may out-discount the new one;
-          // renewals charge amount - pending_discount, which must never go
-          // negative. Clamping caps the coupon at "next month free".
-          pendingDiscountCents: sql`LEAST(${subscriptions.pendingDiscountCents}, ${cents})`,
-        })
-        .where(
-          and(
-            eq(subscriptions.planCode, row.code),
-            ne(subscriptions.status, 'cancelled'),
-            ne(subscriptions.amountCents, cents),
-          ),
-        )
-        .returning({ id: subscriptions.id });
-      this.logger.log(
-        `Plan ${row.code} priced at ${cents / 100} BDT; re-priced ${repriced.length} subscription(s)`,
-      );
-    }
-
+    this.logger.log(
+      `Credit pack ${row.code}: ${row.salesCreditCents / 100} BDT of selling for ${row.priceCents / 100} BDT`,
+    );
     this.cached = null;
     return toView(row);
   }

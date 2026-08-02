@@ -15,7 +15,7 @@ export * from './orders.schema';
 export * from './order-amount-adjustments.schema';
 export * from './combos.schema';
 export * from './shop-coupons.schema';
-export * from './subscription-plans.schema';
+export * from './credit-packs.schema';
 export * from './subscriptions.schema';
 export * from './coupons.schema';
 export * from './referral-links.schema';

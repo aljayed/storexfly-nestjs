@@ -1,7 +1,6 @@
 import {
   Body,
   Controller,
-  Delete,
   Get,
   Param,
   Patch,
@@ -24,16 +23,12 @@ import { ShopScopeGuard } from '../../common/guards/shop-scope.guard';
 import type { SellerPrincipal } from '../../common/types/principal';
 import { CouponsService } from '../coupons/coupons.service';
 import { CouponPreviewResponse } from '../coupons/dto/coupon.response';
-import { ApplyCouponDto } from './dto/apply-coupon.dto';
-import { ChangePlanDto } from './dto/change-plan.dto';
-import { PayShopCreditDto } from './dto/pay-shop-credit.dto';
+import { BuyCreditsDto } from './dto/buy-credits.dto';
 import { SetAutoDebitDto } from './dto/set-auto-debit.dto';
-import { SetAutoResetDto } from './dto/set-auto-reset.dto';
-import { SetAutoScaleDto } from './dto/set-auto-scale.dto';
+import { SetBillingModeDto } from './dto/set-billing-mode.dto';
 import { SetShopLiveDto } from './dto/set-shop-live.dto';
 import {
-  PlanResponse,
-  ShopCreditResponse,
+  CreditPackResponse,
   SubscriptionResponse,
 } from './dto/subscription.response';
 import { BillingSettingsService } from '../billing/billing-settings.service';
@@ -49,60 +44,45 @@ export class SubscriptionsController {
   ) {}
 
   // ── Public pricing ────────────────────────────────────────────
-  // The landing page and the create-shop wizard quote the fee before anyone
-  // has signed in, so this is the one billing route with no principal.
+  // The landing page quotes the packs and the commission rate before anyone
+  // has signed in, so these are the billing routes with no principal.
   @Public()
   @Get('billing/pricing')
   @ApiOperation({
-    summary: 'The entry monthly per-shop fee, plus the whole plan ladder',
+    summary:
+      'The credit packs on sale, the commission rate, the credit cap and any live launch offer',
   })
-  pricing() {
-    return this.billing.pricing();
+  async pricing() {
+    // The launch coupon rides along so the landing page can advertise it, but
+    // only while it would actually be accepted at checkout.
+    const [pricing, launchOffer] = await Promise.all([
+      this.billing.pricing(),
+      this.coupons.launchOffer(),
+    ]);
+    return { ...pricing, launchOffer };
   }
 
   @Public()
-  @Get('billing/plans')
-  @ApiOperation({ summary: 'The plans on sale, cheapest first' })
-  @ApiOkResponse({ type: [PlanResponse] })
-  async plans() {
-    return (await this.billing.plans()).map(PlanResponse.from);
-  }
-
-  // ── Seller (onboarding wizard) ────────────────────────────────
-  @ApiBearerAuth()
-  @Get('billing/shop-credit')
-  @ApiOperation({ summary: 'Has the seller paid the shop-creation fee?' })
-  @ApiOkResponse({ type: ShopCreditResponse })
-  getShopCredit(@CurrentUser() user: SellerPrincipal) {
-    return this.subscriptions.getShopCreationCredit(user.id);
-  }
-
-  @ApiBearerAuth()
-  @Post('billing/shop-credit')
-  @ApiOperation({ summary: 'Pay the shop-creation fee (dummy gateway)' })
-  @ApiOkResponse({ type: ShopCreditResponse })
-  payShopCredit(
-    @CurrentUser() user: SellerPrincipal,
-    @Body() dto: PayShopCreditDto,
-  ) {
-    return this.subscriptions.payShopCreationFee(
-      user.id,
-      dto.couponCode,
-      dto.refSlug,
-    );
+  @Get('billing/packs')
+  @ApiOperation({ summary: 'The credit packs on sale, cheapest first' })
+  @ApiOkResponse({ type: [CreditPackResponse] })
+  async packs() {
+    return (await this.billing.packs()).map(CreditPackResponse.from);
   }
 
   @ApiBearerAuth()
   @Get('billing/coupon-preview')
-  @ApiOperation({
-    summary: 'Dry-run a coupon against the shop-creation fee',
-  })
+  @ApiOperation({ summary: 'Dry-run a coupon against a credit pack' })
   @ApiOkResponse({ type: CouponPreviewResponse })
-  previewCoupon(
+  async previewCoupon(
     @CurrentUser() user: SellerPrincipal,
     @Query('code') code = '',
+    @Query('packCode') packCode?: string,
   ) {
-    return this.coupons.preview(code, user.id);
+    const pack =
+      (await this.billing.packByCode(packCode)) ??
+      (await this.billing.entryPack());
+    return this.coupons.preview(code, user.id, pack?.priceCents);
   }
 
   // ── Admin console (Subscription page) ─────────────────────────
@@ -111,7 +91,7 @@ export class SubscriptionsController {
   @RequirePerm('subscription.manage')
   @ApiBearerAuth()
   @Get('shops/:shopId/subscription')
-  @ApiOperation({ summary: 'Admin: subscription status + payment history' })
+  @ApiOperation({ summary: 'Admin: billing state + payment history' })
   @ApiOkResponse({ type: SubscriptionResponse })
   getForShop(@Param('shopId') shopId: string) {
     return this.subscriptions.getForShop(shopId);
@@ -121,8 +101,38 @@ export class SubscriptionsController {
   @UseGuards(AdminJwtAuthGuard, ShopScopeGuard, RolesGuard)
   @RequirePerm('subscription.manage')
   @ApiBearerAuth()
+  @Post('shops/:shopId/subscription/credits')
+  @ApiOperation({ summary: 'Admin: buy a sales-credit pack (dummy gateway)' })
+  @ApiOkResponse({ type: SubscriptionResponse })
+  buyCredits(@Param('shopId') shopId: string, @Body() dto: BuyCreditsDto) {
+    return this.subscriptions.buyCredits(
+      shopId,
+      dto.packCode,
+      dto.couponCode,
+      dto.refSlug,
+    );
+  }
+
+  @Public()
+  @UseGuards(AdminJwtAuthGuard, ShopScopeGuard, RolesGuard)
+  @RequirePerm('subscription.manage')
+  @ApiBearerAuth()
+  @Post('shops/:shopId/subscription/mode')
+  @ApiOperation({
+    summary:
+      'Admin: switch between pre-paid credits and post-paid commission (needs a verified licence)',
+  })
+  @ApiOkResponse({ type: SubscriptionResponse })
+  setMode(@Param('shopId') shopId: string, @Body() dto: SetBillingModeDto) {
+    return this.subscriptions.setBillingMode(shopId, dto.mode);
+  }
+
+  @Public()
+  @UseGuards(AdminJwtAuthGuard, ShopScopeGuard, RolesGuard)
+  @RequirePerm('subscription.manage')
+  @ApiBearerAuth()
   @Post('shops/:shopId/subscription/pay')
-  @ApiOperation({ summary: 'Admin: manually pay an overdue renewal' })
+  @ApiOperation({ summary: 'Admin: settle an outstanding commission bill' })
   @ApiOkResponse({ type: SubscriptionResponse })
   payNow(@Param('shopId') shopId: string) {
     return this.subscriptions.payNow(shopId);
@@ -132,22 +142,8 @@ export class SubscriptionsController {
   @UseGuards(AdminJwtAuthGuard, ShopScopeGuard, RolesGuard)
   @RequirePerm('subscription.manage')
   @ApiBearerAuth()
-  @Post('shops/:shopId/subscription/activate')
-  @ApiOperation({
-    summary:
-      'Admin: upgrade a free shop to the paid plan (consumes the paid shop credit)',
-  })
-  @ApiOkResponse({ type: SubscriptionResponse })
-  activate(@Param('shopId') shopId: string) {
-    return this.subscriptions.activateForExistingShop(shopId);
-  }
-
-  @Public()
-  @UseGuards(AdminJwtAuthGuard, ShopScopeGuard, RolesGuard)
-  @RequirePerm('subscription.manage')
-  @ApiBearerAuth()
   @Post('shops/:shopId/subscription/cancel')
-  @ApiOperation({ summary: 'Admin: cancel the subscription (shop goes off)' })
+  @ApiOperation({ summary: 'Admin: cancel billing (shop goes off)' })
   @ApiOkResponse({ type: SubscriptionResponse })
   cancel(@Param('shopId') shopId: string) {
     return this.subscriptions.cancel(shopId);
@@ -158,7 +154,7 @@ export class SubscriptionsController {
   @RequirePerm('subscription.manage')
   @ApiBearerAuth()
   @Post('shops/:shopId/subscription/resume')
-  @ApiOperation({ summary: 'Admin: resume a cancelled subscription' })
+  @ApiOperation({ summary: 'Admin: resume a cancelled shop' })
   @ApiOkResponse({ type: SubscriptionResponse })
   resume(@Param('shopId') shopId: string) {
     return this.subscriptions.resume(shopId);
@@ -168,71 +164,10 @@ export class SubscriptionsController {
   @UseGuards(AdminJwtAuthGuard, ShopScopeGuard, RolesGuard)
   @RequirePerm('subscription.manage')
   @ApiBearerAuth()
-  @Post('shops/:shopId/subscription/coupon')
-  @ApiOperation({ summary: 'Admin: apply a coupon to the next renewal' })
-  @ApiOkResponse({ type: SubscriptionResponse })
-  applyCoupon(@Param('shopId') shopId: string, @Body() dto: ApplyCouponDto) {
-    return this.subscriptions.applyCoupon(shopId, dto.code);
-  }
-
-  @Public()
-  @UseGuards(AdminJwtAuthGuard, ShopScopeGuard, RolesGuard)
-  @RequirePerm('subscription.manage')
-  @ApiBearerAuth()
-  @Delete('shops/:shopId/subscription/coupon')
-  @ApiOperation({ summary: 'Admin: remove the pending renewal coupon' })
-  @ApiOkResponse({ type: SubscriptionResponse })
-  removeCoupon(@Param('shopId') shopId: string) {
-    return this.subscriptions.removeCoupon(shopId);
-  }
-
-  @Public()
-  @UseGuards(AdminJwtAuthGuard, ShopScopeGuard, RolesGuard)
-  @RequirePerm('subscription.manage')
-  @ApiBearerAuth()
-  @Post('shops/:shopId/subscription/plan')
-  @ApiOperation({
-    summary:
-      'Admin: change plan — up starts now (prorated), down starts at the next renewal',
-  })
-  @ApiOkResponse({ type: SubscriptionResponse })
-  changePlan(@Param('shopId') shopId: string, @Body() dto: ChangePlanDto) {
-    return this.subscriptions.changePlan(shopId, dto.code);
-  }
-
-  @Public()
-  @UseGuards(AdminJwtAuthGuard, ShopScopeGuard, RolesGuard)
-  @RequirePerm('subscription.manage')
-  @ApiBearerAuth()
-  @Patch('shops/:shopId/subscription/auto-scale')
-  @ApiOperation({
-    summary: 'Admin: toggle automatic upgrade at 100% of the sales cap',
-  })
-  @ApiOkResponse({ type: SubscriptionResponse })
-  setAutoScale(@Param('shopId') shopId: string, @Body() dto: SetAutoScaleDto) {
-    return this.subscriptions.setAutoScale(shopId, dto.enabled);
-  }
-
-  @Public()
-  @UseGuards(AdminJwtAuthGuard, ShopScopeGuard, RolesGuard)
-  @RequirePerm('subscription.manage')
-  @ApiBearerAuth()
-  @Patch('shops/:shopId/subscription/auto-reset')
-  @ApiOperation({
-    summary:
-      'Admin: toggle "start every period on the entry plan" (needs auto-scale)',
-  })
-  @ApiOkResponse({ type: SubscriptionResponse })
-  setAutoReset(@Param('shopId') shopId: string, @Body() dto: SetAutoResetDto) {
-    return this.subscriptions.setAutoReset(shopId, dto.enabled);
-  }
-
-  @Public()
-  @UseGuards(AdminJwtAuthGuard, ShopScopeGuard, RolesGuard)
-  @RequirePerm('subscription.manage')
-  @ApiBearerAuth()
   @Patch('shops/:shopId/subscription/auto-debit')
-  @ApiOperation({ summary: 'Admin: toggle automatic monthly debit' })
+  @ApiOperation({
+    summary: 'Admin: toggle automatic collection of the monthly commission',
+  })
   @ApiOkResponse({ type: SubscriptionResponse })
   setAutoDebit(@Param('shopId') shopId: string, @Body() dto: SetAutoDebitDto) {
     return this.subscriptions.setAutoDebit(shopId, dto.enabled);

@@ -3,11 +3,7 @@ import * as bcrypt from 'bcryptjs';
 import { drizzle } from 'drizzle-orm/postgres-js';
 import { authenticator } from 'otplib';
 import postgres from 'postgres';
-import {
-  DEFAULT_MONTHLY_FEE_CENTS,
-  ENTRY_PLAN_CODE,
-  PLAN_TIERS,
-} from '../common/constants/billing';
+import { COMMISSION_BPS, CREDIT_PACKS } from '../common/constants/billing';
 import { BRAND_SWATCHES } from '../common/constants/brand-swatches';
 import { dollarsToCents } from '../common/utils/money.util';
 import { handleize } from '../common/utils/slug.util';
@@ -485,21 +481,22 @@ async function seed(): Promise<void> {
     await db.delete(schema.shops);
     await db.delete(schema.users);
 
-    // The plan ladder is seeded by migration 0058 and re-priceable by the
-    // operator, so it is topped up rather than wiped with the demo data.
-    console.log('Ensuring the subscription plan ladder…');
+    // The credit-pack shelf is seeded by migration 0060 and re-priceable by
+    // the operator, so it is topped up rather than wiped with the demo data.
+    console.log('Ensuring the credit pack shelf…');
     await db
-      .insert(schema.subscriptionPlans)
+      .insert(schema.creditPacks)
       .values(
-        PLAN_TIERS.map((tier, i) => ({
-          code: tier.code,
-          name: tier.name,
-          salesCapCents: tier.salesCapCents,
-          priceCents: tier.priceCents,
+        CREDIT_PACKS.map((pack, i) => ({
+          code: pack.code,
+          name: pack.name,
+          salesCreditCents: pack.salesCreditCents,
+          priceCents: pack.priceCents,
+          badge: pack.badge ?? null,
           sortOrder: i + 1,
         })),
       )
-      .onConflictDoNothing({ target: schema.subscriptionPlans.code });
+      .onConflictDoNothing({ target: schema.creditPacks.code });
 
     console.log('Creating owner + shop…');
     const passwordHash = await bcrypt.hash('password123', 12);
@@ -634,20 +631,28 @@ async function seed(): Promise<void> {
       }
     }
 
-    console.log('Creating platform subscription + payment history…');
-    // Subscription anchored on the 12th: started 2026-03-12, two auto
-    // renewals collected, next charge due 2026-06-12.
+    console.log('Creating platform billing record + payment history…');
+    // The demo shop is on the pre-paid credits track: it bought the ৳2,00,000
+    // pack on 2026-03-12 with the launch coupon, then topped up with the
+    // ৳1,00,000 pack in May. Its meter starts the day the shop opened, so the
+    // seeded orders draw the balance down and the console shows a real number.
+    const meterStartAt = new Date('2026-03-12T10:00:00Z');
+    const bigPack = CREDIT_PACKS[1];
+    const smallPack = CREDIT_PACKS[0];
     const [subscription] = await db
       .insert(schema.subscriptions)
       .values({
         shopId: shop.id,
         ownerId: owner.id,
         status: 'active',
-        planCode: ENTRY_PLAN_CODE,
-        amountCents: DEFAULT_MONTHLY_FEE_CENTS,
+        billingMode: 'credits',
         currency: 'BDT',
+        commissionBps: COMMISSION_BPS,
+        creditGrantedCents:
+          bigPack.salesCreditCents + smallPack.salesCreditCents,
+        meterStartAt,
         autoDebit: true,
-        startedAt: new Date('2026-03-12T10:00:00Z'),
+        startedAt: meterStartAt,
         nextBillingAt: new Date('2026-06-12T10:00:00Z'),
       })
       .returning();
@@ -656,27 +661,28 @@ async function seed(): Promise<void> {
         userId: owner.id,
         subscriptionId: subscription.id,
         shopId: shop.id,
-        type: 'shop_creation',
-        method: 'manual',
-        planCode: ENTRY_PLAN_CODE,
-        amountCents: DEFAULT_MONTHLY_FEE_CENTS,
+        type: 'credit_pack' as const,
+        method: 'manual' as const,
+        planCode: bigPack.code,
+        amountCents: Math.round(bigPack.priceCents / 2),
+        salesCreditCents: bigPack.salesCreditCents,
+        discountCents: bigPack.priceCents - Math.round(bigPack.priceCents / 2),
+        couponCode: 'LAUNCH50',
         currency: 'BDT',
-        paidAt: new Date('2026-03-12T10:00:00Z'),
-        consumedAt: new Date('2026-03-12T10:00:00Z'),
+        paidAt: meterStartAt,
       },
-      ...(['2026-04-12', '2026-05-12'] as const).map((day, i, days) => ({
+      {
         userId: owner.id,
         subscriptionId: subscription.id,
         shopId: shop.id,
-        type: 'renewal' as const,
-        method: 'auto' as const,
-        planCode: ENTRY_PLAN_CODE,
-        amountCents: DEFAULT_MONTHLY_FEE_CENTS,
+        type: 'credit_pack' as const,
+        method: 'manual' as const,
+        planCode: smallPack.code,
+        amountCents: smallPack.priceCents,
+        salesCreditCents: smallPack.salesCreditCents,
         currency: 'BDT',
-        periodStart: new Date(`${day}T10:00:00Z`),
-        periodEnd: new Date(`${days[i + 1] ?? '2026-06-12'}T10:00:00Z`),
-        paidAt: new Date(`${day}T10:00:00Z`),
-      })),
+        paidAt: new Date('2026-05-12T10:00:00Z'),
+      },
     ]);
 
     console.log('Creating admin account (with 2FA)…');

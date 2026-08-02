@@ -131,7 +131,9 @@ export class ReferralsService {
       .set({ clicks: sql`${referralLinks.clicks} + 1` })
       .where(eq(referralLinks.id, link.id));
 
-    const feeCents = await this.billing.monthlyFeeCents();
+    // Quoted against the entry pack — the cheapest way in, and what the
+    // landing page's "from ৳X" refers to.
+    const feeCents = (await this.billing.entryPack())?.priceCents ?? 0;
     // Same rounding as CouponsService.check: discount up to a whole taka.
     const discountCents =
       Math.ceil((feeCents * coupon.percentOff) / 100 / 100) * 100;
@@ -139,9 +141,9 @@ export class ReferralsService {
       slug: link.slug,
       code: coupon.code,
       percentOff: coupon.percentOff,
-      monthlyFee: feeCents / 100,
+      packPrice: feeCents / 100,
       discount: discountCents / 100,
-      firstMonthTotal: (feeCents - discountCents) / 100,
+      firstPaymentTotal: (feeCents - discountCents) / 100,
       currency: PLATFORM_CURRENCY,
     };
   }

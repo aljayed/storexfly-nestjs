@@ -166,12 +166,24 @@ export const subscriptionStatusEnum = pgEnum('subscription_status', [
   'cancelled',
 ]);
 
-// 'upgrade' = the prorated difference charged when a shop moves up a plan
-// mid-period. Enum values are append-only in Postgres, so it sits last.
+// How a shop pays the platform for the sales it makes. 'credits' buys sales
+// credit up front; 'commission' bills a flat percentage of last month's sales
+// and is only open to shops with a verified trade licence.
+export const billingModeEnum = pgEnum('billing_mode', [
+  'credits',
+  'commission',
+]);
+
+// 'credit_pack' = a seller bought sales credit. 'commission' = the monthly
+// bill on a verified shop's sales. 'shop_creation', 'renewal' and 'upgrade'
+// are the retired flat-fee/plan-ladder types, kept so old ledger rows still
+// read. Enum values are append-only in Postgres, so the new ones sit last.
 export const platformPaymentTypeEnum = pgEnum('platform_payment_type', [
   'shop_creation',
   'renewal',
   'upgrade',
+  'credit_pack',
+  'commission',
 ]);
 
 export const platformPaymentMethodEnum = pgEnum('platform_payment_method', [
@@ -205,6 +217,7 @@ export type SubscriptionStatus =
   (typeof subscriptionStatusEnum.enumValues)[number];
 export type PlatformPaymentType =
   (typeof platformPaymentTypeEnum.enumValues)[number];
+export type BillingMode = (typeof billingModeEnum.enumValues)[number];
 export type PlatformPaymentMethod =
   (typeof platformPaymentMethodEnum.enumValues)[number];
 export type NoticeTone = (typeof noticeToneEnum.enumValues)[number];

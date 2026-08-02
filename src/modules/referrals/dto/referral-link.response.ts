@@ -42,15 +42,24 @@ export class ReferralLinkResponse {
 
 /**
  * Public view of a referral link, quoted before anyone signs in. Amounts are
- * major units (৳). The discount covers only the first payment — the monthly
- * price afterwards is `monthlyFee`.
+ * major units (৳) and are quoted against the entry credit pack, which is what
+ * "from ৳X" means on the landing page. The discount covers only the seller's
+ * first payment; packs bought afterwards cost `packPrice`.
  */
 export class ReferralResolveResponse {
   @ApiProperty({ example: 'rahim-fb' }) slug!: string;
   @ApiProperty({ example: 'HOOMRI75' }) code!: string;
   @ApiProperty({ example: 75 }) percentOff!: number;
-  @ApiProperty({ example: 599 }) monthlyFee!: number;
-  @ApiProperty({ example: 450 }) discount!: number;
-  @ApiProperty({ example: 149 }) firstMonthTotal!: number;
+  @ApiProperty({
+    example: 1899,
+    description: 'The entry pack the quote is based on, in ৳',
+  })
+  packPrice!: number;
+  @ApiProperty({ example: 1425 }) discount!: number;
+  @ApiProperty({
+    example: 474,
+    description: 'What that pack costs with the code applied, in ৳',
+  })
+  firstPaymentTotal!: number;
   @ApiProperty({ example: 'BDT' }) currency!: string;
 }

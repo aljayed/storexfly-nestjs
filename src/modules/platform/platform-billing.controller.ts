@@ -1,7 +1,6 @@
 import { Body, Controller, Get, Param, Patch, UseGuards } from '@nestjs/common';
 import {
   ApiBearerAuth,
-  ApiProperty,
   ApiPropertyOptional,
   ApiOperation,
   ApiTags,
@@ -20,72 +19,68 @@ import { Public } from '../../common/decorators/public.decorator';
 import { PlatformJwtAuthGuard } from '../../common/guards/platform-jwt-auth.guard';
 import {
   BillingSettingsService,
-  MAX_MONTHLY_FEE_CENTS,
-  MAX_SALES_CAP_CENTS,
-  MIN_MONTHLY_FEE_CENTS,
-  MIN_SALES_CAP_CENTS,
+  MAX_PACK_PRICE_CENTS,
+  MAX_SALES_CREDIT_CENTS,
+  MIN_PACK_PRICE_CENTS,
+  MIN_SALES_CREDIT_CENTS,
 } from '../billing/billing-settings.service';
 
-export class UpdatePlanDto {
-  @ApiPropertyOptional({ example: 'Growth' })
+export class UpdateCreditPackDto {
+  @ApiPropertyOptional({ example: '৳2,00,000 in sales' })
   @IsOptional()
   @IsString()
   @Length(1, 60)
   name?: string;
 
   @ApiPropertyOptional({
-    example: 119900,
-    description: 'Monthly price in paisa (৳1,199.00 = 119900)',
-    minimum: MIN_MONTHLY_FEE_CENTS,
-    maximum: MAX_MONTHLY_FEE_CENTS,
+    example: 349900,
+    description: 'What the pack costs, in paisa (৳3,499.00 = 349900)',
+    minimum: MIN_PACK_PRICE_CENTS,
+    maximum: MAX_PACK_PRICE_CENTS,
   })
   @IsOptional()
   @IsInt()
-  @Min(MIN_MONTHLY_FEE_CENTS)
-  @Max(MAX_MONTHLY_FEE_CENTS)
+  @Min(MIN_PACK_PRICE_CENTS)
+  @Max(MAX_PACK_PRICE_CENTS)
   priceCents?: number;
 
   @ApiPropertyOptional({
-    example: 25000000,
-    nullable: true,
+    example: 20000000,
     description:
-      'Monthly sales ceiling in paisa; null makes the plan uncapped (the top rung)',
-    minimum: MIN_SALES_CAP_CENTS,
-    maximum: MAX_SALES_CAP_CENTS,
+      'How much selling the pack pays for, in paisa (৳2,00,000.00 = 20000000)',
+    minimum: MIN_SALES_CREDIT_CENTS,
+    maximum: MAX_SALES_CREDIT_CENTS,
   })
   @IsOptional()
-  // null is meaningful here — it is how a rung is made uncapped.
-  @ValidateIf((_, value) => value !== null)
   @IsInt()
-  @Min(MIN_SALES_CAP_CENTS)
-  @Max(MAX_SALES_CAP_CENTS)
-  salesCapCents?: number | null;
+  @Min(MIN_SALES_CREDIT_CENTS)
+  @Max(MAX_SALES_CREDIT_CENTS)
+  salesCreditCents?: number;
 
   @ApiPropertyOptional({
-    description: 'A retired plan stays on the shops using it but is not sold',
+    example: 'Most popular',
+    nullable: true,
+    description: 'Shelf label on the pack card; null clears it',
+  })
+  @IsOptional()
+  // null is meaningful here — it is how a label is removed.
+  @ValidateIf((_, value) => value !== null)
+  @IsString()
+  @Length(1, 40)
+  badge?: string | null;
+
+  @ApiPropertyOptional({
+    description: 'A retired pack stays on past purchases but is not sold',
   })
   @IsOptional()
   @IsBoolean()
   active?: boolean;
 }
 
-export class UpdatePricingDto {
-  @ApiProperty({
-    example: 59900,
-    description: 'Entry-plan monthly fee in paisa (৳599.00 = 59900)',
-    minimum: MIN_MONTHLY_FEE_CENTS,
-    maximum: MAX_MONTHLY_FEE_CENTS,
-  })
-  @IsInt()
-  @Min(MIN_MONTHLY_FEE_CENTS)
-  @Max(MAX_MONTHLY_FEE_CENTS)
-  monthlyFeeCents!: number;
-}
-
 /**
- * Operator console: the plan ladder sellers subscribe to. Re-pricing a rung
- * re-prices every live subscription sitting on it, so the platform never runs
- * two prices for the same plan.
+ * Operator console: the credit packs sellers buy. Re-pricing a pack only
+ * changes what is on the shelf from here on — credit a seller already bought
+ * is theirs at the price they paid, and the ledger keeps its own amounts.
  */
 @ApiTags('platform-admin')
 @Public()
@@ -97,33 +92,20 @@ export class PlatformBillingController {
 
   @Get()
   @ApiOperation({
-    summary: 'Platform: the entry price and every plan (retired ones included)',
+    summary:
+      'Platform: the commission rate, the credit cap and every pack (retired ones included)',
   })
   async pricing() {
     const [pricing, all] = await Promise.all([
       this.billing.pricing(),
-      this.billing.allPlans(),
+      this.billing.allPacks(),
     ]);
-    return { ...pricing, plans: all };
+    return { ...pricing, packs: all };
   }
 
-  @Patch('plans/:id')
-  @ApiOperation({
-    summary: 'Platform: re-price or re-cap one plan (re-prices its shops)',
-  })
-  updatePlan(@Param('id') id: string, @Body() dto: UpdatePlanDto) {
-    return this.billing.updatePlan(id, dto);
-  }
-
-  @Patch()
-  @ApiOperation({
-    summary: 'Platform: set the entry plan price (kept for older clients)',
-  })
-  async update(@Body() dto: UpdatePricingDto) {
-    const entry = await this.billing.entryPlan();
-    await this.billing.updatePlan(entry.id, {
-      priceCents: dto.monthlyFeeCents,
-    });
-    return this.billing.pricing();
+  @Patch('packs/:id')
+  @ApiOperation({ summary: 'Platform: re-price or retire one credit pack' })
+  updatePack(@Param('id') id: string, @Body() dto: UpdateCreditPackDto) {
+    return this.billing.updatePack(id, dto);
   }
 }

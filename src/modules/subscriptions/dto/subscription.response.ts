@@ -1,45 +1,70 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import type { PlanView } from '../../billing/billing-settings.service';
+import type { CreditPackView } from '../../billing/billing-settings.service';
 import type {
   ShopRow,
   SubscriptionPaymentRow,
   SubscriptionRow,
 } from '../../../database/schema';
 
-/** One rung of the plan ladder. Money in major units (৳). */
-export class PlanResponse {
-  @ApiProperty({ example: 'growth' }) code!: string;
-  @ApiProperty({ example: 'Growth' }) name!: string;
-  @ApiProperty({ example: 1199 }) price!: number;
+/** One credit pack on the shelf. Money in major units (৳). */
+export class CreditPackResponse {
+  @ApiProperty({ example: 'credit-200k' }) code!: string;
+  @ApiProperty({ example: '৳2,00,000 in sales' }) name!: string;
+  @ApiProperty({ example: 3499, description: 'What the pack costs, in ৳' })
+  price!: number;
   @ApiProperty({
-    example: 250000,
-    nullable: true,
-    description: 'Monthly sales ceiling in ৳; null on the uncapped top plan',
+    example: 200000,
+    description: 'How much selling the pack pays for, in ৳',
   })
-  salesCap!: number | null;
+  salesCredit!: number;
+  @ApiProperty({
+    example: 1.75,
+    description: 'The pack as a share of the sales it covers, e.g. 1.75%',
+  })
+  ratePct!: number;
+  @ApiPropertyOptional({ example: 'Most popular' }) badge?: string;
   @ApiProperty({ example: 2 }) sortOrder!: number;
 
-  static from(plan: PlanView): PlanResponse {
+  static from(pack: CreditPackView): CreditPackResponse {
     return {
-      code: plan.code,
-      name: plan.name,
-      price: plan.price,
-      salesCap: plan.salesCap,
-      sortOrder: plan.sortOrder,
+      code: pack.code,
+      name: pack.name,
+      price: pack.price,
+      salesCredit: pack.salesCredit,
+      ratePct: pack.ratePct,
+      badge: pack.badge ?? undefined,
+      sortOrder: pack.sortOrder,
     };
   }
 }
 
 /** One row of the platform-payment ledger. Amounts in major units (৳). */
 export class SubscriptionPaymentResponse {
+  @ApiProperty({
+    enum: ['credit_pack', 'commission', 'shop_creation', 'renewal', 'upgrade'],
+  })
+  type!: string;
   @ApiProperty() id!: string;
-  @ApiProperty({ enum: ['shop_creation', 'renewal', 'upgrade'] }) type!: string;
   @ApiProperty({ enum: ['auto', 'manual'] }) method!: string;
-  @ApiProperty({ example: 599 }) amount!: number;
+  @ApiProperty({ example: 1899 }) amount!: number;
   @ApiProperty({ example: 'BDT' }) currency!: string;
-  @ApiPropertyOptional({ example: 'growth' }) planCode?: string;
-  @ApiPropertyOptional({ example: 'HOOMRI75' }) couponCode?: string;
-  @ApiPropertyOptional({ example: 899.25 }) discount?: number;
+  @ApiPropertyOptional({
+    example: 'credit-100k',
+    description: 'The pack bought (or, on retired rows, the plan)',
+  })
+  planCode?: string;
+  @ApiPropertyOptional({
+    example: 100000,
+    description: 'credit_pack: the selling this purchase paid for, in ৳',
+  })
+  salesCredit?: number;
+  @ApiPropertyOptional({
+    example: 240000,
+    description: 'commission: the sales the rate was charged on, in ৳',
+  })
+  billableSales?: number;
+  @ApiPropertyOptional({ example: 'LAUNCH50' }) couponCode?: string;
+  @ApiPropertyOptional({ example: 949.5 }) discount?: number;
   @ApiPropertyOptional() periodStart?: string;
   @ApiPropertyOptional() periodEnd?: string;
   @ApiProperty() paidAt!: string;
@@ -52,6 +77,12 @@ export class SubscriptionPaymentResponse {
       amount: row.amountCents / 100,
       currency: row.currency,
       planCode: row.planCode ?? undefined,
+      salesCredit:
+        row.salesCreditCents === null ? undefined : row.salesCreditCents / 100,
+      billableSales:
+        row.billableSalesCents === null
+          ? undefined
+          : row.billableSalesCents / 100,
       couponCode: row.couponCode ?? undefined,
       discount: row.discountCents ? row.discountCents / 100 : undefined,
       periodStart: row.periodStart?.toISOString(),
@@ -61,27 +92,56 @@ export class SubscriptionPaymentResponse {
   }
 }
 
-/** The sales meter the plan's cap is measured against. */
-export class PlanUsageResponse {
-  @ApiProperty({ example: 84500, description: 'Sales this period, in ৳' })
-  sales!: number;
-  @ApiProperty({
-    example: 100000,
-    nullable: true,
-    description: 'The plan cap in ৳; null when uncapped',
-  })
-  cap!: number | null;
-  @ApiProperty({ example: 85, description: 'Share of the cap used, 0–999' })
+/** The credit meter: what was bought, what's been sold against it. */
+export class CreditStateResponse {
+  @ApiProperty({ example: 300000, description: 'Credit ever bought, in ৳' })
+  granted!: number;
+  @ApiProperty({ example: 218400, description: 'Sold against it so far, in ৳' })
+  used!: number;
+  @ApiProperty({ example: 81600, description: 'What is left, in ৳' })
+  balance!: number;
+  @ApiProperty({ example: 73, description: 'Share of the credit used, 0–100' })
   pct!: number;
+  @ApiProperty({
+    example: 1000000,
+    description: 'The most credit this shop may hold at once, in ৳',
+  })
+  cap!: number;
+  @ApiProperty({
+    example: 918400,
+    description: 'Headroom to buy more right now (cap − balance), in ৳',
+  })
+  roomToBuy!: number;
+  @ApiProperty({ description: 'The balance has run out and selling is paused' })
+  exhausted!: boolean;
+}
+
+/** The month a verified shop's commission is being counted for. */
+export class CommissionStateResponse {
+  @ApiProperty({ example: 1.5 }) ratePct!: number;
+  @ApiProperty({
+    example: 240000,
+    description: 'Sales so far this month that the rate applies to, in ৳',
+  })
+  billableSales!: number;
+  @ApiProperty({
+    example: 3600,
+    description: 'What the bill would be if the month ended now, in ৳',
+  })
+  accrued!: number;
   @ApiProperty() periodStart!: string;
   @ApiProperty() periodEnd!: string;
-  @ApiProperty({ description: 'Sales have reached or passed the cap' })
-  capReached!: boolean;
   @ApiPropertyOptional({
-    description:
-      'When selling stops unless the seller upgrades (auto-scale off only)',
+    example: 3600,
+    description: 'An issued bill that has not been paid yet, in ৳',
   })
-  graceEndsAt?: string;
+  due?: number;
+  @ApiPropertyOptional({
+    description: 'When the storefront pauses unless the due bill is settled',
+  })
+  dueBy?: string;
+  @ApiPropertyOptional() duePeriodStart?: string;
+  @ApiPropertyOptional() duePeriodEnd?: string;
 }
 
 /** Free-plan usage numbers rendered on the Subscription page. */
@@ -98,59 +158,47 @@ export class FreeTierUsageResponse {
 export class SubscriptionResponse {
   @ApiProperty() id!: string;
   @ApiProperty() shopId!: string;
-  /** Free trial or a paid rung of the ladder. */
+  /** 'free' until the shop buys its first pack or goes verified. */
   @ApiProperty({ enum: ['free', 'paid'] }) tier!: string;
   @ApiPropertyOptional({
     type: FreeTierUsageResponse,
-    description: 'Present only on the free plan',
+    description: 'Present only while the shop is on the free trial',
   })
   freeTier?: FreeTierUsageResponse;
   @ApiProperty({ enum: ['active', 'past_due', 'cancelled', 'free'] })
   status!: string;
-  /** The rung the shop is on. On the free plan this is the entry rung. */
-  @ApiProperty({ type: PlanResponse }) plan!: PlanResponse;
-  /** The whole ladder, cheapest first — what the seller can move to. */
-  @ApiProperty({ type: [PlanResponse] }) plans!: PlanResponse[];
-  @ApiPropertyOptional({
-    type: PlanResponse,
-    description: 'A downgrade waiting for the paid-up period to end',
-  })
-  scheduledPlan?: PlanResponse;
-  @ApiPropertyOptional({
-    type: PlanUsageResponse,
-    description: 'Absent on the free plan, which has no sales cap',
-  })
-  usage?: PlanUsageResponse;
-  @ApiProperty({
-    description: 'Move up a plan automatically at 100% of the cap',
-  })
-  autoScale!: boolean;
+  /** Which of the two tracks the shop pays on. */
+  @ApiProperty({ enum: ['credits', 'commission'] }) billingMode!: string;
   @ApiProperty({
     description:
-      'Start every billing period on the entry plan and let auto-scale climb again',
+      'The shop may switch to commission — its trade licence is verified',
   })
-  autoReset!: boolean;
-  /** The rung auto-reset returns to, and where a new shop starts. */
-  @ApiProperty({ type: PlanResponse }) entryPlan!: PlanResponse;
-  @ApiProperty({ example: 599 }) amount!: number;
+  canUseCommission!: boolean;
+  @ApiProperty({
+    enum: ['unsubmitted', 'pending', 'verified', 'rejected'],
+    description: 'Trade-licence verification state, the gate on commission',
+  })
+  kycStatus!: string;
+  @ApiProperty({
+    type: CreditStateResponse,
+    description: 'Always present — leftover credit is spent on either track',
+  })
+  credit!: CreditStateResponse;
+  @ApiPropertyOptional({
+    type: CommissionStateResponse,
+    description: 'Present only on the commission track',
+  })
+  commission?: CommissionStateResponse;
+  /** The packs on sale, cheapest first. */
+  @ApiProperty({ type: [CreditPackResponse] }) packs!: CreditPackResponse[];
   @ApiProperty({ example: 'BDT' }) currency!: string;
-  @ApiProperty() autoDebit!: boolean;
-  /** What the next renewal will actually charge (after any pending coupon). */
-  @ApiProperty({ example: 299.75 }) nextAmount!: number;
-  /** The same charge before any coupon — what renewals settle at from then on. */
-  @ApiProperty({ example: 599 }) nextFullAmount!: number;
-  @ApiPropertyOptional({
-    type: PlanResponse,
-    description:
-      'Set when the next renewal moves the shop to another plan (a parked downgrade, or auto-reset)',
-  })
-  nextPlan?: PlanResponse;
-  @ApiPropertyOptional({ example: 'HOOMRI75' }) couponCode?: string;
-  @ApiPropertyOptional({ example: 899.25 }) couponDiscount?: number;
+  @ApiProperty({ description: 'Collect the monthly commission automatically' })
+  autoDebit!: boolean;
   @ApiProperty() startedAt!: string;
-  @ApiProperty() nextBillingAt!: string;
+  @ApiProperty({ description: 'When the next commission bill is issued' })
+  nextBillingAt!: string;
   @ApiPropertyOptional() cancelledAt?: string;
-  /** True when the scheduled payment date has passed and payment is owed. */
+  /** True when money is owed right now. */
   @ApiProperty() dueNow!: boolean;
   @ApiProperty() shopLive!: boolean;
   @ApiProperty({ type: [SubscriptionPaymentResponse] })
@@ -160,145 +208,120 @@ export class SubscriptionResponse {
     sub: SubscriptionRow,
     shopLive: boolean,
     payments: SubscriptionPaymentRow[],
-    ladder: {
-      plan: PlanView;
-      plans: PlanView[];
-      scheduledPlan: PlanView | null;
-      /** The plan the next renewal bills for, or null to stay put. */
-      nextPlan: PlanView | null;
-      entryPlan: PlanView;
-      salesCents: number;
-      periodStart: Date;
-      periodEnd: Date;
-      graceMs: number;
+    view: {
+      tier: string;
+      freeTier?: FreeTierUsageResponse;
+      kycStatus: string;
+      canUseCommission: boolean;
+      packs: CreditPackView[];
+      creditCapCents: number;
+      granted: number;
+      used: number;
+      /** Commission-track only: the month being counted right now. */
+      period: { start: Date; end: Date };
+      billableSalesCents: number;
+      dueGraceMs: number;
     },
   ): SubscriptionResponse {
-    const capCents = ladder.plan.salesCapCents;
-    const capReached = capCents !== null && ladder.salesCents >= capCents;
+    const balance = Math.max(0, view.granted - view.used);
+    const accruedCents = Math.round(
+      (view.billableSalesCents * sub.commissionBps) / 10_000,
+    );
     return {
       id: sub.id,
       shopId: sub.shopId,
-      tier: 'paid',
-      plan: PlanResponse.from(ladder.plan),
-      plans: ladder.plans.map(PlanResponse.from),
-      scheduledPlan: ladder.scheduledPlan
-        ? PlanResponse.from(ladder.scheduledPlan)
-        : undefined,
-      entryPlan: PlanResponse.from(ladder.entryPlan),
-      autoScale: sub.autoScale,
-      autoReset: sub.autoReset,
-      usage: {
-        sales: ladder.salesCents / 100,
-        cap: ladder.plan.salesCap,
-        // Capped at 999 so a runaway month can't blow up a progress bar.
-        pct:
-          capCents === null || capCents === 0
-            ? 0
-            : Math.min(999, Math.round((ladder.salesCents / capCents) * 100)),
-        periodStart: ladder.periodStart.toISOString(),
-        periodEnd: ladder.periodEnd.toISOString(),
-        capReached,
-        graceEndsAt:
-          sub.capExceededAt && !sub.autoScale
-            ? new Date(
-                sub.capExceededAt.getTime() + ladder.graceMs,
-              ).toISOString()
-            : undefined,
-      },
+      tier: view.tier,
+      freeTier: view.freeTier,
       status: sub.status,
-      amount: sub.amountCents / 100,
+      billingMode: sub.billingMode,
+      canUseCommission: view.canUseCommission,
+      kycStatus: view.kycStatus,
+      credit: {
+        granted: view.granted / 100,
+        used: Math.min(view.used, view.granted) / 100,
+        balance: balance / 100,
+        pct:
+          view.granted === 0
+            ? 0
+            : Math.min(
+                100,
+                Math.round(
+                  (Math.min(view.used, view.granted) / view.granted) * 100,
+                ),
+              ),
+        cap: view.creditCapCents / 100,
+        roomToBuy: Math.max(0, view.creditCapCents - balance) / 100,
+        exhausted: balance <= 0,
+      },
+      commission:
+        sub.billingMode === 'commission'
+          ? {
+              ratePct: sub.commissionBps / 100,
+              billableSales: view.billableSalesCents / 100,
+              accrued: accruedCents / 100,
+              periodStart: view.period.start.toISOString(),
+              periodEnd: view.period.end.toISOString(),
+              due: sub.dueCents ? sub.dueCents / 100 : undefined,
+              dueBy: sub.dueSince
+                ? new Date(
+                    sub.dueSince.getTime() + view.dueGraceMs,
+                  ).toISOString()
+                : undefined,
+              duePeriodStart: sub.duePeriodStart?.toISOString(),
+              duePeriodEnd: sub.duePeriodEnd?.toISOString(),
+            }
+          : undefined,
+      packs: view.packs.map(CreditPackResponse.from),
       currency: sub.currency,
       autoDebit: sub.autoDebit,
-      // Auto-reset (or a parked downgrade) re-prices the next renewal, so
-      // quote that plan's price, never the one being left behind. A coupon
-      // bought at a dearer price can't turn a renewal into a refund.
-      nextAmount:
-        Math.max(
-          0,
-          (ladder.nextPlan?.priceCents ?? sub.amountCents) -
-            sub.pendingDiscountCents,
-        ) / 100,
-      nextFullAmount: (ladder.nextPlan?.priceCents ?? sub.amountCents) / 100,
-      nextPlan: ladder.nextPlan
-        ? PlanResponse.from(ladder.nextPlan)
-        : undefined,
-      couponCode: sub.pendingCouponCode ?? undefined,
-      couponDiscount: sub.pendingDiscountCents
-        ? sub.pendingDiscountCents / 100
-        : undefined,
       startedAt: sub.startedAt.toISOString(),
       nextBillingAt: sub.nextBillingAt.toISOString(),
       cancelledAt: sub.cancelledAt?.toISOString(),
-      dueNow: sub.status !== 'cancelled' && sub.nextBillingAt <= new Date(),
+      dueNow: sub.status !== 'cancelled' && sub.dueCents > 0,
       shopLive,
       payments: payments.map(SubscriptionPaymentResponse.fromRow),
     };
   }
 
   /**
-   * The free-plan card: no subscription row, just trial limits and usage. The
-   * ladder still rides along so the card can show what subscribing buys —
-   * `plan` is the entry rung the shop would land on.
+   * The card for a shop that has no subscription row at all — only possible
+   * for a shop created before this system existed and not yet touched. The
+   * shelf rides along so the card can still show what buying credit costs.
    */
-  static freeTier(
+  static bare(
     shop: ShopRow,
-    usage: {
-      ordersCount: number;
-      ordersCap: number;
-      productsCount: number;
-      maxProducts: number;
-      entryPlan: PlanView;
-      plans: PlanView[];
+    view: {
+      freeTier: FreeTierUsageResponse;
+      packs: CreditPackView[];
+      creditCapCents: number;
     },
   ): SubscriptionResponse {
     return {
       id: shop.id,
       shopId: shop.id,
       tier: 'free',
-      plan: PlanResponse.from(usage.entryPlan),
-      plans: usage.plans.map(PlanResponse.from),
-      entryPlan: PlanResponse.from(usage.entryPlan),
-      autoScale: false,
-      autoReset: false,
-      freeTier: {
-        ordersUsed: usage.ordersCount,
-        ordersCap: usage.ordersCap,
-        productsUsed: usage.productsCount,
-        maxProducts: usage.maxProducts,
-      },
+      freeTier: view.freeTier,
       status: 'free',
-      amount: usage.entryPlan.price,
+      billingMode: 'credits',
+      canUseCommission: shop.kycStatus === 'verified',
+      kycStatus: shop.kycStatus,
+      credit: {
+        granted: 0,
+        used: 0,
+        balance: 0,
+        pct: 0,
+        cap: view.creditCapCents / 100,
+        roomToBuy: view.creditCapCents / 100,
+        exhausted: false,
+      },
+      packs: view.packs.map(CreditPackResponse.from),
       currency: shop.currency,
       autoDebit: false,
-      nextAmount: usage.entryPlan.price,
-      nextFullAmount: usage.entryPlan.price,
       startedAt: shop.createdAt.toISOString(),
       nextBillingAt: shop.createdAt.toISOString(),
       dueNow: false,
       shopLive: shop.live,
       payments: [],
-    };
-  }
-}
-
-/** Pre-shop "creation fee" payment state for the onboarding wizard. */
-export class ShopCreditResponse {
-  @ApiProperty() paid!: boolean;
-  /** Amount actually charged (after any coupon), major units (৳). */
-  @ApiProperty({ example: 599 }) amount!: number;
-  @ApiProperty({ example: 'BDT' }) currency!: string;
-  @ApiPropertyOptional({ example: 'HOOMRI75' }) couponCode?: string;
-  @ApiPropertyOptional({ example: 899.25 }) discount?: number;
-  @ApiPropertyOptional() paidAt?: string;
-
-  static fromRow(row: SubscriptionPaymentRow): ShopCreditResponse {
-    return {
-      paid: true,
-      amount: row.amountCents / 100,
-      currency: row.currency,
-      couponCode: row.couponCode ?? undefined,
-      discount: row.discountCents ? row.discountCents / 100 : undefined,
-      paidAt: row.paidAt.toISOString(),
     };
   }
 }

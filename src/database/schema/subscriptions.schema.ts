@@ -1,5 +1,6 @@
 import { relations } from 'drizzle-orm';
 import {
+  bigint,
   boolean,
   index,
   integer,
@@ -10,6 +11,7 @@ import {
   varchar,
 } from 'drizzle-orm/pg-core';
 import {
+  billingModeEnum,
   platformPaymentMethodEnum,
   platformPaymentTypeEnum,
   subscriptionStatusEnum,
@@ -19,10 +21,24 @@ import { shops } from './shops.schema';
 import { users } from './users.schema';
 
 /**
- * The platform subscription a seller pays per shop, monthly.
- * `nextBillingAt` is the billing anchor: it always advances exactly one
- * calendar month from the *scheduled* date, never from the date a late
- * payment was actually made. `startedAt`'s day-of-month is the anchor day.
+ * How one shop pays the platform for the sales it makes. Every shop has
+ * exactly one of these, and it carries whichever of the two tracks the shop
+ * is on (see `common/constants/billing.ts`).
+ *
+ * **Credits.** `creditGrantedCents` is the running total of sales credit the
+ * shop has ever bought. What it has *used* is not stored — it is the value of
+ * the shop's non-cancelled orders since `meterStartAt`, so the balance is
+ * `granted - used` and a cancelled order hands its allowance straight back
+ * without anything having to un-write a counter. `creditExhaustedAt` marks
+ * when the balance last hit zero, which is what paused the storefront.
+ *
+ * **Commission.** `nextBillingAt` is the billing anchor: it always advances
+ * exactly one calendar month from the *scheduled* date, never from the date a
+ * late payment was actually made, and `startedAt`'s day-of-month is the
+ * anchor day. On each anchor the shop is billed `commissionBps` of what it
+ * sold in the month just ended (less anything covered by leftover credit).
+ * An unpaid bill sits in `dueCents` with `dueSince` starting the 25-day clock
+ * the seller has to settle it by hand.
  */
 export const subscriptions = pgTable(
   'subscriptions',
@@ -36,55 +52,43 @@ export const subscriptions = pgTable(
       .references(() => users.id, { onDelete: 'cascade' }),
     status: subscriptionStatusEnum('status').notNull().default('active'),
     /**
-     * Which rung of the plan ladder the shop is on right now
-     * (`subscription_plans.code`). Kept as a code rather than an FK so a
-     * retired plan can never orphan a live subscription.
+     * Which track the shop pays on. Every shop starts on 'credits';
+     * 'commission' is only reachable once its trade licence is verified.
      */
-    planCode: varchar('plan_code', { length: 32 }).notNull().default('starter'),
-    // Monthly fee in integer paisa (BDT cents), copied from the plan's price
-    // when the subscription opens or changes plan, and re-priced with it.
-    amountCents: integer('amount_cents').notNull().default(59900),
+    billingMode: billingModeEnum('billing_mode').notNull().default('credits'),
     currency: varchar('currency', { length: 3 }).notNull().default('BDT'),
-    /**
-     * A downgrade the seller picked, parked until the paid-up period ends —
-     * they keep the plan they paid for until it expires. Cleared when applied
-     * (or when they change their mind and pick another plan).
-     */
-    scheduledPlanCode: varchar('scheduled_plan_code', { length: 32 }),
-    /**
-     * When true, reaching 100% of the plan's sales cap moves the shop up one
-     * rung automatically (charging the prorated difference) instead of
-     * pausing it. Off by default — an upgrade costs money, so it is opt-in.
-     */
-    autoScale: boolean('auto_scale').notNull().default(false),
-    /**
-     * Pairs with `autoScale`: every billing date the plan drops back to the
-     * entry rung and only that is charged, then auto-scale climbs again as
-     * the month's sales come in — so a quiet month costs the entry price
-     * rather than last month's peak. Meaningless (and forced off) without
-     * auto-scale, which is what puts the shop back up.
-     */
-    autoReset: boolean('auto_reset').notNull().default(false),
-    /**
-     * When the shop's sales first passed the cap in the current period, with
-     * auto-scale off. Starts the grace clock; cleared when the seller
-     * upgrades or the period rolls over and the meter resets.
-     */
-    capExceededAt: timestamp('cap_exceeded_at', { withTimezone: true }),
-    // When true the platform collects the renewal automatically on the due
-    // date (dummy gateway). When false the sub goes past_due until the seller
-    // pays manually from the console.
-    autoDebit: boolean('auto_debit').notNull().default(true),
-    // Coupon the seller applied from the console, discounting only the next
-    // renewal. Consumed (cleared) when that renewal is collected; the code is
-    // denormalized so the console can show it if the coupon is deleted.
-    pendingCouponId: uuid('pending_coupon_id').references(() => coupons.id, {
-      onDelete: 'set null',
-    }),
-    pendingCouponCode: varchar('pending_coupon_code', { length: 40 }),
-    pendingDiscountCents: integer('pending_discount_cents')
+
+    // ── Credits track ──────────────────────────────────────────────
+    /** Every taka of sales credit this shop has ever bought, in paisa. */
+    creditGrantedCents: bigint('credit_granted_cents', { mode: 'number' })
       .notNull()
       .default(0),
+    /**
+     * Orders placed from here on draw credit down and count towards the
+     * commission bill. Set when the subscription opens, so sales a shop made
+     * before this system existed never eat credit bought after it.
+     */
+    meterStartAt: timestamp('meter_start_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    /** When the balance last hit zero — what paused the storefront. */
+    creditExhaustedAt: timestamp('credit_exhausted_at', { withTimezone: true }),
+
+    // ── Commission track ───────────────────────────────────────────
+    /** The shop's rate in basis points, snapshotted when it switches over. */
+    commissionBps: integer('commission_bps').notNull().default(150),
+    /** An issued monthly bill that has not been paid yet, in paisa. */
+    dueCents: integer('due_cents').notNull().default(0),
+    /** When that bill was issued — the start of the 25-day manual-pay clock. */
+    dueSince: timestamp('due_since', { withTimezone: true }),
+    /** The month the outstanding bill covers, for the console to name it. */
+    duePeriodStart: timestamp('due_period_start', { withTimezone: true }),
+    duePeriodEnd: timestamp('due_period_end', { withTimezone: true }),
+
+    // When true the platform collects the monthly commission automatically on
+    // the due date (dummy gateway). When false the bill goes straight to
+    // `dueCents` and the sub sits past_due until the seller pays by hand.
+    autoDebit: boolean('auto_debit').notNull().default(true),
     startedAt: timestamp('started_at', { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -110,13 +114,18 @@ export const subscriptions = pgTable(
 );
 
 /**
- * Ledger of platform payments. `shop_creation` rows are paid before the shop
- * exists (a "credit" the create-shop call consumes — `consumedAt`/`shopId`
- * are filled in at that point). `renewal` rows cover one billing period
- * (`periodStart`..`periodEnd`) and record whether they were auto-debited or
- * paid manually after the due date. `upgrade` rows are the prorated
- * difference charged when a shop moves up the plan ladder mid-period —
- * `periodStart`..`periodEnd` is the remainder of the period they cover.
+ * Ledger of platform payments — every taka a seller has paid the platform.
+ *
+ * `credit_pack` rows are a sales-credit purchase: `amountCents` is what the
+ * seller paid, `salesCreditCents` is how much selling it bought, and
+ * `planCode` names the pack. `commission` rows are one month's bill on a
+ * verified shop: `periodStart`..`periodEnd` is the month, `billableSalesCents`
+ * is the sales the rate was taken on, and `method` says whether it was
+ * auto-debited on the due date or paid by hand afterwards.
+ *
+ * `shop_creation`, `renewal` and `upgrade` are the retired flat-fee and
+ * plan-ladder types. Nothing writes them any more; they stay so a seller's
+ * history from before the two-track model still reads.
  */
 export const subscriptionPayments = pgTable(
   'subscription_payments',
@@ -133,10 +142,18 @@ export const subscriptionPayments = pgTable(
     }),
     type: platformPaymentTypeEnum('type').notNull(),
     method: platformPaymentMethodEnum('method').notNull().default('manual'),
-    /** Plan this payment bought, denormalized so the ledger stays readable. */
+    /**
+     * The credit pack this payment bought, denormalized so the ledger stays
+     * readable if the pack is re-priced or retired. (Named `plan_code` from
+     * the plan-ladder era; retired rows still carry their plan here.)
+     */
     planCode: varchar('plan_code', { length: 32 }),
     // The amount actually charged, after any coupon discount.
     amountCents: integer('amount_cents').notNull(),
+    /** credit_pack only: how much selling this purchase paid for, in paisa. */
+    salesCreditCents: bigint('sales_credit_cents', { mode: 'number' }),
+    /** commission only: the sales the rate was charged on, in paisa. */
+    billableSalesCents: bigint('billable_sales_cents', { mode: 'number' }),
     currency: varchar('currency', { length: 3 }).notNull().default('BDT'),
     // Coupon applied to this payment. The code is denormalized so the
     // ledger stays readable if the coupon is deleted.
@@ -148,7 +165,7 @@ export const subscriptionPayments = pgTable(
     periodStart: timestamp('period_start', { withTimezone: true }),
     periodEnd: timestamp('period_end', { withTimezone: true }),
     paidAt: timestamp('paid_at', { withTimezone: true }).notNull().defaultNow(),
-    // shop_creation only: when this credit was used to create a shop.
+    // Retired shop_creation rows only: when the credit was used to open a shop.
     consumedAt: timestamp('consumed_at', { withTimezone: true }),
   },
   (table) => [

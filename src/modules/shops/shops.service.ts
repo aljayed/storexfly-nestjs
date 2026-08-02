@@ -112,19 +112,10 @@ export class ShopsService {
           'The free plan is only for your first shop. Subscribe to open another one.',
         );
       }
-    } else if (
-      !(await this.subscriptionsService.hasUnconsumedCredit(ownerId))
-    ) {
-      // Every paid shop costs a month up front — refuse until the fee is paid.
-      throw new HttpException(
-        {
-          statusCode: HttpStatus.PAYMENT_REQUIRED,
-          error: 'PaymentRequired',
-          message: 'Pay the shop subscription fee before creating a shop.',
-        },
-        HttpStatus.PAYMENT_REQUIRED,
-      );
     }
+    // Nothing is charged to open a shop. The seller picks how they pay for
+    // sales — a credit pack, or the verified commission track — from the
+    // console once the shop exists.
     const handle = handleize(dto.handle);
     await this.blockedWords.assertClean(dto.name);
     await this.blockedWords.assertClean(handle);
@@ -153,11 +144,10 @@ export class ShopsService {
         ...this.kycPatch(dto.kyc),
       })
       .returning();
-    // Paid plan: consume the paid credit and open the monthly subscription.
-    // Free shops have no subscription until they upgrade.
-    if (plan === 'paid') {
-      await this.subscriptionsService.activateForNewShop(ownerId, row.id);
-    }
+    // Every shop gets a billing record straight away: the credits track with
+    // a zero balance, so the console has something to show and the meter
+    // starts counting from the shop's first day.
+    await this.subscriptionsService.openForNewShop(ownerId, row.id);
     return ShopResponse.fromRow(row);
   }
 

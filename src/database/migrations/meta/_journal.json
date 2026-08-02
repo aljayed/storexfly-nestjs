@@ -400,6 +400,13 @@
       "when": 1790812800000,
       "tag": "0059_subscription_auto_reset",
       "breakpoints": true
+    },
+    {
+      "idx": 60,
+      "version": "7",
+      "when": 1790899200000,
+      "tag": "0060_two_track_billing",
+      "breakpoints": true
     }
   ]
 }
