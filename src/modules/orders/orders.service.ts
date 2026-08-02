@@ -23,14 +23,17 @@ import {
 import { centsToDollars, dollarsToCents } from '../../common/utils/money.util';
 import { DELIVERY_LINE_NAME } from '../../common/utils/order-line.util';
 import {
+  CREDIT_EXHAUSTED_MESSAGE,
   FREE_ORDER_CAP,
   FREE_TIER_LIMIT_MESSAGE,
 } from '../../common/constants/billing';
+import { creditPosition } from '../subscriptions/credit-balance';
 import { DRIZZLE } from '../../database/database.constants';
 import type { DrizzleDB } from '../../database/drizzle.types';
 import {
   combos,
   gatewayPayments,
+  subscriptions,
   orderAmountAdjustments,
   orderItems,
   orders,
@@ -85,7 +88,11 @@ const COURIER_BOOKABLE: readonly OrderStatus[] = ['Confirmed', 'Packed'];
  * parcel ships. Past shipping the total is locked (a courier COD amount is
  * fixed at booking and money has effectively started moving).
  */
-const AMOUNT_ADJUSTABLE: readonly OrderStatus[] = ['New', 'Confirmed', 'Packed'];
+const AMOUNT_ADJUSTABLE: readonly OrderStatus[] = [
+  'New',
+  'Confirmed',
+  'Packed',
+];
 
 /** Buyer-facing copy for status-change notifications. */
 const STATUS_NOTIFICATION: Partial<Record<OrderStatus, string>> = {
@@ -229,6 +236,15 @@ export class OrdersService {
         }
       }
 
+      // Pre-paid credit, checked under the same lock for the same reason the
+      // free quota is: the hourly billing sweep would let a shop sell far past
+      // a balance it has already paid for. The order that takes the balance to
+      // zero still completes — it is the next one that is refused.
+      const credit = await creditPosition(tx, dto.shopId);
+      if (credit && credit.balanceCents <= 0) {
+        throw new ForbiddenException(CREDIT_EXHAUSTED_MESSAGE);
+      }
+
       const hasLocation = Boolean(dto.address.line?.trim() || dto.address.geo);
       if (
         !dto.contact.name.trim() ||
@@ -344,6 +360,19 @@ export class OrdersService {
           .update(shops)
           .set({ live: false })
           .where(eq(shops.id, dto.shopId));
+      }
+
+      // Same for the order that spends the last of the credit: it stands, and
+      // the shop closes behind it until the seller tops up.
+      if (credit && credit.balanceCents - order.totalCents <= 0) {
+        await tx
+          .update(shops)
+          .set({ live: false })
+          .where(eq(shops.id, dto.shopId));
+        await tx
+          .update(subscriptions)
+          .set({ creditExhaustedAt: new Date() })
+          .where(eq(subscriptions.shopId, dto.shopId));
       }
 
       // Gateway orders notify once the payment is confirmed instead.
@@ -518,11 +547,21 @@ export class OrdersService {
     offer: {
       id: string;
       shopId: string;
-      items: { productId: string; name: string; qty: number; unitPriceCents: number }[];
+      items: {
+        productId: string;
+        name: string;
+        qty: number;
+        unitPriceCents: number;
+      }[];
       deliveryCents: number;
       totalCents: number;
     };
-    buyer: { id: string; name: string; email: string | null; phone: string | null };
+    buyer: {
+      id: string;
+      name: string;
+      email: string | null;
+      phone: string | null;
+    };
     address: { line: string; area: string; pincode?: string };
     paymentMethod: string;
     phone?: string;
@@ -568,12 +607,22 @@ export class OrdersService {
         }
       }
 
+      // Pre-paid credit, same rule as the storefront checkout: an accepted
+      // chat offer is still a sale, and still has to be paid for.
+      const credit = await creditPosition(tx, offer.shopId);
+      if (credit && credit.balanceCents <= 0) {
+        throw new ForbiddenException(CREDIT_EXHAUSTED_MESSAGE);
+      }
+
       // Re-read the products under the lock: an offer can sit in a thread for
       // days, and the item may since have been deleted, delisted, or switched
       // to a payment kind that excludes the buyer's choice.
       const ids = [...new Set(offer.items.map((i) => i.productId))];
       const rows = await tx.query.products.findMany({
-        where: and(inArray(products.id, ids), eq(products.shopId, offer.shopId)),
+        where: and(
+          inArray(products.id, ids),
+          eq(products.shopId, offer.shopId),
+        ),
       });
       const byId = new Map(rows.map((p) => [p.id, p]));
 
@@ -586,7 +635,7 @@ export class OrdersService {
             `“${item.name}” is no longer available — ask the seller for a new offer.`,
           );
         }
-        if (!product.paymentMethods.includes(method.kind as never)) {
+        if (!product.paymentMethods.includes(method.kind)) {
           throw new BadRequestException(
             `“${product.name}” cannot be paid with that method — please pick another.`,
           );
@@ -641,7 +690,10 @@ export class OrdersService {
 
       const placedAt = new Date();
       const reference = await this.nextReference(tx, offer.shopId);
-      const totalUnits = [...unitsByProduct.values()].reduce((a, b) => a + b, 0);
+      const totalUnits = [...unitsByProduct.values()].reduce(
+        (a, b) => a + b,
+        0,
+      );
 
       const customerId = await this.customers.recordOrder(tx, {
         shopId: offer.shopId,
@@ -696,6 +748,19 @@ export class OrdersService {
           .update(shops)
           .set({ live: false })
           .where(eq(shops.id, offer.shopId));
+      }
+
+      // The order that spends the last of the credit stands; the shop closes
+      // behind it until the seller tops up.
+      if (credit && credit.balanceCents - order.totalCents <= 0) {
+        await tx
+          .update(shops)
+          .set({ live: false })
+          .where(eq(shops.id, offer.shopId));
+        await tx
+          .update(subscriptions)
+          .set({ creditExhaustedAt: new Date() })
+          .where(eq(subscriptions.shopId, offer.shopId));
       }
 
       if (payStatus !== 'Pending') {
@@ -1441,7 +1506,10 @@ export class OrdersService {
     if (!reason) {
       throw new BadRequestException('Add a short reason for the change.');
     }
-    if (order.status === 'Cancelled' || !AMOUNT_ADJUSTABLE.includes(order.status)) {
+    if (
+      order.status === 'Cancelled' ||
+      !AMOUNT_ADJUSTABLE.includes(order.status)
+    ) {
       throw new BadRequestException(
         'This order can no longer be changed — amount changes are only possible before it ships.',
       );
@@ -1630,7 +1698,8 @@ export class OrdersService {
         newTotal: centsToDollars(a.newTotalCents),
         reason: a.reason,
         currency: shop?.currency ?? 'BDT',
-        direction: a.newTotalCents < a.previousTotalCents ? 'decrease' : 'increase',
+        direction:
+          a.newTotalCents < a.previousTotalCents ? 'decrease' : 'increase',
         status: a.status,
       },
     });
@@ -1690,10 +1759,7 @@ export class OrdersService {
       });
       // A foreign/missing order is reported identically so the endpoint can't
       // be used to probe other buyers' orders.
-      if (
-        !order ||
-        order.email.toLowerCase() !== buyerEmail.toLowerCase()
-      ) {
+      if (!order || order.email.toLowerCase() !== buyerEmail.toLowerCase()) {
         throw new NotFoundException('Order not found');
       }
       const adjustment = await tx.query.orderAmountAdjustments.findFirst({
@@ -1756,7 +1822,11 @@ export class OrdersService {
   private async applyAdjustmentDecision(
     tx: OrdersTx,
     order: OrderRow,
-    adjustment: { id: string; previousTotalCents: number; newTotalCents: number },
+    adjustment: {
+      id: string;
+      previousTotalCents: number;
+      newTotalCents: number;
+    },
     approve: boolean,
   ): Promise<OrderRow> {
     await tx
@@ -2004,10 +2074,7 @@ export class OrdersService {
       });
       // A foreign order is reported identically to a missing one, so the
       // endpoint can't be used to probe other buyers' references.
-      if (
-        !order ||
-        order.email.toLowerCase() !== buyerEmail.toLowerCase()
-      ) {
+      if (!order || order.email.toLowerCase() !== buyerEmail.toLowerCase()) {
         throw new NotFoundException('Order not found');
       }
       if (order.status === 'Cancelled') {

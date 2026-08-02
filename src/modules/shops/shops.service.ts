@@ -575,6 +575,11 @@ export class ShopsService {
           })),
         );
       }
+      // Bill whatever the verified track earned before the shop goes. The
+      // ledger row survives the delete (its shopId is nulled by the FK), so
+      // the seller's payment history stays honest — and a merchant can't sell
+      // all month post-paid and delete the shop to avoid the bill.
+      await this.subscriptionsService.settleOnClose(shopId, tx);
       await tx
         .update(subscriptions)
         .set({ status: 'cancelled', cancelledAt: new Date() })

@@ -19,7 +19,7 @@ import {
   PLATFORM_CURRENCY,
 } from '../../common/constants/billing';
 import { DRIZZLE } from '../../database/database.constants';
-import type { DrizzleDB } from '../../database/drizzle.types';
+import type { DbExecutor, DrizzleDB } from '../../database/drizzle.types';
 import {
   orders,
   products,
@@ -38,6 +38,17 @@ import {
 } from './dto/subscription.response';
 
 export { PLATFORM_CURRENCY };
+
+/** What a verified shop owes if its billing stopped right now. */
+interface CommissionOwed {
+  periodStart: Date;
+  billableSalesCents: number;
+  /** Commission on the month part-way through. */
+  accruedCents: number;
+  /** A bill already issued and still unpaid. */
+  dueCents: number;
+  total: number;
+}
 
 /** How often the background billing sweep looks for due subscriptions. */
 const BILLING_SWEEP_INTERVAL_MS = 60 * 60 * 1000;
@@ -370,6 +381,7 @@ export class SubscriptionsService implements OnModuleInit, OnModuleDestroy {
           dueSince: null,
           duePeriodStart: null,
           duePeriodEnd: null,
+          dueBillableSalesCents: null,
           status: 'active',
           // The next stint on the verified track starts a fresh month, so
           // nothing billed here can be billed again.
@@ -388,37 +400,7 @@ export class SubscriptionsService implements OnModuleInit, OnModuleDestroy {
           'Your billing just changed — refresh to see the latest state.',
         );
       }
-      // One row for the final part-month, and one for anything already
-      // issued and still unpaid, so the ledger keeps them distinguishable.
-      if (owed.accruedCents > 0) {
-        await this.db.insert(subscriptionPayments).values({
-          userId: sub.ownerId,
-          subscriptionId: sub.id,
-          shopId: sub.shopId,
-          type: 'commission',
-          method: 'manual',
-          amountCents: owed.accruedCents,
-          billableSalesCents: owed.billableSalesCents,
-          currency: sub.currency,
-          periodStart: owed.periodStart,
-          periodEnd: now,
-          paidAt: now,
-        });
-      }
-      if (sub.dueCents > 0) {
-        await this.db.insert(subscriptionPayments).values({
-          userId: sub.ownerId,
-          subscriptionId: sub.id,
-          shopId: sub.shopId,
-          type: 'commission',
-          method: 'manual',
-          amountCents: sub.dueCents,
-          currency: sub.currency,
-          periodStart: sub.duePeriodStart,
-          periodEnd: sub.duePeriodEnd,
-          paidAt: now,
-        });
-      }
+      await this.recordClosingCommission(sub, owed, now);
       // Paying up lifts a pause the unpaid bill caused.
       await this.liftPause(sub.shopId);
       this.logger.log(
@@ -441,6 +423,96 @@ export class SubscriptionsService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
+   * Write the ledger rows for a commission position being closed out: one for
+   * the part-month just ended, one for anything already issued and still
+   * unpaid, so the two stay distinguishable in the seller's history.
+   *
+   * Takes an executor so a shop deletion can record the charge inside the same
+   * transaction that removes the shop.
+   */
+  private async recordClosingCommission(
+    sub: SubscriptionRow,
+    owed: CommissionOwed,
+    now: Date,
+    executor: DbExecutor = this.db,
+  ): Promise<void> {
+    if (owed.accruedCents > 0) {
+      await executor.insert(subscriptionPayments).values({
+        userId: sub.ownerId,
+        subscriptionId: sub.id,
+        shopId: sub.shopId,
+        type: 'commission',
+        method: 'manual',
+        amountCents: owed.accruedCents,
+        billableSalesCents: owed.billableSalesCents,
+        currency: sub.currency,
+        periodStart: owed.periodStart,
+        periodEnd: now,
+        paidAt: now,
+      });
+    }
+    if (owed.dueCents > 0) {
+      await executor.insert(subscriptionPayments).values({
+        userId: sub.ownerId,
+        subscriptionId: sub.id,
+        shopId: sub.shopId,
+        type: 'commission',
+        method: 'manual',
+        amountCents: owed.dueCents,
+        billableSalesCents: sub.dueBillableSalesCents,
+        currency: sub.currency,
+        periodStart: sub.duePeriodStart,
+        periodEnd: sub.duePeriodEnd,
+        paidAt: now,
+      });
+    }
+  }
+
+  /**
+   * Bill whatever a shop owes on the verified track before it stops selling —
+   * cancelling or being deleted. Without this, a merchant could sell all month
+   * post-paid and close the shop on the last day owing nothing: `settle()`
+   * skips cancelled subscriptions, so the month would never be billed.
+   *
+   * Safe to call for a credits shop or one that owes nothing; it does nothing.
+   */
+  async settleOnClose(
+    shopId: string,
+    executor: DbExecutor = this.db,
+  ): Promise<number> {
+    const sub = await executor.query.subscriptions.findFirst({
+      where: eq(subscriptions.shopId, shopId),
+    });
+    if (
+      !sub ||
+      sub.status === 'cancelled' ||
+      sub.billingMode !== 'commission'
+    ) {
+      return 0;
+    }
+    const now = new Date();
+    const owed = await this.commissionOwed(sub, now, executor);
+    if (owed.total <= 0) {
+      return 0;
+    }
+    await this.recordClosingCommission(sub, owed, now, executor);
+    await executor
+      .update(subscriptions)
+      .set({
+        dueCents: 0,
+        dueSince: null,
+        duePeriodStart: null,
+        duePeriodEnd: null,
+        dueBillableSalesCents: null,
+      })
+      .where(eq(subscriptions.id, sub.id));
+    this.logger.log(
+      `Shop ${shopId} closed owing ${owed.total / 100} BDT of commission — billed`,
+    );
+    return owed.total;
+  }
+
+  /**
    * What a shop on the verified track would have to pay to leave right now:
    * the commission earned since its current month started, plus any bill
    * already issued and still unpaid. Quoted to the console before the switch
@@ -449,17 +521,12 @@ export class SubscriptionsService implements OnModuleInit, OnModuleDestroy {
   private async commissionOwed(
     sub: SubscriptionRow,
     now: Date,
-  ): Promise<{
-    periodStart: Date;
-    billableSalesCents: number;
-    accruedCents: number;
-    dueCents: number;
-    total: number;
-  }> {
+    executor: DbExecutor = this.db,
+  ): Promise<CommissionOwed> {
     const periodStart = subOneMonth(sub.nextBillingAt, sub.startedAt.getDate());
     const billableSalesCents =
       sub.billingMode === 'commission'
-        ? await this.billableSalesCents(sub, periodStart, now)
+        ? await this.billableSalesCents(sub, periodStart, now, executor)
         : 0;
     const accruedCents = Math.round(
       (billableSalesCents * sub.commissionBps) / 10_000,
@@ -521,9 +588,7 @@ export class SubscriptionsService implements OnModuleInit, OnModuleDestroy {
       type: 'commission',
       method: 'manual',
       amountCents: sub.dueCents,
-      billableSalesCents: Math.round(
-        (sub.dueCents * 10_000) / Math.max(1, sub.commissionBps),
-      ),
+      billableSalesCents: sub.dueBillableSalesCents,
       currency: sub.currency,
       periodStart: sub.duePeriodStart,
       periodEnd: sub.duePeriodEnd,
@@ -537,12 +602,19 @@ export class SubscriptionsService implements OnModuleInit, OnModuleDestroy {
 
   // ── Lifecycle ──────────────────────────────────────────────────
 
-  /** Cancel: stops billing and forces the shop offline immediately. */
+  /**
+   * Cancel: bills whatever the verified track has earned, then stops billing
+   * and forces the shop offline. The charge has to happen *before* the status
+   * flips, because `settle()` skips cancelled subscriptions — without it a
+   * merchant could sell all month post-paid and cancel on the last day owing
+   * nothing.
+   */
   async cancel(shopId: string): Promise<SubscriptionResponse> {
     const sub = await this.requireByShop(shopId);
     if (sub.status === 'cancelled') {
       return this.toResponse(sub);
     }
+    await this.settleOnClose(shopId);
     const [updated] = await this.db
       .update(subscriptions)
       .set({ status: 'cancelled', cancelledAt: new Date() })
@@ -766,6 +838,8 @@ export class SubscriptionsService implements OnModuleInit, OnModuleDestroy {
             dueSince: sub.dueSince ?? periodStart,
             duePeriodStart: sub.duePeriodStart ?? periodStart,
             duePeriodEnd: periodEnd,
+            dueBillableSalesCents:
+              (sub.dueBillableSalesCents ?? 0) + billableCents,
             status: 'past_due' as const,
           }),
       })
@@ -805,7 +879,47 @@ export class SubscriptionsService implements OnModuleInit, OnModuleDestroy {
         `Shop ${sub.shopId} owes ${chargeCents / 100} BDT commission — 25-day clock running`,
       );
     }
-    return this.enforceDueGrace(updated, now);
+    return this.enforceDueGrace(await this.enforceStillVerified(updated), now);
+  }
+
+  /**
+   * The verified track is a credit line: we let the shop sell and bill it
+   * afterwards, because its trade licence was checked. The licence is only
+   * checked when a shop *joins*, so a revocation would otherwise leave it
+   * selling on trust forever.
+   *
+   * Handled at the billing anchor rather than the moment of revocation: the
+   * month just ended has been billed, so moving now costs the seller nothing
+   * and interrupts no sale mid-month. They keep any credit balance and can buy
+   * a pack to carry on.
+   */
+  private async enforceStillVerified(
+    sub: SubscriptionRow,
+  ): Promise<SubscriptionRow> {
+    if (sub.billingMode !== 'commission') {
+      return sub;
+    }
+    const shop = await this.db.query.shops.findFirst({
+      where: eq(shops.id, sub.shopId),
+      columns: { kycStatus: true },
+    });
+    if (!shop || shop.kycStatus === 'verified') {
+      return sub;
+    }
+    const [moved] = await this.db
+      .update(subscriptions)
+      .set({ billingMode: 'credits' })
+      .where(
+        and(
+          eq(subscriptions.id, sub.id),
+          eq(subscriptions.billingMode, 'commission'),
+        ),
+      )
+      .returning();
+    this.logger.log(
+      `Shop ${sub.shopId} is no longer verified — moved back to pre-paid credit`,
+    );
+    return moved ?? sub;
   }
 
   /**
@@ -843,10 +957,11 @@ export class SubscriptionsService implements OnModuleInit, OnModuleDestroy {
     sub: SubscriptionRow,
     start: Date,
     end: Date,
+    executor: DbExecutor = this.db,
   ): Promise<number> {
     const [before, through] = await Promise.all([
-      this.salesCents(sub.shopId, sub.meterStartAt, start),
-      this.salesCents(sub.shopId, sub.meterStartAt, end),
+      this.salesCents(sub.shopId, sub.meterStartAt, start, executor),
+      this.salesCents(sub.shopId, sub.meterStartAt, end, executor),
     ]);
     const granted = sub.creditGrantedCents;
     const soldInWindow = Math.max(0, through - before);
@@ -864,11 +979,12 @@ export class SubscriptionsService implements OnModuleInit, OnModuleDestroy {
     shopId: string,
     start: Date,
     end: Date,
+    executor: DbExecutor = this.db,
   ): Promise<number> {
     if (end <= start) {
       return 0;
     }
-    const [row] = await this.db
+    const [row] = await executor
       .select({ total: sql<string>`coalesce(sum(${orders.totalCents}), 0)` })
       .from(orders)
       .where(

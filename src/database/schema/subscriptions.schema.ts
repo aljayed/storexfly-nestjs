@@ -84,6 +84,14 @@ export const subscriptions = pgTable(
     /** The month the outstanding bill covers, for the console to name it. */
     duePeriodStart: timestamp('due_period_start', { withTimezone: true }),
     duePeriodEnd: timestamp('due_period_end', { withTimezone: true }),
+    /**
+     * The sales that outstanding bill was charged on. Recorded rather than
+     * back-derived from the amount and the rate, because the operator can
+     * change the rate between a bill being issued and it being paid.
+     */
+    dueBillableSalesCents: bigint('due_billable_sales_cents', {
+      mode: 'number',
+    }),
 
     // When true the platform collects the monthly commission automatically on
     // the due date (dummy gateway). When false the bill goes straight to

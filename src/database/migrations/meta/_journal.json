@@ -414,6 +414,13 @@
       "when": 1790985600000,
       "tag": "0061_operator_commission_rate",
       "breakpoints": true
+    },
+    {
+      "idx": 62,
+      "version": "7",
+      "when": 1791072000000,
+      "tag": "0062_due_billable_sales",
+      "breakpoints": true
     }
   ]
 }
