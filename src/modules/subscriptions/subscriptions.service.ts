@@ -204,7 +204,7 @@ export class SubscriptionsService implements OnModuleInit, OnModuleDestroy {
    * credit, so a pack is only sellable while the balance plus what it grants
    * stays inside that. Selling credit down opens the room back up.
    *
-   * An optional coupon discounts the purchase — this is where the launch
+   * An optional coupon discounts the purchase - this is where the launch
    * 50%-off code is redeemed. An invalid code fails the whole purchase with a
    * 400 rather than silently charging full price.
    */
@@ -231,7 +231,7 @@ export class SubscriptionsService implements OnModuleInit, OnModuleDestroy {
       throw new BadRequestException(
         room <= 0
           ? `You are holding the maximum ৳${(CREDIT_BALANCE_CAP_CENTS / 100).toLocaleString('en-US')} of sales credit. Sell some of it before buying more.`
-          : `This pack would put you over the ৳${(CREDIT_BALANCE_CAP_CENTS / 100).toLocaleString('en-US')} credit limit — you have room for ৳${(room / 100).toLocaleString('en-US')} more right now.`,
+          : `This pack would put you over the ৳${(CREDIT_BALANCE_CAP_CENTS / 100).toLocaleString('en-US')} credit limit - you have room for ৳${(room / 100).toLocaleString('en-US')} more right now.`,
       );
     }
 
@@ -270,7 +270,7 @@ export class SubscriptionsService implements OnModuleInit, OnModuleDestroy {
       .returning();
     if (!updated) {
       throw new ConflictException(
-        'This purchase was just completed — refresh to see your balance.',
+        'This purchase was just completed - refresh to see your balance.',
       );
     }
 
@@ -290,7 +290,7 @@ export class SubscriptionsService implements OnModuleInit, OnModuleDestroy {
     });
     if (coupon) {
       await this.coupons.markRedeemed(coupon.id);
-      // Attribution only — recordSignup never throws and only counts when the
+      // Attribution only - recordSignup never throws and only counts when the
       // slug still maps to the coupon that was actually redeemed.
       if (refSlug?.trim()) {
         await this.referrals.recordSignup(refSlug, coupon.id);
@@ -313,7 +313,7 @@ export class SubscriptionsService implements OnModuleInit, OnModuleDestroy {
 
   /**
    * Move between the two tracks. Commission is gated on the shop's trade
-   * licence being verified — that is the whole difference between the tracks.
+   * licence being verified - that is the whole difference between the tracks.
    * Credit already bought is never touched by the move; it is simply spent
    * before commission starts being charged.
    */
@@ -337,7 +337,7 @@ export class SubscriptionsService implements OnModuleInit, OnModuleDestroy {
         throw new ForbiddenException(
           shop.kycStatus === 'pending'
             ? 'Your trade licence is still being reviewed. Post-paid billing opens as soon as it is verified.'
-            : 'Post-paid billing is for verified merchants — submit your trade licence to unlock it.',
+            : 'Post-paid billing is for verified merchants - submit your trade licence to unlock it.',
         );
       }
       // The month starts counting from the switch, not from whatever anchor
@@ -368,7 +368,7 @@ export class SubscriptionsService implements OnModuleInit, OnModuleDestroy {
 
     // Leaving the verified track closes the month that is part-way through.
     // The shop has been selling on credit it hasn't paid for yet, so that
-    // commission is settled on the way out — otherwise a seller could take a
+    // commission is settled on the way out - otherwise a seller could take a
     // month of orders post-paid and hop back to pre-paid owing nothing.
     const now = new Date();
     const owed = await this.commissionOwed(sub, now);
@@ -397,7 +397,7 @@ export class SubscriptionsService implements OnModuleInit, OnModuleDestroy {
         .returning();
       if (!settled) {
         throw new ConflictException(
-          'Your billing just changed — refresh to see the latest state.',
+          'Your billing just changed - refresh to see the latest state.',
         );
       }
       await this.recordClosingCommission(sub, owed, now);
@@ -469,7 +469,7 @@ export class SubscriptionsService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
-   * Bill whatever a shop owes on the verified track before it stops selling —
+   * Bill whatever a shop owes on the verified track before it stops selling -
    * cancelling or being deleted. Without this, a merchant could sell all month
    * post-paid and close the shop on the last day owing nothing: `settle()`
    * skips cancelled subscriptions, so the month would never be billed.
@@ -507,7 +507,7 @@ export class SubscriptionsService implements OnModuleInit, OnModuleDestroy {
       })
       .where(eq(subscriptions.id, sub.id));
     this.logger.log(
-      `Shop ${shopId} closed owing ${owed.total / 100} BDT of commission — billed`,
+      `Shop ${shopId} closed owing ${owed.total / 100} BDT of commission - billed`,
     );
     return owed.total;
   }
@@ -578,7 +578,7 @@ export class SubscriptionsService implements OnModuleInit, OnModuleDestroy {
       .returning();
     if (!updated) {
       throw new ConflictException(
-        'This bill was just paid — refresh to see the latest state.',
+        'This bill was just paid - refresh to see the latest state.',
       );
     }
     await this.db.insert(subscriptionPayments).values({
@@ -605,7 +605,7 @@ export class SubscriptionsService implements OnModuleInit, OnModuleDestroy {
   /**
    * Cancel: bills whatever the verified track has earned, then stops billing
    * and forces the shop offline. The charge has to happen *before* the status
-   * flips, because `settle()` skips cancelled subscriptions — without it a
+   * flips, because `settle()` skips cancelled subscriptions - without it a
    * merchant could sell all month post-paid and cancel on the last day owing
    * nothing.
    */
@@ -639,7 +639,7 @@ export class SubscriptionsService implements OnModuleInit, OnModuleDestroy {
     }
     const now = new Date();
     // Re-anchor a commission shop so the gap isn't billed as one huge month.
-    // A credits shop has no anchor that matters — its balance is what counts.
+    // A credits shop has no anchor that matters - its balance is what counts.
     const reanchor =
       sub.billingMode === 'commission' && sub.nextBillingAt <= now;
     // Guarded on status so a double-submitted resume runs once.
@@ -697,7 +697,7 @@ export class SubscriptionsService implements OnModuleInit, OnModuleDestroy {
       const sub = await this.findByShop(shopId);
       if (sub?.status === 'cancelled') {
         throw new ForbiddenException(
-          'This shop is cancelled — resume it to go live.',
+          'This shop is cancelled - resume it to go live.',
         );
       }
       if (shop.plan === 'free') {
@@ -709,7 +709,7 @@ export class SubscriptionsService implements OnModuleInit, OnModuleDestroy {
         const { balance } = await this.creditState(sub);
         if (balance <= 0) {
           throw new ForbiddenException(
-            'Your sales credit has run out — buy a credit pack to go live again.',
+            'Your sales credit has run out - buy a credit pack to go live again.',
           );
         }
       }
@@ -741,7 +741,7 @@ export class SubscriptionsService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
-   * The credits half. Nothing is ever charged here — the seller already paid.
+   * The credits half. Nothing is ever charged here - the seller already paid.
    * All this does is notice when the balance has run out and pause the
    * storefront, and un-pause it when a top-up (or a cancelled order) puts the
    * balance back above zero.
@@ -749,7 +749,7 @@ export class SubscriptionsService implements OnModuleInit, OnModuleDestroy {
   private async settleCredits(sub: SubscriptionRow): Promise<SubscriptionRow> {
     const { balance, granted } = await this.creditState(sub);
     // A shop that has never bought anything is on the free trial, which has
-    // its own limits — an empty balance is not what pauses it.
+    // its own limits - an empty balance is not what pauses it.
     if (granted === 0) {
       return sub;
     }
@@ -766,7 +766,7 @@ export class SubscriptionsService implements OnModuleInit, OnModuleDestroy {
       return cleared ?? sub;
     }
 
-    // Balance gone. The order that crossed zero has already completed — this
+    // Balance gone. The order that crossed zero has already completed - this
     // is a pre-paid plan, so selling stops here until the seller tops up.
     let current = sub;
     if (!current.creditExhaustedAt) {
@@ -782,7 +782,7 @@ export class SubscriptionsService implements OnModuleInit, OnModuleDestroy {
         )
         .returning();
       current = marked ?? current;
-      this.logger.log(`Shop ${sub.shopId} used up its sales credit — paused`);
+      this.logger.log(`Shop ${sub.shopId} used up its sales credit - paused`);
     }
     await this.db
       .update(shops)
@@ -795,8 +795,8 @@ export class SubscriptionsService implements OnModuleInit, OnModuleDestroy {
    * The commission half. While the anchor is in the past, bill each elapsed
    * month for its billable sales and roll forward. A month that sold nothing
    * (or nothing beyond leftover credit) bills nothing and leaves no ledger
-   * row. Auto-debit collects on the spot (dummy gateway); without it — or
-   * when a charge doesn't land — the amount lands in `dueCents` and the
+   * row. Auto-debit collects on the spot (dummy gateway); without it - or
+   * when a charge doesn't land - the amount lands in `dueCents` and the
    * seller has 25 days to pay it by hand before the storefront pauses.
    */
   private async settleCommission(
@@ -824,7 +824,7 @@ export class SubscriptionsService implements OnModuleInit, OnModuleDestroy {
 
     // Optimistic guard: the update only wins while `nextBillingAt` is still
     // what we based the bill on. If the hourly sweep and a console read settle
-    // concurrently, exactly one issues the bill — the loser simply reloads,
+    // concurrently, exactly one issues the bill - the loser simply reloads,
     // instead of billing the seller twice.
     const [updated] = await this.db
       .update(subscriptions)
@@ -876,7 +876,7 @@ export class SubscriptionsService implements OnModuleInit, OnModuleDestroy {
       );
     } else if (chargeCents > 0) {
       this.logger.log(
-        `Shop ${sub.shopId} owes ${chargeCents / 100} BDT commission — 25-day clock running`,
+        `Shop ${sub.shopId} owes ${chargeCents / 100} BDT commission - 25-day clock running`,
       );
     }
     return this.enforceDueGrace(await this.enforceStillVerified(updated), now);
@@ -917,14 +917,14 @@ export class SubscriptionsService implements OnModuleInit, OnModuleDestroy {
       )
       .returning();
     this.logger.log(
-      `Shop ${sub.shopId} is no longer verified — moved back to pre-paid credit`,
+      `Shop ${sub.shopId} is no longer verified - moved back to pre-paid credit`,
     );
     return moved ?? sub;
   }
 
   /**
    * A commission bill left unpaid past the 25-day window takes the storefront
-   * offline until it is settled. Inside the window nothing changes — the shop
+   * offline until it is settled. Inside the window nothing changes - the shop
    * keeps selling and the seller keeps their options.
    */
   private async enforceDueGrace(
@@ -947,7 +947,7 @@ export class SubscriptionsService implements OnModuleInit, OnModuleDestroy {
    * The sales one window's commission is charged on: what the shop sold in it,
    * less anything leftover credit covered.
    *
-   * Credit is always spent first, so the split is positional — how much of the
+   * Credit is always spent first, so the split is positional - how much of the
    * running total falls inside the granted credit before the window versus
    * after it. That is what makes a shop which pre-bought ৳10,00,000 and then
    * verified sell all of it for nothing extra, with commission starting on the
@@ -1001,7 +1001,7 @@ export class SubscriptionsService implements OnModuleInit, OnModuleDestroy {
   /**
    * Background sweep over every non-cancelled subscription: issues what is
    * due and checks each credits shop against its balance. It can't be narrowed
-   * to subscriptions that are due — a shop that sells through its credit
+   * to subscriptions that are due - a shop that sells through its credit
    * mid-month has nothing due at all.
    */
   private async sweepDueSubscriptions(): Promise<void> {

@@ -29,7 +29,7 @@ export interface BuyerNotificationView {
 /**
  * In-app buyer notifications, surfaced on the buyer profile. Order events are
  * matched to a buyer account by the order's email or phone; guest orders with
- * no matching account simply produce no notification. Emitting never throws —
+ * no matching account simply produce no notification. Emitting never throws -
  * a notification must not be able to fail an order.
  */
 @Injectable()

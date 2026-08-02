@@ -34,7 +34,7 @@ const bucket = process.env.S3_BUCKET as string;
 const publicPrefix = process.env.S3_PUBLIC_PREFIX ?? '/api/media';
 
 if (!endpoint || !bucket) {
-  console.error('S3_ENDPOINT / S3_BUCKET not set — aborting.');
+  console.error('S3_ENDPOINT / S3_BUCKET not set - aborting.');
   process.exit(1);
 }
 

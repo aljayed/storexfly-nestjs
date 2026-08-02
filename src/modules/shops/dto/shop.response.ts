@@ -33,7 +33,7 @@ export class ShopResponse {
     description: 'Product-page "why buy" badges; omitted when never customised',
   })
   trustBadges?: TrustBadge[];
-  // Business-verification state only — the trade licence itself stays on the
+  // Business-verification state only - the trade licence itself stays on the
   // owner-only KYC endpoint and is never exposed here.
   @ApiProperty({ enum: ['unsubmitted', 'pending', 'verified', 'rejected'] })
   kycStatus!: string;

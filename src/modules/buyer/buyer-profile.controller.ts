@@ -15,7 +15,7 @@ import { BuyerService } from './buyer.service';
 import { UpdateBuyerProfileDto } from './dto/buyer-overview.dto';
 import { VerifyCodeDto } from './dto/verify-code.dto';
 
-/** Account storefront profile — info, order history and reviews. Authed by the
+/** Account storefront profile - info, order history and reviews. Authed by the
  *  global account JWT guard (the single session). */
 @ApiTags('buyer')
 @ApiBearerAuth()

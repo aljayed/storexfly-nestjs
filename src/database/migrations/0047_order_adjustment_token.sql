@@ -1,5 +1,5 @@
 -- Public approval-link token for order-amount changes. Guest orders have no
--- buyer account, so the in-app approval path can't reach them — the seller
+-- buyer account, so the in-app approval path can't reach them - the seller
 -- shares this token as a link (webUrl/approve/<token>) instead. Hand-written
 -- and idempotent; safe to re-run.
 

@@ -16,8 +16,8 @@ export type CourierProvider = (typeof COURIER_PROVIDERS)[number];
 /**
  * Per-shop courier credentials, one row per (shop, provider). Sellers manage
  * these from the console Settings page; secrets are write-only through the
- * API. At most one provider is `enabled` per shop — enabling one disables the
- * other — and a shop with no enabled row delivers manually.
+ * API. At most one provider is `enabled` per shop - enabling one disables the
+ * other - and a shop with no enabled row delivers manually.
  *
  * Column usage by provider:
  *  - steadfast: apiKey + secretKey

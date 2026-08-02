@@ -24,7 +24,7 @@ import {
   BuyerRegisterDto,
 } from './dto/buyer-auth.dto';
 
-/** Buyer (shopper) accounts — register / login / current session. */
+/** Buyer (shopper) accounts - register / login / current session. */
 @ApiTags('buyer')
 @Controller('buyer/auth')
 export class BuyerAuthController {

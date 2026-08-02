@@ -57,14 +57,14 @@ export class ChatOffersService {
    * Find the buyer account behind a phone/email so the seller can open a
    * thread with them.
    *
-   * The match must be *verified* on the channel used — the same rule that
+   * The match must be *verified* on the channel used - the same rule that
    * decides whether an order belongs to an account. Messaging whoever merely
    * typed an address at checkout would let a seller reach the wrong person,
    * and an unverified row is not evidence of ownership.
    *
    * A conversation also needs a real account: `chat_conversations.buyer_id` is
    * a FK to `users`, and the buyer has to sign in to read anything. So when
-   * there's no account we say so plainly rather than inventing one — creating
+   * there's no account we say so plainly rather than inventing one - creating
    * shadow accounts from seller input would be both a privacy and an abuse
    * problem.
    */
@@ -105,7 +105,7 @@ export class ChatOffersService {
 
     if (!match) {
       // Distinguish "never heard of them" from "they've ordered from you but
-      // have no account" — the second is worth telling the seller, because
+      // have no account" - the second is worth telling the seller, because
       // the fix is to ask the buyer to sign up.
       const customer = await this.db.query.customers.findFirst({
         where: and(
@@ -165,7 +165,7 @@ export class ChatOffersService {
 
     // The seller may quote their own delivery for this offer, the way they
     // may quote their own prices. Both zones are stamped onto every item's
-    // snapshot, so the accept-time lookup — highest rate among the items —
+    // snapshot, so the accept-time lookup - highest rate among the items -
     // finds the agreed number whichever line it reads.
     const overrideDhaka =
       dto.deliveryDhaka === undefined ? undefined : dollarsToCents(dto.deliveryDhaka);
@@ -250,7 +250,7 @@ export class ChatOffersService {
         currency: shop.currency,
         status: 'pending',
         expiresAt: expiresAt?.toISOString(),
-        // The first line fronts the card — its media, and its slug so the
+        // The first line fronts the card - its media, and its slug so the
         // card can be tapped through to the product page.
         imageUrl: items[0].imageUrl,
         emoji: items[0].emoji,
@@ -267,7 +267,7 @@ export class ChatOffersService {
     });
   }
 
-  /** "2 × Alphonso Mango Box + 1 more" — the one-line bubble summary. */
+  /** "2 × Alphonso Mango Box + 1 more" - the one-line bubble summary. */
   private summarize(items: ChatOfferItemValue[]): string {
     const first = items[0];
     const head = `${first.qty} × ${first.name}`;
@@ -278,7 +278,7 @@ export class ChatOffersService {
 
   /**
    * What delivery costs for a district. An offer ships as one parcel, so it
-   * costs the highest rate among its items rather than one per line — the
+   * costs the highest rate among its items rather than one per line - the
    * same rule as checkout (`OrdersService.deliveryFeeCents`), applied to the
    * rates snapshotted when the offer was composed.
    *
@@ -303,7 +303,7 @@ export class ChatOffersService {
     );
   }
 
-  /** True when the offer delivers free wherever it goes — both zones at 0. */
+  /** True when the offer delivers free wherever it goes - both zones at 0. */
   private deliversFree(items: ChatOfferItemValue[]): boolean {
     return items.every(
       (i) => !(i.deliveryDhakaCents ?? 0) && !(i.deliveryOutsideCents ?? 0),
@@ -338,7 +338,7 @@ export class ChatOffersService {
 
   /**
    * Accepting places the order. The offer row is claimed with a conditional
-   * update — `status = 'accepted' WHERE status = 'pending'` — so two taps, or
+   * update - `status = 'accepted' WHERE status = 'pending'` - so two taps, or
    * two devices, can never both win; the loser gets a clear conflict instead
    * of a duplicate order.
    */
@@ -401,7 +401,7 @@ export class ChatOffersService {
 
     // Now that we know where it is going, delivery can be priced. The buyer
     // saw this same number on the View screen before pressing Accept, but it
-    // is recomputed here — the client's arithmetic is never the authority.
+    // is recomputed here - the client's arithmetic is never the authority.
     const deliveryCents = this.deliveryFor(
       row.items,
       dto.address.area,
@@ -450,7 +450,7 @@ export class ChatOffersService {
     await this.messages.updateOfferStatus(row.id, 'accepted');
     await this.messages.postShopMessage(row.shopId, row.buyerId, {
       type: 'system',
-      text: `Offer accepted — order ${placed.order.reference} placed.`,
+      text: `Offer accepted - order ${placed.order.reference} placed.`,
     });
 
     const shop = await this.shopMeta(row.shopId);

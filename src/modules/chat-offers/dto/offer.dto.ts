@@ -36,7 +36,7 @@ export class OfferItemDto {
   @ApiPropertyOptional({
     example: 3800,
     description:
-      "Unit price in ৳. Omit to use the product's current catalog price — " +
+      "Unit price in ৳. Omit to use the product's current catalog price - " +
       'the point of an offer is that the seller may set their own.',
   })
   @IsOptional()
@@ -75,7 +75,7 @@ export class CreateOfferDto {
   @Min(0)
   deliveryOutside?: number;
 
-  @ApiPropertyOptional({ example: 'Special price for you — valid today only.' })
+  @ApiPropertyOptional({ example: 'Special price for you - valid today only.' })
   @IsOptional()
   @IsString()
   @MaxLength(300)
@@ -137,7 +137,7 @@ export class StartWithCustomerDto {
 /**
  * What the offer charges to deliver to a zone: one parcel, so the highest
  * rate among its items. Offers made while the seller set one flat charge
- * carry no per-item rates — that agreed number stands for both zones.
+ * carry no per-item rates - that agreed number stands for both zones.
  */
 function zoneRate(
   row: ChatOrderOfferRow,

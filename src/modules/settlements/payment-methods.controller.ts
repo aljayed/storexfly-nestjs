@@ -129,7 +129,7 @@ export class UpdateSettlementBannerDto {
 }
 
 /**
- * The checkout payment-method catalog. Reading is public — the storefront
+ * The checkout payment-method catalog. Reading is public - the storefront
  * checkout, product page and seller console all render from it. Managing the
  * catalog (and the seller settlements-page banner) is platform-operator only.
  */

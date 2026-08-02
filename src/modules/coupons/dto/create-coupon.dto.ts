@@ -15,11 +15,11 @@ export class CreateCouponDto {
   @IsString()
   @Matches(/^[A-Za-z0-9_-]{3,40}$/, {
     message:
-      'Code must be 3–40 characters using letters, numbers, "-" or "_" only',
+      'Code must be 3-40 characters using letters, numbers, "-" or "_" only',
   })
   code!: string;
 
-  @ApiProperty({ example: 75, description: 'Whole-number percent, 1–100' })
+  @ApiProperty({ example: 75, description: 'Whole-number percent, 1-100' })
   @IsInt()
   @Min(1)
   @Max(100)

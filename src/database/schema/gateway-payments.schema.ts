@@ -27,7 +27,7 @@ export const gatewayPayments = pgTable(
     paymentId: varchar('payment_id', { length: 80 }).notNull(),
     status: varchar('status', { length: 20 }).notNull().default('created'),
     amountCents: integer('amount_cents').notNull(),
-    // Gateway transaction id on success (bKash `trxID`) — the buyer's receipt
+    // Gateway transaction id on success (bKash `trxID`) - the buyer's receipt
     // reference and the reconciliation key against the merchant statement.
     trxId: varchar('trx_id', { length: 80 }),
     payerReference: varchar('payer_reference', { length: 40 }),

@@ -27,7 +27,7 @@ const escapeHtml = (s: string): string =>
  * Server-rendered Open Graph previews for link crawlers.
  *
  * F-commerce selling happens by dropping product links into Facebook groups,
- * pages, and WhatsApp/Messenger threads — but the storefront is a client-side
+ * pages, and WhatsApp/Messenger threads - but the storefront is a client-side
  * SPA, so crawlers see an empty shell and shares lose their photo/price card.
  * Nginx routes known crawler user-agents fetching a product URL here instead;
  * the page carries the product's OG meta plus a redirect for any human that
@@ -61,7 +61,7 @@ export class ShareController {
       .replace(/\/$/, '');
     const pageUrl = `${webUrl}/shop/${encodeURIComponent(handle)}/p/${encodeURIComponent(slug)}`;
 
-    // First uploaded photo, absolute. Legacy inline base64 rows are skipped —
+    // First uploaded photo, absolute. Legacy inline base64 rows are skipped -
     // a data: URL is useless to a crawler.
     const raw = product.images?.[0];
     let image = raw?.startsWith('http')
@@ -86,9 +86,9 @@ export class ShareController {
         ? ''
         : `${symbol}${product.price.toLocaleString('en-US')}${product.unit ? ` per ${product.unit}` : ''}`;
     const blurb = product.blurb.replace(/\s+/g, ' ').trim().slice(0, 160);
-    const description = [priceLine, blurb].filter(Boolean).join(' — ');
+    const description = [priceLine, blurb].filter(Boolean).join(' - ');
 
-    const title = `${product.name} – ${shop.name}`;
+    const title = `${product.name} - ${shop.name}`;
     const locale = shop.language === 'bn' ? 'bn_BD' : 'en_US';
 
     const t = escapeHtml(title);

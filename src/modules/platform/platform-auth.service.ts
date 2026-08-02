@@ -12,7 +12,7 @@ export interface PlatformAuthResult {
 /**
  * Platform-admin console authentication. There is a single operator identity
  * whose credentials live in the environment (PLATFORM_ADMIN_EMAIL /
- * PLATFORM_ADMIN_PASSWORD) — no database row, so the console works even on an
+ * PLATFORM_ADMIN_PASSWORD) - no database row, so the console works even on an
  * empty database. Comparison is timing-safe via fixed-length digests.
  */
 @Injectable()

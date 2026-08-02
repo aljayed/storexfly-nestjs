@@ -10,10 +10,10 @@ import {
 import { paymentGatewayEnum, paymentMethodEnum } from './enums';
 
 /**
- * A checkout payment method (e.g. "bKash", "Card — SSLCommerz", "Cash on
+ * A checkout payment method (e.g. "bKash", "Card - SSLCommerz", "Cash on
  * Delivery"), managed from the platform-admin console. `code` is the stable
- * slug orders reference; `kind` groups methods by behaviour — 'mbank' methods
- * run the wallet checkout flow, 'card' the card form, 'cod' skips payment —
+ * slug orders reference; `kind` groups methods by behaviour - 'mbank' methods
+ * run the wallet checkout flow, 'card' the card form, 'cod' skips payment -
  * and is what per-product payment toggles are matched against.
  *
  * Deleting a method that historical orders reference only disables it
@@ -33,7 +33,7 @@ export const paymentMethods = pgTable(
     // before it is settled to the seller. Always 0 for COD.
     feeBp: integer('fee_bp').notNull().default(0),
     // Which gateway collects this method's money. 'none' = the platform never
-    // holds it (COD, or a direct transfer the seller confirms manually) — no
+    // holds it (COD, or a direct transfer the seller confirms manually) - no
     // fee is charged and nothing is paid out at settlement. 'bkash' routes
     // checkout through the bKash hosted flow using the platform credentials.
     gateway: paymentGatewayEnum('gateway').notNull().default('none'),

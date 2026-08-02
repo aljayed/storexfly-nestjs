@@ -3,7 +3,7 @@ import { centsToDollars } from '../../../common/utils/money.util';
 import type { ProductRow } from '../../../database/schema';
 import type { ListingType } from '../../../database/schema/enums';
 
-/** Public variant option — `priceDelta` in dollars, added to the base price. */
+/** Public variant option - `priceDelta` in dollars, added to the base price. */
 export interface PublicVariantOption {
   id: string;
   label: string;
@@ -26,7 +26,7 @@ export interface PublicVariantGroup {
   options: PublicVariantOption[];
 }
 
-/** Public multi-buy pack — `price` is the total for `units` units. */
+/** Public multi-buy pack - `price` is the total for `units` units. */
 export interface PublicPack {
   id: string;
   label: string;

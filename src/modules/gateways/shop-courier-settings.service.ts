@@ -50,7 +50,7 @@ export interface ShopCourierSettingsView {
 /**
  * Per-shop courier credentials (Steadfast / Pathao), managed by the seller
  * from the console Settings page. Secrets are write-only through the API. At
- * most one provider is enabled per shop — enabling one disables the other —
+ * most one provider is enabled per shop - enabling one disables the other -
  * and a shop with neither enabled delivers manually.
  */
 @Injectable()

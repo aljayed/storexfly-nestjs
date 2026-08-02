@@ -18,7 +18,7 @@ import { users } from './users.schema';
  * same transaction as the delete. The platform operator pays these out from
  * the settlements console like any other month; `paidAt` records it.
  *
- * Everything is denormalized on purpose — the shop row is gone, so the name,
+ * Everything is denormalized on purpose - the shop row is gone, so the name,
  * currency, owner contact and payout bank account must survive on their own.
  * `shopId` is a plain uuid (no FK) kept for traceability.
  */

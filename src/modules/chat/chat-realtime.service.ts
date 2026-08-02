@@ -10,7 +10,7 @@ import type { ChatActor } from './chat-actor';
  *
  * Rooms: `buyer:{buyerId}` for the customer side, `shop:{shopId}` for the
  * seller side (every staff socket of a shop shares its room). Presence and
- * last-seen live in memory — a restart just degrades "Online" to
+ * last-seen live in memory - a restart just degrades "Online" to
  * "Last seen recently", which the UI already handles.
  */
 @Injectable()

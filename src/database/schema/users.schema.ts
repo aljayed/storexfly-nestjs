@@ -17,7 +17,7 @@ import { shops } from './shops.schema';
  * A pinned map location the account saved at checkout. `line`/`area`/`pin` are
  * the human-readable address for the drop. `lat`/`lng` are the exact coordinates
  * from the interactive delivery map. `x`/`y` are the legacy canvas pin position
- * (percent) kept for pins saved before the real map — all optional so either
+ * (percent) kept for pins saved before the real map - all optional so either
  * representation validates.
  */
 export interface BuyerGeoValue {
@@ -35,7 +35,7 @@ export interface BuyerGeoValue {
 }
 
 /**
- * Platform accounts — the single human identity for both shopping and selling.
+ * Platform accounts - the single human identity for both shopping and selling.
  * Anyone can buy; you become a seller by owning a shop. `passwordHash` is null
  * for accounts that only ever used a social/phone login. The `address*`/`geo`/
  * `lastPayMethod`/`phoneVerified` fields are the storefront-shopper profile

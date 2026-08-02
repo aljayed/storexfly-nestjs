@@ -2,7 +2,7 @@
 -- a reason (customization/add-on); the buyer approves it (rewrites the order's
 -- total) or declines. Rows are kept forever as the order's amount history.
 -- Hand-written and idempotent (see 0030/0031/0045 for why we avoid
--- `drizzle-kit generate` here) — every statement is safe to re-run.
+-- `drizzle-kit generate` here) - every statement is safe to re-run.
 
 CREATE TABLE IF NOT EXISTS "order_amount_adjustments" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,

@@ -16,7 +16,7 @@ import { CreateBlockedWordDto } from '../blocked-words/dto/blocked-word.dto';
 
 /**
  * Manage the words rejected in shop names/handles and seller/buyer display
- * names — profanity plus brand-protection terms (e.g. "hoomri").
+ * names - profanity plus brand-protection terms (e.g. "hoomri").
  */
 @ApiTags('platform-admin')
 @Public()

@@ -6,7 +6,7 @@ import type { Transporter } from 'nodemailer';
 /**
  * Thin wrapper around a nodemailer SMTP transport. When SMTP isn't configured
  * (no host/user/pass) the transport is left null and messages are logged in
- * non-production instead of sent — so flows like password reset are testable
+ * non-production instead of sent - so flows like password reset are testable
  * without a real gateway. Configure MAIL_* env vars to send for real.
  */
 @Injectable()
@@ -27,7 +27,7 @@ export class MailService implements OnModuleInit {
 
     if (!(mail.host && mail.user && mail.pass)) {
       this.logger.warn(
-        'MAIL_* not configured — emails will be logged, not sent.',
+        'MAIL_* not configured - emails will be logged, not sent.',
       );
       return;
     }

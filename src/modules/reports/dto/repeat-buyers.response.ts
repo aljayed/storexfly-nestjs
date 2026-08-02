@@ -5,7 +5,7 @@ import { CustomerResponse } from '../../customers/dto/customer.response';
 export class RepeatBuyersResponse {
   @ApiProperty() totalCustomers!: number;
   @ApiProperty() repeatCustomers!: number;
-  @ApiProperty({ description: 'Repeat rate, 0–100' }) repeatRate!: number;
+  @ApiProperty({ description: 'Repeat rate, 0-100' }) repeatRate!: number;
   @ApiProperty({ description: 'Average orders per repeat buyer' })
   avgOrdersPerRepeatBuyer!: number;
   @ApiProperty({ type: [CustomerResponse] })

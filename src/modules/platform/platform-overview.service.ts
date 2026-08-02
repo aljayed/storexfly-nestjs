@@ -25,7 +25,7 @@ const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
 /**
  * Read-only aggregates for the platform-admin console: every shop on the
  * platform (with owner contact + recent sales) and every buyer across all
- * shops. Operator-scoped — never filtered to a single shop.
+ * shops. Operator-scoped - never filtered to a single shop.
  */
 @Injectable()
 export class PlatformOverviewService {
@@ -77,7 +77,7 @@ export class PlatformOverviewService {
           id: s.id,
           name: s.name,
           handle: s.handle,
-          ownerName: s.owner?.name ?? '—',
+          ownerName: s.owner?.name ?? '-',
           email: s.owner?.email ?? undefined,
           phone: s.owner?.phone ?? s.supportPhone ?? undefined,
           currency: s.currency,
@@ -127,7 +127,7 @@ export class PlatformOverviewService {
         segment: c.segment,
         ordersCount: c.ordersCount,
         spent: toMajor(c.spentCents),
-        shopName: c.shop?.name ?? '—',
+        shopName: c.shop?.name ?? '-',
         shopHandle: c.shop?.handle ?? '',
         currency: c.shop?.currency ?? 'BDT',
         createdAt: c.createdAt.toISOString(),
@@ -140,7 +140,7 @@ export class PlatformOverviewService {
 
   /**
    * The KYC review queue: shops with a submitted business verification, with
-   * owner contact and the licence details (but not the document — that's served
+   * owner contact and the licence details (but not the document - that's served
    * per-shop by {@link getKyc}). Defaults to every submitted shop; `pending`
    * always sorts first so the work to do is at the top.
    */
@@ -148,7 +148,7 @@ export class PlatformOverviewService {
     const q = query.q?.trim();
     const status = query.status ?? 'all';
 
-    // 'all' means every shop that has actually submitted something — an
+    // 'all' means every shop that has actually submitted something - an
     // unsubmitted shop has nothing to review, so it's hidden unless asked for.
     const statusWhere =
       status === 'all'
@@ -238,7 +238,7 @@ export class PlatformOverviewService {
       shopId: s.id,
       shopName: s.name,
       shopHandle: s.handle,
-      ownerName: s.owner?.name ?? '—',
+      ownerName: s.owner?.name ?? '-',
       ownerEmail: s.owner?.email ?? undefined,
       ownerPhone: s.owner?.phone ?? s.supportPhone ?? undefined,
       status: s.kycStatus,

@@ -1,12 +1,12 @@
 /**
  * Order lines are not all products. Checkout writes the shipping fee and the
  * combo reconciliation as extra rows in `order_items` (both with a null
- * `productId`) so the line totals always sum to the order total — but neither
+ * `productId`) so the line totals always sum to the order total - but neither
  * is something the buyer bought. Anything that summarises "what was ordered"
  * (list previews, chat snapshots, customer product history) must skip them.
  */
 
-/** Name checkout gives the shipping line — see OrdersService.pushDeliveryLine. */
+/** Name checkout gives the shipping line - see OrdersService.pushDeliveryLine. */
 export const DELIVERY_LINE_NAME = 'Delivery charge';
 
 export type OrderLineKind = 'product' | 'delivery' | 'discount';
@@ -30,7 +30,7 @@ export function isDeliveryLine(line: LineLike): boolean {
   return orderLineKind(line) === 'delivery';
 }
 
-/** The lines a buyer would call "my items" — no shipping, no discount rows. */
+/** The lines a buyer would call "my items" - no shipping, no discount rows. */
 export function productLines<T extends LineLike>(lines: T[]): T[] {
   return lines.filter((l) => orderLineKind(l) === 'product');
 }

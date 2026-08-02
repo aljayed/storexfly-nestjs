@@ -17,11 +17,11 @@ import { shops } from './shops.schema';
 
 /**
  * What a coupon may be spent on:
- *  - `all`     — every sale item in the order. Showcase items are advertised
+ *  - `all`     - every sale item in the order. Showcase items are advertised
  *                only and never reach checkout, so they are excluded by
  *                construction (see `OrdersService.priceProductPick`).
- *  - `product` — one specific product; only that product's lines discount.
- *  - `combo`   — one specific combo offer; only a checkout of that combo.
+ *  - `product` - one specific product; only that product's lines discount.
+ *  - `combo`   - one specific combo offer; only a checkout of that combo.
  */
 export const shopCouponScopeEnum = pgEnum('shop_coupon_scope', [
   'all',
@@ -42,7 +42,7 @@ export const shopCouponTypeEnum = pgEnum('shop_coupon_type', [
  * *subscription* payments and is managed from the platform console. These
  * discount a buyer's storefront order and never touch billing.
  *
- * The discount always applies to the item subtotal — never to delivery, so a
+ * The discount always applies to the item subtotal - never to delivery, so a
  * coupon can't erode the courier charge the seller has to pay. Codes are
  * stored uppercase and matched case-insensitively, and are unique per shop
  * (two different shops may both run "EID25").
@@ -111,7 +111,7 @@ export const shopCoupons = pgTable(
  *
  * Buyers can check out as guests, so the identity here is the normalized
  * national phone number (same rule the notifications matcher uses) rather than
- * a customer id — that is what a shopper actually re-uses across orders.
+ * a customer id - that is what a shopper actually re-uses across orders.
  * Cancelling an order (including a gateway payment that never completed)
  * releases its redemption again.
  */
@@ -125,7 +125,7 @@ export const shopCouponRedemptions = pgTable(
     orderId: uuid('order_id')
       .notNull()
       .references(() => orders.id, { onDelete: 'cascade' }),
-    /** Digits only, no country code — e.g. "1712345678". */
+    /** Digits only, no country code - e.g. "1712345678". */
     phone: varchar('phone', { length: 24 }).notNull(),
     discountCents: integer('discount_cents').notNull(),
     createdAt: timestamp('created_at', { withTimezone: true })

@@ -3,7 +3,7 @@ import { Transform } from 'class-transformer';
 import { IsString, IsUUID, MaxLength } from 'class-validator';
 
 /**
- * POST /buyer/orders/cancel — cancel one of the buyer's own orders while the
+ * POST /buyer/orders/cancel - cancel one of the buyer's own orders while the
  * shop hasn't confirmed it yet. Addressed like a claim: shop + human reference
  * ("#1042"); ownership is the order-email ↔ account match the order list uses.
  */

@@ -23,7 +23,7 @@ export class OrderItemResponse {
   @ApiProperty({
     enum: ['product', 'delivery', 'discount'],
     description:
-      'What the line is. Only "product" lines are things the buyer bought — ' +
+      'What the line is. Only "product" lines are things the buyer bought - ' +
       'shipping and combo reconciliation ride along so the lines sum to the total.',
   })
   kind!: OrderLineKind;
@@ -122,7 +122,7 @@ export class OrderResponse {
   adjustments!: OrderAdjustmentResponse[];
   @ApiProperty({
     description:
-      'Whether the order is tied to a verified buyer account (matched by a verified email or, later, verified phone). Amount changes are offered only when true — a guest or unverified match has no owner to approve them.',
+      'Whether the order is tied to a verified buyer account (matched by a verified email or, later, verified phone). Amount changes are offered only when true - a guest or unverified match has no owner to approve them.',
   })
   hasBuyerAccount!: boolean;
 

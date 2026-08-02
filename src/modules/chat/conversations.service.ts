@@ -43,7 +43,7 @@ export interface ConversationDto {
     tone: string;
     /** Host-app link behind the origin menu's "view details". */
     url: string;
-    /** Product origins only — enough for the origin menu to show the item
+    /** Product origins only - enough for the origin menu to show the item
      * as a card rather than an emoji and a name. */
     imageUrl?: string;
     price?: number;
@@ -166,7 +166,7 @@ export class ConversationsService {
 
   /**
    * Start (or return) the thread for (buyer, shop). When an origin is passed
-   * and differs from the stored one, the context strip is repointed — the
+   * and differs from the stored one, the context strip is repointed - the
    * buyer re-entered the thread from a different product/order.
    */
   async start(
@@ -355,7 +355,7 @@ export class ConversationsService {
   /* ---------- DTO assembly ---------- */
 
   /**
-   * Batch-resolve origin refs (products/orders) for the context strips —
+   * Batch-resolve origin refs (products/orders) for the context strips -
    * one query per type instead of one per conversation.
    */
   private async resolveOrigins(

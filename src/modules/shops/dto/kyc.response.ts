@@ -4,7 +4,7 @@ import type { ShopRow } from '../../../database/schema';
 
 /**
  * Owner-only KYC detail (returned by `GET`/`PATCH /shops/:id/kyc`). Carries the
- * uploaded trade licence, so it must never be served on public routes — the
+ * uploaded trade licence, so it must never be served on public routes - the
  * public `ShopResponse` exposes only `kycStatus`.
  */
 export class KycResponse {

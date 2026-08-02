@@ -1,7 +1,7 @@
 import type { AdminRole } from '../../../database/schema/enums';
 
 /**
- * Claims carried by the account-session JWT — the single login for shopping and
+ * Claims carried by the account-session JWT - the single login for shopping and
  * selling. (`typ:'seller'` kept for backward compatibility with live tokens.)
  */
 export interface SellerJwtPayload {

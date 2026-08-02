@@ -14,7 +14,7 @@ import {
 
 /**
  * Pure settlement math shared by SettlementsService and the delete-shop
- * flow in ShopsService (which cannot import SettlementsModule — it imports
+ * flow in ShopsService (which cannot import SettlementsModule - it imports
  * ShopsModule). No providers, no DB: callers bring their own order rows and
  * payment-method catalog.
  */
@@ -23,7 +23,7 @@ import {
 export interface Buckets {
   ordersCount: number;
   totalCents: number;
-  /** Orders recorded manually from the console — no payment method. */
+  /** Orders recorded manually from the console - no payment method. */
   manualCents: number;
   byCode: Map<string, number>;
 }
@@ -52,7 +52,7 @@ export function addOrder(
 ): void {
   b.ordersCount += count;
   b.totalCents += cents;
-  // Orders recorded manually from the console have no gateway — the seller
+  // Orders recorded manually from the console have no gateway - the seller
   // was paid directly, so like COD they carry no fee and no payout.
   if (!method) b.manualCents += cents;
   else b.byCode.set(method, (b.byCode.get(method) ?? 0) + cents);
@@ -61,7 +61,7 @@ export function addOrder(
 /**
  * Splits raw per-code volume into COD / online / other using the method
  * catalog. Only *gateway-collected* methods (bKash etc.) are money the
- * platform actually holds — those carry the fee and the payout. Direct-
+ * platform actually holds - those carry the fee and the payout. Direct-
  * transfer methods (the seller's own wallet number) and codes the catalog
  * no longer knows join the no-fee/no-payout buckets, so money the platform
  * never touched is never "paid out".
@@ -155,7 +155,7 @@ export function monthRange(period: string): [Date, Date] {
   return [new Date(y, m - 1, 1), new Date(y, m, 1)];
 }
 
-/** The 15th–21st payout window in the month after the earnings month. */
+/** The 15th-21st payout window in the month after the earnings month. */
 export function windowOf(period: string): { from: string; to: string } {
   const [y, m] = period.split('-').map(Number);
   const next = new Date(y, m, 1); // first day of the following month

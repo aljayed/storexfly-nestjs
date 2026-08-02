@@ -3,7 +3,7 @@ import { Transform } from 'class-transformer';
 import { IsBoolean, IsString, IsUUID, MaxLength } from 'class-validator';
 
 /**
- * POST /buyer/orders/adjustment/respond — the buyer approves or declines a
+ * POST /buyer/orders/adjustment/respond - the buyer approves or declines a
  * seller's pending order-amount change. Addressed like the buyer cancel: shop +
  * human reference ("#1042"); ownership is the order-email ↔ account match.
  */

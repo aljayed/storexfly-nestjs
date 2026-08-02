@@ -18,7 +18,7 @@ export class DashboardResponse {
   @ApiProperty({ description: "Today's revenue (dollars)" })
   revenueToday!: number;
   @ApiProperty() ordersToday!: number;
-  @ApiProperty({ description: 'Lifetime repeat-buyer rate, 0–100' })
+  @ApiProperty({ description: 'Lifetime repeat-buyer rate, 0-100' })
   repeatBuyerRate!: number;
 
   // Selected-range figures.

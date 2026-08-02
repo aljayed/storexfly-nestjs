@@ -10,7 +10,7 @@ import { ShopsService } from './shops.service';
 
 @Module({
   // EmailOtpService is provided here (not pulled from AuthModule, which
-  // already imports ShopsModule — a cycle). The instance is separate from
+  // already imports ShopsModule - a cycle). The instance is separate from
   // auth's, which is fine: the delete-shop codes are both issued and
   // verified through ShopsService, so they live in this instance's store.
   imports: [

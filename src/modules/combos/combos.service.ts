@@ -35,7 +35,7 @@ export class CombosService {
     private readonly shops: ShopsService,
   ) {}
 
-  /** Admin list — every combo of the shop, newest first. */
+  /** Admin list - every combo of the shop, newest first. */
   async listForShop(shopId: string): Promise<ComboResponse[]> {
     const rows = (await this.db.query.combos.findMany({
       where: eq(combos.shopId, shopId),
@@ -194,7 +194,7 @@ export class CombosService {
       }
       if (row.listingType !== 'sale') {
         throw new BadRequestException(
-          'Showcase items cannot be part of a combo — only items sold online',
+          'Showcase items cannot be part of a combo - only items sold online',
         );
       }
     }

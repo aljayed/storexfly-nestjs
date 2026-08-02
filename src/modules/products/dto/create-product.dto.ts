@@ -31,7 +31,7 @@ type ListingType = (typeof listingTypeEnum.enumValues)[number];
 /** One choice inside a variant group; `priceDelta` adjusts the base price. */
 export class VariantOptionDto {
   @ApiPropertyOptional({
-    description: 'Stable id — assigned by the API when absent.',
+    description: 'Stable id - assigned by the API when absent.',
   })
   @IsOptional()
   @IsString()
@@ -57,7 +57,7 @@ export class VariantOptionDto {
 
   @ApiPropertyOptional({
     description:
-      'Photo shown when this option is picked — a base64 data URL (absorbed ' +
+      'Photo shown when this option is picked - a base64 data URL (absorbed ' +
       'into storage on save) or an existing /media URL. Empty string clears it.',
   })
   @IsOptional()
@@ -99,7 +99,7 @@ export class VariantOptionDto {
 /** A buyer-facing option group (e.g. "Size" with S / M / L). */
 export class VariantGroupDto {
   @ApiPropertyOptional({
-    description: 'Stable id — assigned by the API when absent.',
+    description: 'Stable id - assigned by the API when absent.',
   })
   @IsOptional()
   @IsString()
@@ -124,7 +124,7 @@ export class VariantGroupDto {
 /** A multi-buy bundle: `units` units for `price` total. */
 export class PackDto {
   @ApiPropertyOptional({
-    description: 'Stable id — assigned by the API when absent.',
+    description: 'Stable id - assigned by the API when absent.',
   })
   @IsOptional()
   @IsString()
@@ -133,7 +133,7 @@ export class PackDto {
 
   @ApiPropertyOptional({
     example: 'Family pack',
-    description: 'Optional label — defaults to "Pack of N" on the storefront.',
+    description: 'Optional label - defaults to "Pack of N" on the storefront.',
   })
   @IsOptional()
   @IsString()
@@ -314,14 +314,14 @@ export class CreateProductDto {
    *
    * Safe to delete once no old console bundle can still be in a browser.
    */
-  @ApiPropertyOptional({ deprecated: true, description: 'Ignored — removed.' })
+  @ApiPropertyOptional({ deprecated: true, description: 'Ignored - removed.' })
   @IsOptional()
   @IsArray()
   highlights?: unknown[];
 
   @ApiPropertyOptional({
     example: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
-    description: 'Optional product video — a YouTube URL.',
+    description: 'Optional product video - a YouTube URL.',
   })
   @IsOptional()
   @IsString()

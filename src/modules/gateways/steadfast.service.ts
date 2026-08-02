@@ -93,7 +93,7 @@ export class SteadfastService {
     } catch (err) {
       this.logger.error('Steadfast booking failed', err as Error);
       throw new ServiceUnavailableException(
-        'Could not book the courier — please try again in a moment.',
+        'Could not book the courier - please try again in a moment.',
       );
     }
   }

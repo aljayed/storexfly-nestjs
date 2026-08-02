@@ -1,5 +1,5 @@
 /**
- * Mirror of the prototype's `handleize` (data.jsx): lowercase-safe slug —
+ * Mirror of the prototype's `handleize` (data.jsx): lowercase-safe slug -
  * strip non-alphanumerics (keep spaces/hyphens), collapse whitespace to
  * hyphens, collapse repeats, trim leading/trailing hyphens. Used for shop
  * handles and product slugs.

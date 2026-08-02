@@ -14,7 +14,7 @@ export class CheckoutResultResponse {
   @ApiProperty({ example: 'cod', description: 'Payment-method code' })
   paymentMethod!: string;
   @ApiProperty() qty!: number;
-  @ApiProperty({ example: 'Within 2–3 days' }) eta!: string;
+  @ApiProperty({ example: 'Within 2-3 days' }) eta!: string;
   @ApiProperty({
     enum: ['Paid', 'Due', 'Pending'],
     description:

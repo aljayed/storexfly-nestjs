@@ -35,7 +35,7 @@ export interface BkashExecuteResult {
   ok: boolean;
   trxId?: string;
   transactionStatus?: string;
-  /** Amount actually charged, in BDT cents — verified against the order. */
+  /** Amount actually charged, in BDT cents - verified against the order. */
   amountCents?: number;
   statusMessage?: string;
 }
@@ -65,7 +65,7 @@ export class BkashService {
     const config = await this.settings.bkashConfig();
     if (!config) {
       throw new ServiceUnavailableException(
-        'bKash payments are not available right now — please pick another method.',
+        'bKash payments are not available right now - please pick another method.',
       );
     }
     return config;
@@ -166,7 +166,7 @@ export class BkashService {
     } catch (err) {
       this.logger.error('bKash create payment failed', err as Error);
       throw new ServiceUnavailableException(
-        'Could not reach bKash — please try again or pick another method.',
+        'Could not reach bKash - please try again or pick another method.',
       );
     }
   }

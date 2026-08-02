@@ -77,7 +77,7 @@ const STATUS_FLOW: Record<OrderStatus, OrderStatus | null> = {
 /** Statuses from which an order may still be cancelled (before it's packed). */
 const CANCELLABLE: readonly OrderStatus[] = ['New', 'Confirmed'];
 
-/** Statuses a buyer may self-cancel from — only before the seller confirms. */
+/** Statuses a buyer may self-cancel from - only before the seller confirms. */
 const BUYER_CANCELLABLE: readonly OrderStatus[] = ['New'];
 
 /** Statuses from which the seller may hand the parcel to the courier. */
@@ -99,13 +99,13 @@ const STATUS_NOTIFICATION: Partial<Record<OrderStatus, string>> = {
   Confirmed: 'has been confirmed by the seller',
   Packed: 'has been packed and is getting ready to ship',
   Shipped: 'is on its way',
-  Delivered: 'has been delivered — enjoy!',
+  Delivered: 'has been delivered - enjoy!',
 };
 
 /** The transaction handle used inside `checkout`. */
 type OrdersTx = Parameters<Parameters<DrizzleDB['transaction']>[0]>[0];
 
-/** "৳1,500" from integer cents — buyer-facing money in notification copy. */
+/** "৳1,500" from integer cents - buyer-facing money in notification copy. */
 function formatBdt(cents: number): string {
   return `৳${centsToDollars(cents).toLocaleString('en-US')}`;
 }
@@ -118,7 +118,7 @@ function normalizePhone(raw: string | null | undefined): string {
 
 /**
  * Units to take off one variant option's own counter. Only options the seller
- * chose to track produce these — untracked options live purely off the
+ * chose to track produce these - untracked options live purely off the
  * product-level `stock` column.
  */
 interface VariantDeduction {
@@ -134,7 +134,7 @@ interface CheckoutCart {
   totalCents: number;
   /** Delivery charge included in the total (0 = free delivery). */
   deliveryCents: number;
-  /** Physical units leaving stock — shown as the order's qty. */
+  /** Physical units leaving stock - shown as the order's qty. */
   totalUnits: number;
   /** Per-product stock decrements to apply. */
   deductions: { productId: string; units: number }[];
@@ -145,14 +145,14 @@ interface CheckoutCart {
     name: string;
     qty: number;
     /**
-     * Physical units this line takes out of stock — `qty` × the pack size,
+     * Physical units this line takes out of stock - `qty` × the pack size,
      * so it only differs from `qty` for multi-buy packs. Null on the lines
      * that aren't stock at all (delivery, coupon, combo adjustment).
      */
     units: number | null;
     unitPriceCents: number;
     variant: string | null;
-    /** `{ groupId: optionId }` of what was picked — null when no variants. */
+    /** `{ groupId: optionId }` of what was picked - null when no variants. */
     variantPick: Record<string, string> | null;
   }[];
 }
@@ -174,7 +174,7 @@ export class OrdersService {
   ) {}
 
   /**
-   * Inline product-page checkout — a single product (with optional variant
+   * Inline product-page checkout - a single product (with optional variant
    * selection and multi-buy pack) or a combo offer. Runs in a transaction
    * that locks the shop row, serializing checkouts per shop so reference
    * allocation and stock arithmetic cannot race; stock updates are still
@@ -182,7 +182,7 @@ export class OrdersService {
    *
    * Payment truth: COD and direct-transfer methods create the order as
    * 'Due' (money not yet verified in hand); a gateway method creates it as
-   * 'Pending' and returns a `paymentUrl` to the bKash hosted checkout — the
+   * 'Pending' and returns a `paymentUrl` to the bKash hosted checkout - the
    * order only becomes 'Paid' when bKash confirms the money.
    */
   async checkout(dto: CheckoutDto): Promise<CheckoutResultResponse> {
@@ -193,12 +193,12 @@ export class OrdersService {
     );
     if (!method) {
       throw new BadRequestException(
-        'That payment method is not available — please pick another.',
+        'That payment method is not available - please pick another.',
       );
     }
     if (method.gateway === 'bkash' && !(await this.bkash.isConfigured())) {
       throw new BadRequestException(
-        'bKash payments are temporarily unavailable — please pick another method.',
+        'bKash payments are temporarily unavailable - please pick another method.',
       );
     }
     // Exactly one of the three order shapes: a single product, a combo, or a
@@ -220,7 +220,7 @@ export class OrdersService {
         .from(shops)
         .where(eq(shops.id, dto.shopId))
         .for('update');
-      // A switched-off shop is closed to buyers — no orders either.
+      // A switched-off shop is closed to buyers - no orders either.
       if (!shop?.live) {
         throw new ForbiddenException('This shop is currently offline.');
       }
@@ -239,7 +239,7 @@ export class OrdersService {
       // Pre-paid credit, checked under the same lock for the same reason the
       // free quota is: the hourly billing sweep would let a shop sell far past
       // a balance it has already paid for. The order that takes the balance to
-      // zero still completes — it is the next one that is refused.
+      // zero still completes - it is the next one that is refused.
       const credit = await creditPosition(tx, dto.shopId);
       if (credit && credit.balanceCents <= 0) {
         throw new ForbiddenException(CREDIT_EXHAUSTED_MESSAGE);
@@ -263,7 +263,7 @@ export class OrdersService {
           ? await this.buildComboCart(tx, dto, method.kind)
           : await this.buildProductCart(tx, dto, method.kind);
 
-      // A coupon takes money off the item subtotal (never delivery — the
+      // A coupon takes money off the item subtotal (never delivery - the
       // seller still owes the courier that). A code that doesn't apply is
       // ignored rather than failing the order: the storefront previews it and
       // shows the exact discount before the buyer commits, so a race here
@@ -287,7 +287,7 @@ export class OrdersService {
           throw new ConflictException('Not enough stock for this quantity');
         }
       }
-      // Options that carry their own counter come off it too — the product
+      // Options that carry their own counter come off it too - the product
       // total above is the ceiling, this is the per-choice availability.
       await this.applyVariantStock(tx, cart.variantDeductions, -1);
 
@@ -394,7 +394,7 @@ export class OrdersService {
 
     // Hosted-gateway leg runs after the commit (never hold a DB transaction
     // across an external HTTP call). If bKash cannot open a payment the
-    // pending order is voided again — stock and customer stats roll back.
+    // pending order is voided again - stock and customer stats roll back.
     if (method.gateway === 'bkash') {
       try {
         const created = await this.bkash.createPayment({
@@ -493,7 +493,7 @@ export class OrdersService {
    * report what the code takes off, without touching stock or redemptions.
    *
    * It runs the same cart builders as the real checkout, so the number shown
-   * is the number charged. Payment-method checks are skipped — the buyer may
+   * is the number charged. Payment-method checks are skipped - the buyer may
    * not have picked one yet, and the method can't change the discount.
    */
   async quoteCoupon(dto: CouponQuoteDto): Promise<CouponQuoteResponse> {
@@ -533,8 +533,8 @@ export class OrdersService {
   /**
    * Place an order from an accepted chat offer.
    *
-   * Deliberately parallel to `checkout` — same shop lock, same guarded stock
-   * decrement, same customer stats, notifications and free-tier cap — with
+   * Deliberately parallel to `checkout` - same shop lock, same guarded stock
+   * decrement, same customer stats, notifications and free-tier cap - with
    * one difference: the line prices come from the offer, not the catalog.
    * That is the whole point of an offer, and it's why this can't just call
    * `checkout`, which re-prices from the catalog and would silently discard
@@ -572,12 +572,12 @@ export class OrdersService {
     );
     if (!method) {
       throw new BadRequestException(
-        'That payment method is not available — please pick another.',
+        'That payment method is not available - please pick another.',
       );
     }
     if (method.gateway === 'bkash' && !(await this.bkash.isConfigured())) {
       throw new BadRequestException(
-        'bKash payments are temporarily unavailable — please pick another method.',
+        'bKash payments are temporarily unavailable - please pick another method.',
       );
     }
     const phone = args.phone?.trim() || args.buyer.phone || '';
@@ -632,12 +632,12 @@ export class OrdersService {
         const product = byId.get(item.productId);
         if (!product || product.listingType !== 'sale') {
           throw new ConflictException(
-            `“${item.name}” is no longer available — ask the seller for a new offer.`,
+            `“${item.name}” is no longer available - ask the seller for a new offer.`,
           );
         }
         if (!product.paymentMethods.includes(method.kind)) {
           throw new BadRequestException(
-            `“${product.name}” cannot be paid with that method — please pick another.`,
+            `“${product.name}” cannot be paid with that method - please pick another.`,
           );
         }
         unitsByProduct.set(
@@ -648,7 +648,7 @@ export class OrdersService {
           productId: product.id,
           name: item.name,
           qty: item.qty,
-          // Offers are priced per unit — no packs, so picks are units.
+          // Offers are priced per unit - no packs, so picks are units.
           units: item.qty,
           unitPriceCents: item.unitPriceCents,
           variant: null,
@@ -660,7 +660,7 @@ export class OrdersService {
         const product = byId.get(productId)!;
         if (product.stock < units) {
           throw new ConflictException(
-            `Not enough stock of ${product.name} — ask the seller for a new offer.`,
+            `Not enough stock of ${product.name} - ask the seller for a new offer.`,
           );
         }
       }
@@ -815,7 +815,7 @@ export class OrdersService {
       delivery: order.deliveryCents / 100,
       paymentMethod: dto.paymentMethod,
       qty: order.qty,
-      eta: 'Within 2–3 days',
+      eta: 'Within 2-3 days',
       payStatus: order.pay,
       ...extra,
     };
@@ -828,7 +828,7 @@ export class OrdersService {
     return `${apiUrl.replace(/\/$/, '')}/${prefix}/payments/bkash/callback`;
   }
 
-  /** Lifetime orders (everything not cancelled) — the free-tier cap metric. */
+  /** Lifetime orders (everything not cancelled) - the free-tier cap metric. */
   private async lifetimeOrderCount(
     executor: OrdersTx | DrizzleDB,
     shopId: string,
@@ -846,7 +846,7 @@ export class OrdersService {
    * Price one picked line of a product: the variant selection (one option per
    * group the product defines) and an optional multi-buy pack. Deltas apply
    * per unit, so a pack of N carries N × delta on top of the pack price.
-   * Stock is *not* checked here — the caller sums the units a product needs
+   * Stock is *not* checked here - the caller sums the units a product needs
    * across every line first, then checks once.
    */
   private priceProductPick(
@@ -859,22 +859,22 @@ export class OrdersService {
     /** Options the buyer picked that carry their own stock counter. */
     tracked: { groupId: string; optionId: string }[];
   } {
-    // Showcase items are advertised only — the sale happens offline, so
+    // Showcase items are advertised only - the sale happens offline, so
     // online checkout is never allowed for them.
     if (product.listingType === 'showcase') {
       throw new ConflictException(
-        `“${product.name}” cannot be ordered online — please contact the seller.`,
+        `“${product.name}” cannot be ordered online - please contact the seller.`,
       );
     }
     // Sellers toggle payment *kinds* per product (COD / mobile banking /
     // card); the picked method must belong to an allowed kind. `null` means
-    // no method has been chosen yet (a coupon preview) — nothing to check.
+    // no method has been chosen yet (a coupon preview) - nothing to check.
     if (
       payKind !== null &&
       !product.paymentMethods.includes(payKind as never)
     ) {
       throw new BadRequestException(
-        `“${product.name}” cannot be paid with that method — please pick another.`,
+        `“${product.name}” cannot be paid with that method - please pick another.`,
       );
     }
 
@@ -904,7 +904,7 @@ export class OrdersService {
 
     // Not every pair of options exists: a colour may only be made in some of
     // the configurations. The storefront greys those out, so reaching here
-    // means a stale page or a hand-made request — either way the combination
+    // means a stale page or a hand-made request - either way the combination
     // can't be shipped, so it can't be sold.
     for (const group of product.variantGroups ?? []) {
       const option = group.options.find((o) => o.id === variantPick[group.id])!;
@@ -916,7 +916,7 @@ export class OrdersService {
       if (partnerPick && !option.onlyWith.includes(partnerPick)) {
         const chosen = partner?.options.find((o) => o.id === partnerPick);
         throw new ConflictException(
-          `“${option.label}” isn’t available with ${chosen?.label ?? 'that option'} — please pick another combination.`,
+          `“${option.label}” isn’t available with ${chosen?.label ?? 'that option'} - please pick another combination.`,
         );
       }
     }
@@ -928,7 +928,7 @@ export class OrdersService {
       const pack = (product.packs ?? []).find((p) => p.id === pick.packId);
       if (!pack) {
         throw new BadRequestException(
-          'That pack is no longer available — please reload and pick again.',
+          'That pack is no longer available - please reload and pick again.',
         );
       }
       unitsPerPick = pack.units;
@@ -1000,7 +1000,7 @@ export class OrdersService {
           const next = o.stock + sign * units;
           if (next < 0) {
             throw new ConflictException(
-              `Only ${o.stock} left of “${o.label}” — please lower the quantity.`,
+              `Only ${o.stock} left of “${o.label}” - please lower the quantity.`,
             );
           }
           return { ...o, stock: next };
@@ -1065,7 +1065,7 @@ export class OrdersService {
    * is per shop by construction (the buyer keeps a separate cart for every
    * shop), and this rejects anything that isn't in `dto.shopId`, so an order
    * can never mix shops. The parcel ships together, so the buyer pays one
-   * delivery charge — the highest zone fee among the products in it.
+   * delivery charge - the highest zone fee among the products in it.
    */
   private async buildItemsCart(
     tx: OrdersTx,
@@ -1141,7 +1141,7 @@ export class OrdersService {
    * Combo checkout: every member is validated + decremented individually and
    * written as a full-price line (so cancel-restock and reporting keep
    * working), with one final negative "combo discount" line bringing the sum
-   * down to the combo price, plus the delivery charge (one shipment — the
+   * down to the combo price, plus the delivery charge (one shipment - the
    * highest member fee for the buyer's zone).
    */
   private async buildComboCart(
@@ -1174,7 +1174,7 @@ export class OrdersService {
         !product.paymentMethods.includes(payKind as never)
       ) {
         throw new BadRequestException(
-          'This combo cannot be paid with that method — please pick another.',
+          'This combo cannot be paid with that method - please pick another.',
         );
       }
       const units = item.qty * sets;
@@ -1205,7 +1205,7 @@ export class OrdersService {
     if (adjustCents !== 0) {
       lines.push({
         productId: null,
-        name: `Combo ${adjustCents < 0 ? 'discount' : 'adjustment'} — ${combo.name}`.slice(
+        name: `Combo ${adjustCents < 0 ? 'discount' : 'adjustment'} - ${combo.name}`.slice(
           0,
           200,
         ),
@@ -1237,7 +1237,7 @@ export class OrdersService {
 
   /**
    * The zone delivery charge the storefront quoted: the product's Dhaka /
-   * outside-Dhaka fee (a combo ships together — its highest member fee).
+   * outside-Dhaka fee (a combo ships together - its highest member fee).
    * The buyer's chosen district decides the zone, same rule as the UI.
    */
   private deliveryFeeCents(
@@ -1275,7 +1275,7 @@ export class OrdersService {
    * Paginated admin list. `total` counts the filtered set; `stats` are
    * shop-wide aggregates (one grouped query) so tab counts and KPI cards
    * stay correct regardless of the active page or filter. Orders whose
-   * gateway payment is still in flight (pay = 'Pending') are hidden — they
+   * gateway payment is still in flight (pay = 'Pending') are hidden - they
    * only enter the pipeline once bKash confirms the money.
    */
   async list(
@@ -1368,7 +1368,7 @@ export class OrdersService {
   }
 
   /**
-   * The public contract addresses orders by their human reference ("#1042" —
+   * The public contract addresses orders by their human reference ("#1042" -
    * the `id` in OrderResponse); the internal uuid is also accepted.
    */
   private orderIdFilter(shopId: string, id: string) {
@@ -1440,7 +1440,7 @@ export class OrdersService {
   /**
    * Seller confirms a direct transfer (bKash/Nagad "send money" to their own
    * number) actually arrived. Gateway-collected methods confirm themselves,
-   * so they are excluded — a seller cannot self-mark platform money as paid.
+   * so they are excluded - a seller cannot self-mark platform money as paid.
    */
   async markPaid(shopId: string, id: string): Promise<OrderResponse> {
     const order = await this.requireOwned(shopId, id);
@@ -1487,13 +1487,13 @@ export class OrdersService {
    * and posts an approval card the buyer acts on in chat (or their profile).
    *
    * Only on unpaid (Due) orders that haven't shipped and have no courier booked
-   * — so no money has moved and the courier COD figure is still the order total.
+   * - so no money has moved and the courier COD figure is still the order total.
    * At most one pending proposal at a time.
    *
    * The buyer must hold a *verified* account matching the order (verified email
    * now; verified phone once that exists): approval is an authenticated,
-   * account-only action, so a guest order — or one matched only by an
-   * unverified identifier — can't be adjusted (there'd be no owner to approve,
+   * account-only action, so a guest order - or one matched only by an
+   * unverified identifier - can't be adjusted (there'd be no owner to approve,
    * and no thread to notify). Such orders are blocked up front.
    */
   async requestAmountAdjustment(
@@ -1511,7 +1511,7 @@ export class OrdersService {
       !AMOUNT_ADJUSTABLE.includes(order.status)
     ) {
       throw new BadRequestException(
-        'This order can no longer be changed — amount changes are only possible before it ships.',
+        'This order can no longer be changed - amount changes are only possible before it ships.',
       );
     }
     if (order.pay !== 'Due') {
@@ -1521,12 +1521,12 @@ export class OrdersService {
     }
     if (order.courierConsignmentId) {
       throw new ConflictException(
-        'A courier is already booked — the amount is locked to the consignment.',
+        'A courier is already booked - the amount is locked to the consignment.',
       );
     }
     if (!(await this.orderHasBuyerAccount(order))) {
       // Orders placed with only a phone carry a synthetic "<phone>@phone.local"
-      // email — point the seller at the phone number in that case.
+      // email - point the seller at the phone number in that case.
       const identifier = order.email.endsWith('@phone.local')
         ? 'phone number'
         : 'email';
@@ -1599,8 +1599,8 @@ export class OrdersService {
           tx,
           order,
           'order_adjustment',
-          `Order ${order.reference} — total lowered`,
-          `Good news — the shop lowered your order total to ${formatBdt(newTotalCents)} (${reasonText}).`,
+          `Order ${order.reference} - total lowered`,
+          `Good news - the shop lowered your order total to ${formatBdt(newTotalCents)} (${reasonText}).`,
         );
         return adj.id;
       });
@@ -1629,7 +1629,7 @@ export class OrdersService {
         this.db,
         order,
         'order_adjustment',
-        `Order ${order.reference} — approval needed`,
+        `Order ${order.reference} - approval needed`,
         `The seller updated your order total to ${formatBdt(newTotalCents)} (${reasonText}). Approve or decline it in chat or your profile.`,
       );
       if (accountId) {
@@ -1647,7 +1647,7 @@ export class OrdersService {
   }
 
   /** The verified account id that owns an order (or null), used to address the
-   *  chat thread and confirm ownership — same match rule as the reprice gate. */
+   *  chat thread and confirm ownership - same match rule as the reprice gate. */
   private async resolveOrderAccountId(
     order: Pick<OrderRow, 'email' | 'phone'>,
   ): Promise<string | null> {
@@ -1807,7 +1807,7 @@ export class OrdersService {
         type: 'text',
         text: approve
           ? `Order ${reference} total updated to ${formatBdt(result.newTotalCents)}.`
-          : `The amount change for order ${reference} was declined — total stays ${formatBdt(result.order.totalCents)}.`,
+          : `The amount change for order ${reference} was declined - total stays ${formatBdt(result.order.totalCents)}.`,
       });
     }
     return result.response;
@@ -1843,7 +1843,7 @@ export class OrdersService {
       // (another adjustment, a refund, …): only apply from the quoted total.
       if (order.totalCents !== adjustment.previousTotalCents) {
         throw new ConflictException(
-          'The order total changed since this request — please ask the seller to send it again.',
+          'The order total changed since this request - please ask the seller to send it again.',
         );
       }
       [row] = await tx
@@ -1864,7 +1864,7 @@ export class OrdersService {
       tx,
       row,
       'order_adjustment',
-      `Order ${row.reference} — amount ${approve ? 'approved' : 'declined'}`,
+      `Order ${row.reference} - amount ${approve ? 'approved' : 'declined'}`,
       approve
         ? `You approved the updated total of ${formatBdt(adjustment.newTotalCents)}.`
         : `You declined the seller's updated total. Your order total stays ${formatBdt(order.totalCents)}.`,
@@ -1895,7 +1895,7 @@ export class OrdersService {
   /**
    * Does this order belong to a buyer who has *verified* the matching
    * identifier? Only a verified email (or, once it exists, a verified phone)
-   * counts — a guest order attaches to an account only after the owner proves
+   * counts - a guest order attaches to an account only after the owner proves
    * they own the email/phone it was placed with. This gates repricing so a
    * change can only be approved by the real order owner.
    */
@@ -2035,7 +2035,7 @@ export class OrdersService {
           "Only orders that haven't been packed can be cancelled",
         );
       }
-      // A refunded order was already unwound from the customer's spend —
+      // A refunded order was already unwound from the customer's spend -
       // cancelling it too would subtract the money a second time.
       if (order.pay === 'Refunded') {
         throw new ConflictException(
@@ -2058,7 +2058,7 @@ export class OrdersService {
   }
 
   /**
-   * Buyer self-service cancel — only while the order is still 'New' (the shop
+   * Buyer self-service cancel - only while the order is still 'New' (the shop
    * admin hasn't confirmed it). Ownership is the order-email ↔ account match,
    * the same link the buyer's order list is built on. Paid orders are excluded:
    * cancelling one implies a refund, which stays a shop-side action.
@@ -2082,7 +2082,7 @@ export class OrdersService {
       }
       if (!BUYER_CANCELLABLE.includes(order.status) || order.pay === 'Paid') {
         throw new BadRequestException(
-          'The shop has already started processing this order — please contact the shop to cancel it.',
+          'The shop has already started processing this order - please contact the shop to cancel it.',
         );
       }
       const row = await this.cancelTx(tx, order);
@@ -2111,7 +2111,7 @@ export class OrdersService {
     for (const item of items) {
       if (!item.productId) continue;
       // Give back what the line actually took: `units` for anything placed
-      // since that column existed, `qty` for older rows — which is also all
+      // since that column existed, `qty` for older rows - which is also all
       // those orders ever had deducted for non-pack lines.
       const units = item.units ?? item.qty;
       await tx
@@ -2130,7 +2130,7 @@ export class OrdersService {
     // Options the seller has stopped tracking since the order are skipped by
     // applyVariantStock rather than resurrected with a count.
     await this.applyVariantStock(tx, returns, 1);
-    // Hand the coupon use back — a cancelled order shouldn't burn the buyer's
+    // Hand the coupon use back - a cancelled order shouldn't burn the buyer's
     // one redemption, nor a slot from a capped code.
     await this.shopCoupons.releaseForOrder(tx, order.id);
 
@@ -2222,7 +2222,7 @@ export class OrdersService {
     const active = await this.courierSettings.activeCourier(shopId);
     if (!active) {
       throw new BadRequestException(
-        'No courier is enabled for this shop — enable Steadfast or Pathao in Settings, or deliver manually.',
+        'No courier is enabled for this shop - enable Steadfast or Pathao in Settings, or deliver manually.',
       );
     }
     const shipment = {
@@ -2258,7 +2258,7 @@ export class OrdersService {
         areaId: opts.areaId,
         itemQuantity: order.qty,
       });
-      // Pathao has no separate tracking code — the consignment ID is it.
+      // Pathao has no separate tracking code - the consignment ID is it.
       booked = {
         consignmentId: c.consignmentId,
         trackingCode: c.consignmentId,
@@ -2315,7 +2315,7 @@ export class OrdersService {
           row,
           'order_status',
           `Order ${row.reference} delivered`,
-          'Your order has been delivered — enjoy!',
+          'Your order has been delivered - enjoy!',
         );
       }
     }
@@ -2335,7 +2335,7 @@ export class OrdersService {
       const config = await this.courierSettings.pathaoConfig(shopId);
       if (!config) {
         throw new BadRequestException(
-          'Pathao credentials were removed — add them back in Settings to track this parcel.',
+          'Pathao credentials were removed - add them back in Settings to track this parcel.',
         );
       }
       return this.pathao.status(config, order.courierConsignmentId!);
@@ -2343,7 +2343,7 @@ export class OrdersService {
     const config = await this.courierSettings.steadfastConfig(shopId);
     if (!config) {
       throw new BadRequestException(
-        'Steadfast credentials are missing — add them in Settings to track this parcel.',
+        'Steadfast credentials are missing - add them in Settings to track this parcel.',
       );
     }
     return this.steadfast.status(config, order.courierConsignmentId!);

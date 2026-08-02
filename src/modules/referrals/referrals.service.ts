@@ -23,7 +23,7 @@ import {
  * Referral links (hoomri.com/r/<slug>), each tied to a platform coupon.
  * Opening a link quotes the discounted first month and hands the storefront
  * the coupon code to auto-apply on the shop-creation payment. The discount
- * never touches renewals — those are charged at full price unless a coupon
+ * never touches renewals - those are charged at full price unless a coupon
  * is applied manually from the seller console.
  */
 @Injectable()
@@ -108,7 +108,7 @@ export class ReferralsService {
    * coupon does to the first month. 404s whenever the link (or its coupon)
    * can't currently give a discount, so the storefront simply renders the
    * regular pricing. The seller-specific checks (high-sales cutoff) and the
-   * final price run again at payment time — this is only a quote.
+   * final price run again at payment time - this is only a quote.
    */
   async resolve(slug: string): Promise<ReferralResolveResponse> {
     const link = await this.db.query.referralLinks.findFirst({
@@ -131,7 +131,7 @@ export class ReferralsService {
       .set({ clicks: sql`${referralLinks.clicks} + 1` })
       .where(eq(referralLinks.id, link.id));
 
-    // Quoted against the entry pack — the cheapest way in, and what the
+    // Quoted against the entry pack - the cheapest way in, and what the
     // landing page's "from ৳X" refers to.
     const feeCents = (await this.billing.entryPack())?.priceCents ?? 0;
     // Same rounding as CouponsService.check: discount up to a whole taka.
@@ -151,7 +151,7 @@ export class ReferralsService {
   /**
    * Attribute a paid first payment to the link that carried the coupon.
    * Only counts when the slug still maps to that exact coupon, so a code
-   * typed in by hand can't inflate an unrelated link. Never throws — the
+   * typed in by hand can't inflate an unrelated link. Never throws - the
    * payment has already succeeded.
    */
   async recordSignup(slug: string, couponId: string): Promise<void> {

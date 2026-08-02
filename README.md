@@ -1,4 +1,4 @@
-# Hoomri Backend — NestJS API
+# Hoomri Backend - NestJS API
 
 Enterprise-grade backend for the Hoomri social-SME multi-shop commerce platform.
 
@@ -97,7 +97,7 @@ src/
 
 ## API reference
 
-### Auth — `/api/auth`
+### Auth - `/api/auth`
 
 | Method | Path | Notes |
 |---|---|---|
@@ -122,7 +122,7 @@ src/
 | Method | Path | Auth |
 |---|---|---|
 | GET | `/shops/check-handle?handle=` | Public |
-| POST | `/shops` | Seller JWT — needs a verified email **and** phone (403 `ContactVerificationRequired` otherwise). `plan: 'free'` is accepted only for the seller's first shop; every later shop needs a paid credit (402) |
+| POST | `/shops` | Seller JWT - needs a verified email **and** phone (403 `ContactVerificationRequired` otherwise). `plan: 'free'` is accepted only for the seller's first shop; every later shop needs a paid credit (402) |
 | GET | `/shops/mine` | Seller JWT |
 | GET | `/shops/:handle` | Public (storefront + featured products) |
 | PATCH | `/shops/:id` | Seller JWT (owner only) |
@@ -160,12 +160,12 @@ src/
 
 ## Security design
 
-- **Two separate JWT secrets** — seller tokens and admin tokens share no signing key.
-- **2FA ticket** — a third, short-lived (5 min) JWT bridges admin credential and TOTP stages. The full admin-scoped JWT is only issued after TOTP verification.
-- **`@Public()` decorator** — globally registered `JwtAuthGuard` skips public routes, so storefront/product/checkout endpoints need no token.
-- **`ShopScopeGuard`** — admin routes with a `:shopId` param assert it matches the shop embedded in the JWT, preventing cross-tenant access.
-- **Server-side money** — all totals (incl. COD fee) computed server-side; never trusted from the client.
-- **Server-side segmentation** — `VIP / Repeat / New` derived from lifetime order count and spend.
+- **Two separate JWT secrets** - seller tokens and admin tokens share no signing key.
+- **2FA ticket** - a third, short-lived (5 min) JWT bridges admin credential and TOTP stages. The full admin-scoped JWT is only issued after TOTP verification.
+- **`@Public()` decorator** - globally registered `JwtAuthGuard` skips public routes, so storefront/product/checkout endpoints need no token.
+- **`ShopScopeGuard`** - admin routes with a `:shopId` param assert it matches the shop embedded in the JWT, preventing cross-tenant access.
+- **Server-side money** - all totals (incl. COD fee) computed server-side; never trusted from the client.
+- **Server-side segmentation** - `VIP / Repeat / New` derived from lifetime order count and spend.
 
 ## Scripts
 
@@ -188,7 +188,7 @@ pnpm test:e2e         # e2e tests
 
 Copy `.env.example` → `.env` and fill in:
 
-- `DATABASE_URL` — Postgres connection string
-- `JWT_SECRET` / `ADMIN_JWT_SECRET` / `ADMIN_2FA_TICKET_SECRET` — strong random values
-- `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` — leave blank to disable Google OAuth
-- `CORS_ORIGINS` — comma-separated Vue app origins
+- `DATABASE_URL` - Postgres connection string
+- `JWT_SECRET` / `ADMIN_JWT_SECRET` / `ADMIN_2FA_TICKET_SECRET` - strong random values
+- `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` - leave blank to disable Google OAuth
+- `CORS_ORIGINS` - comma-separated Vue app origins

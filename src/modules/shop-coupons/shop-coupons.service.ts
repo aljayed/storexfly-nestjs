@@ -26,7 +26,7 @@ import type {
   UpdateShopCouponDto,
 } from './dto/create-shop-coupon.dto';
 
-/** Any Drizzle executor — the pooled client or a checkout transaction. */
+/** Any Drizzle executor - the pooled client or a checkout transaction. */
 type Executor =
   | DrizzleDB
   | Parameters<Parameters<DrizzleDB['transaction']>[0]>[0];
@@ -47,7 +47,7 @@ export type CouponRejection =
  * cart builders, so a quote and the real checkout see identical numbers.
  */
 export interface CouponBasis {
-  /** Item subtotal in cents — the order total minus delivery. */
+  /** Item subtotal in cents - the order total minus delivery. */
   itemsSubtotalCents: number;
   /** Per-product item value, keyed by product id (delivery/adjustments excluded). */
   valueByProduct: Map<string, number>;
@@ -72,7 +72,7 @@ export function normalizeCouponPhone(raw: string | null | undefined): string {
  *
  * Two responsibilities: seller CRUD from the console, and the checkout-time
  * decision of whether a typed code applies to this particular order and what
- * it takes off. The discount only ever touches the item subtotal — delivery
+ * it takes off. The discount only ever touches the item subtotal - delivery
  * is excluded, because the seller still owes the courier that money.
  */
 @Injectable()
@@ -283,7 +283,7 @@ export class ShopCouponsService {
         if (!product) {
           throw new NotFoundException('Product not found in this shop');
         }
-        // Showcase items are advertised only — they can never be bought
+        // Showcase items are advertised only - they can never be bought
         // online, so a coupon for one could never be redeemed.
         if (product.listingType !== 'sale') {
           throw new BadRequestException(
@@ -383,7 +383,7 @@ export class ShopCouponsService {
    *
    * `all` covers the whole item subtotal (already net of any combo discount).
    * `product` covers only that product's lines, and never applies to a combo
-   * order — the combo price is its own discount, and stacking a per-product
+   * order - the combo price is its own discount, and stacking a per-product
    * code on top of it would double-discount the same item.
    */
   private discountableCents(coupon: ShopCouponRow, basis: CouponBasis): number {
@@ -442,7 +442,7 @@ export class ShopCouponsService {
       .returning({ id: shopCoupons.id });
     if (!claimed.length) {
       throw new ConflictException(
-        'This coupon has just been fully redeemed — please remove it and try again.',
+        'This coupon has just been fully redeemed - please remove it and try again.',
       );
     }
     await executor.insert(shopCouponRedemptions).values({
@@ -456,7 +456,7 @@ export class ShopCouponsService {
   /**
    * Give the redemption back when an order is cancelled or a gateway payment
    * never completed, so the buyer isn't charged a use for an order that never
-   * happened. Idempotent — a second cancel finds no row and does nothing.
+   * happened. Idempotent - a second cancel finds no row and does nothing.
    */
   async releaseForOrder(executor: Executor, orderId: string): Promise<void> {
     const [row] = await executor

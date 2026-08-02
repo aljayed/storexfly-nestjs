@@ -79,7 +79,7 @@ import { UsersModule } from './modules/users/users.module';
     StorageModule,
   ],
   providers: [
-    // Global seller-JWT guard — routes opt out with @Public().
+    // Global seller-JWT guard - routes opt out with @Public().
     { provide: APP_GUARD, useClass: JwtAuthGuard },
     // Rate limiting across the board.
     { provide: APP_GUARD, useClass: ThrottlerGuard },

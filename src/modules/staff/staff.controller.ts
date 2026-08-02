@@ -107,7 +107,7 @@ export class StaffController {
     return this.staff.removeMember(shopId, admin, memberId);
   }
 
-  // ── Invite redemption (public — the invitee has no session yet) ──
+  // ── Invite redemption (public - the invitee has no session yet) ──
   @Public()
   @Throttle({ default: { limit: 20, ttl: 60_000 } })
   @Get('staff/invites/:token')

@@ -1,4 +1,4 @@
-# Hoomri Chat — backend module
+# Hoomri Chat - backend module
 
 Standalone customer ↔ seller messaging (spec: `design_handoff_hoomri_chat/`).
 REST under `/api/chat/*`, realtime via Socket.IO (namespace `/chat`, path
@@ -6,7 +6,7 @@ REST under `/api/chat/*`, realtime via Socket.IO (namespace `/chat`, path
 
 ## Auth
 
-No login of its own — it accepts the platform's existing session tokens:
+No login of its own - it accepts the platform's existing session tokens:
 
 | Side | Token | Claim check |
 |---|---|---|
@@ -33,7 +33,7 @@ host-independent.
 ## Notable deviations from the api-spec
 
 - No `POST /attachments`: images/files travel inline as data URLs inside the
-  message payload (image ≤ 6 MB, file ≤ 8 MB) — same storage approach the
+  message payload (image ≤ 6 MB, file ≤ 8 MB) - same storage approach the
   platform uses for product photos.
 - Quick replies are flat (`/chat/quick-replies`); the shop scope comes from
   the admin token instead of a path param.

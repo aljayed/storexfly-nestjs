@@ -64,7 +64,7 @@ interface OwedMonth {
   feeCents: number;
 }
 
-/** j***b@gmail.com — enough for the owner to recognise the inbox. */
+/** j***b@gmail.com - enough for the owner to recognise the inbox. */
 function maskEmail(email: string): string {
   const [local, domain] = email.split('@');
   const first = local.slice(0, 1);
@@ -97,7 +97,7 @@ export class ShopsService {
 
   async create(ownerId: string, dto: CreateShopDto): Promise<ShopResponse> {
     const plan = dto.plan ?? 'paid';
-    // Both a verified email and a verified phone, whatever the plan — an
+    // Both a verified email and a verified phone, whatever the plan - an
     // account nobody can be reached on has no business opening a storefront.
     await this.assertContactVerified(ownerId);
     if (plan === 'free') {
@@ -114,7 +114,7 @@ export class ShopsService {
       }
     }
     // Nothing is charged to open a shop. The seller picks how they pay for
-    // sales — a credit pack, or the verified commission track — from the
+    // sales - a credit pack, or the verified commission track - from the
     // console once the shop exists.
     const handle = handleize(dto.handle);
     await this.blockedWords.assertClean(dto.name);
@@ -139,7 +139,7 @@ export class ShopsService {
         brandSoft: swatch.soft,
         ownerId,
         plan,
-        // Optional KYC supplied during onboarding — skipped sellers start
+        // Optional KYC supplied during onboarding - skipped sellers start
         // 'unsubmitted' (the column default).
         ...this.kycPatch(dto.kyc),
       })
@@ -182,7 +182,7 @@ export class ShopsService {
   }
 
   /**
-   * Public marketplace feed — live shops plus the newest products across
+   * Public marketplace feed - live shops plus the newest products across
    * them, for buyers browsing outside any single storefront. Only the cover
    * image travels per product; the full data-URL arrays would put megabytes
    * on what should be a light feed.
@@ -248,7 +248,7 @@ export class ShopsService {
     };
   }
 
-  /** Public storefront load — shop + a slice of featured products. */
+  /** Public storefront load - shop + a slice of featured products. */
   async getByHandle(handle: string): Promise<{
     shop: ShopResponse;
     featured: ProductResponse[];
@@ -282,7 +282,7 @@ export class ShopsService {
   }
 
   /**
-   * Console-path update — no owner check. Callers must have verified access
+   * Console-path update - no owner check. Callers must have verified access
    * already (admin JWT scoped to this shop + the `settings.manage`
    * permission), which lets invited full-access managers edit settings.
    */
@@ -397,7 +397,7 @@ export class ShopsService {
    *
    * A submission (re)enters the operator's 'pending' review queue when either:
    *  - a fresh document is uploaded, or
-   *  - a previously *rejected* shop resubmits — even with no new file — so the
+   *  - a previously *rejected* shop resubmits - even with no new file - so the
    *    operator sees it again and the seller isn't stuck on 'rejected'.
    * A *verified* shop keeps its badge on text-only edits (only a new document
    * sends it back for review). Returns an empty object when nothing was given.
@@ -417,7 +417,7 @@ export class ShopsService {
       patch.kycDocument = dto.document!.trim() || null;
     }
 
-    // A document must be on file for there to be anything to review — either
+    // A document must be on file for there to be anything to review - either
     // the one just uploaded, or the one already saved on a resubmission.
     const documentOnFile = hasNewDoc
       ? !!patch.kycDocument
@@ -532,7 +532,7 @@ export class ShopsService {
    * Step 2: verify the emailed code and delete the shop. One transaction:
    * any money still owed to the seller is snapshotted into
    * `deleted_shop_settlements` (with the payout account and owner contact),
-   * the subscription is cancelled, and the shop row is removed — billing
+   * the subscription is cancelled, and the shop row is removed - billing
    * can never survive the shop (every dependent row, the subscription
    * included, cascades with the delete; the payments ledger is kept with
    * its shop reference nulled), and owed payouts can never be lost with it.
@@ -577,7 +577,7 @@ export class ShopsService {
       }
       // Bill whatever the verified track earned before the shop goes. The
       // ledger row survives the delete (its shopId is nulled by the FK), so
-      // the seller's payment history stays honest — and a merchant can't sell
+      // the seller's payment history stays honest - and a merchant can't sell
       // all month post-paid and delete the shop to avoid the bill.
       await this.subscriptionsService.settleOnClose(shopId, tx);
       await tx
@@ -624,7 +624,7 @@ export class ShopsService {
         and(
           eq(orders.shopId, shopId),
           notInArray(orders.status, ['Delivered', 'Cancelled']),
-          // Gateway payments still in flight auto-expire — never delivered,
+          // Gateway payments still in flight auto-expire - never delivered,
           // never blocking.
           ne(orders.pay, 'Pending'),
         ),
@@ -634,7 +634,7 @@ export class ShopsService {
 
   /**
    * Every earnings month (current month included) whose online payout is
-   * still unpaid — the money the platform owes this seller. Mirrors
+   * still unpaid - the money the platform owes this seller. Mirrors
    * SettlementsService month math via the shared settlement-core helpers.
    */
   private async owedSettlements(shopId: string): Promise<OwedMonth[]> {

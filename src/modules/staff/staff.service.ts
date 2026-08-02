@@ -105,7 +105,7 @@ export class StaffService {
     });
 
     // 'owner'-role rows are just a seller's console identity (possibly pinned
-    // to another of their shops) — the real owner comes from shops.ownerId.
+    // to another of their shops) - the real owner comes from shops.ownerId.
     const rows = await this.db.query.adminUsers.findMany({
       where: eq(adminUsers.shopId, shopId),
       orderBy: (t, { asc }) => [asc(t.createdAt)],
@@ -144,7 +144,7 @@ export class StaffService {
 
   /**
    * Send (or refresh) an invitation. Re-inviting an email that already has a
-   * pending invite rotates the token/expiry and updates the role — the old
+   * pending invite rotates the token/expiry and updates the role - the old
    * link stops working, effectively a "resend".
    */
   async invite(
@@ -168,7 +168,7 @@ export class StaffService {
     const existing = await this.adminUsers.findByEmail(normalized);
     if (existing && existing.shopId === shopId) {
       throw new ConflictException(
-        'This person is already on your team — change their access level instead',
+        'This person is already on your team - change their access level instead',
       );
     }
     if (existing) {
@@ -415,7 +415,7 @@ export class StaffService {
     }
     if (invite.expiresAt.getTime() < Date.now()) {
       throw new GoneException(
-        'This invite link has expired — ask the shop admin to send a new one',
+        'This invite link has expired - ask the shop admin to send a new one',
       );
     }
     return invite;
@@ -514,7 +514,7 @@ export class StaffService {
   }
 }
 
-/** Shop and inviter names are user-supplied — never interpolate into HTML raw. */
+/** Shop and inviter names are user-supplied - never interpolate into HTML raw. */
 function escapeHtml(s: string): string {
   return s
     .replace(/&/g, '&amp;')

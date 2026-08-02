@@ -13,7 +13,7 @@ import { orders } from './orders.schema';
 import { shops } from './shops.schema';
 
 /**
- * In-app notifications shown on the buyer's profile — order placed, status
+ * In-app notifications shown on the buyer's profile - order placed, status
  * changes, payment confirmations, refunds. Orders are matched to a buyer at
  * emit time (by the order's email or phone), so guest orders that later get
  * claimed still notify from the claim onward.

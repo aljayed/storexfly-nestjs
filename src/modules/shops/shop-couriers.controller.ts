@@ -94,7 +94,7 @@ class PathaoAreasQuery {
 
 /**
  * Seller console: per-shop courier credentials (Steadfast / Pathao). Secrets
- * are write-only — reads only reveal whether one is stored. The Pathao
+ * are write-only - reads only reveal whether one is stored. The Pathao
  * lookups proxy the merchant API so the settings page can pick a store and
  * the orders page can pick a delivery city/zone at booking time.
  */

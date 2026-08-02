@@ -2,11 +2,11 @@ import type { Request } from 'express';
 import type { AdminRole } from '../../database/schema/enums';
 
 /**
- * The authenticated account — the single human identity used for BOTH shopping
+ * The authenticated account - the single human identity used for BOTH shopping
  * and selling (buyer and seller were unified into one `users` account). Attached
  * to `req.user` by the JWT strategy. `isAdmin` is the platform-admin flag; owning
  * a shop is what makes the account a seller. (Historically "seller"; kept for
- * blast radius — semantically it's the account.)
+ * blast radius - semantically it's the account.)
  */
 export interface SellerPrincipal {
   kind: 'seller';
@@ -16,7 +16,7 @@ export interface SellerPrincipal {
   isAdmin: boolean;
 }
 
-/** Alias for the unified account principal — clearer in storefront/buyer code. */
+/** Alias for the unified account principal - clearer in storefront/buyer code. */
 export type AccountPrincipal = SellerPrincipal;
 
 /**
@@ -34,7 +34,7 @@ export interface AdminPrincipal {
 }
 
 /**
- * The platform operator (hoomri.com/platform-admin) — a single
+ * The platform operator (hoomri.com/platform-admin) - a single
  * env-configured identity, attached by the platform JWT strategy.
  */
 export interface PlatformPrincipal {

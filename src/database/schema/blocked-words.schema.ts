@@ -8,7 +8,7 @@ import {
 
 /**
  * Words/phrases rejected in shop names, shop handles, and seller/buyer
- * display names — profanity plus brand-protection terms (e.g. "hoomri", so
+ * display names - profanity plus brand-protection terms (e.g. "hoomri", so
  * nobody can name a shop after the platform itself). Managed from the
  * platform-admin console; matched case-insensitively as a substring.
  */

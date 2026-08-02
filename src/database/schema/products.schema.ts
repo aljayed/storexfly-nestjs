@@ -27,25 +27,25 @@ export interface ProductVariantOption {
   priceDeltaCents: number;
   /**
    * Photo shown in the gallery while this option is selected (a `/api/media`
-   * URL — the same absorbed-storage path product photos take). Absent = the
+   * URL - the same absorbed-storage path product photos take). Absent = the
    * option has no picture of its own and the gallery stays put.
    */
   image?: string | null;
   /**
    * Units left of this specific choice. `null`/absent = untracked, in which
    * case only the product-level `stock` limits it. When several groups track
-   * stock the smallest tracked number wins — see `variantStockFor` in the
+   * stock the smallest tracked number wins - see `variantStockFor` in the
    * orders service.
    */
   stock?: number | null;
   /**
-   * Option ids in the *other* group this one is sold with — "Black only comes
+   * Option ids in the *other* group this one is sold with - "Black only comes
    * with 8/256 and 16/512". Absent or empty = sold with every combination,
    * which is what every product written before this field existed means.
    *
    * Groups are otherwise independent axes, so without this a product offers
    * the full cross-product; this narrows it without turning variants into a
-   * matrix. Only one group should carry the lists (the dependent one) —
+   * matrix. Only one group should carry the lists (the dependent one) -
    * the storefront reads them in that direction.
    */
   onlyWith?: string[] | null;
@@ -65,7 +65,7 @@ export interface ProductVariantGroup {
 
 /**
  * A multi-buy bundle: `units` units sold together for `priceCents` total
- * (usually below units × base price — the storefront shows the savings).
+ * (usually below units × base price - the storefront shows the savings).
  * The single unit at base price is always offered alongside the packs.
  */
 export interface ProductPack {
@@ -96,7 +96,7 @@ export const products = pgTable(
     priceCents: integer('price_cents').notNull(),
     // Seller-entered "compare at" (regular) price, struck through next to the
     // real price. Null = no discount display; the storefront also hides it
-    // unless it's genuinely above the selling price — never fabricated.
+    // unless it's genuinely above the selling price - never fabricated.
     comparePriceCents: integer('compare_price_cents'),
     unit: varchar('unit', { length: 60 }).notNull(),
     stock: integer('stock').notNull().default(0),
@@ -119,16 +119,16 @@ export const products = pgTable(
     reviewsCount: integer('reviews_count').notNull().default(0),
     blurb: text('blurb').notNull().default(''),
     images: text('images').array(),
-    // Optional product video — a YouTube watch/share/embed URL. Rendered as an
+    // Optional product video - a YouTube watch/share/embed URL. Rendered as an
     // embedded player on the storefront product page.
     videoUrl: text('video_url'),
-    // Buyer-facing option groups (Size, Color, …) — at most 2, deltas on the
+    // Buyer-facing option groups (Size, Color, …) - at most 2, deltas on the
     // base price. Empty = the product has no variants.
     variantGroups: jsonb('variant_groups')
       .$type<ProductVariantGroup[]>()
       .notNull()
       .default([]),
-    // Multi-buy bundles ("Pack of 3 — ৳270"). Empty = only singles are sold.
+    // Multi-buy bundles ("Pack of 3 - ৳270"). Empty = only singles are sold.
     packs: jsonb('packs').$type<ProductPack[]>().notNull().default([]),
     createdAt: timestamp('created_at', { withTimezone: true })
       .notNull()

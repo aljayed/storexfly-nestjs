@@ -24,6 +24,6 @@ SELECT 'mbank', 'mbank', 'Mobile banking', 'bKash · Nagad · Rocket',
 	COALESCE((SELECT "mbank_fee_bp" FROM "platform_settings" ORDER BY "id" ASC LIMIT 1), 300), true, false, 1
 WHERE NOT EXISTS (SELECT 1 FROM "payment_methods" WHERE "code" = 'mbank');--> statement-breakpoint
 INSERT INTO "payment_methods" ("code", "kind", "title", "subtitle", "fee_bp", "enabled", "locked", "sort_order")
-SELECT 'card', 'card', 'Card', 'Visa · Mastercard — via SSLCommerz',
+SELECT 'card', 'card', 'Card', 'Visa · Mastercard - via SSLCommerz',
 	COALESCE((SELECT "card_fee_bp" FROM "platform_settings" ORDER BY "id" ASC LIMIT 1), 450), true, false, 2
 WHERE NOT EXISTS (SELECT 1 FROM "payment_methods" WHERE "code" = 'card');

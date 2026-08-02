@@ -17,7 +17,7 @@ export const Roles = (...roles: AdminRole[]) => SetMetadata(ROLES_KEY, roles);
 /**
  * Restricts an admin route to roles holding every listed permission (see
  * common/auth/admin-permissions.ts). Also enforced by `RolesGuard`. Prefer
- * this over `@Roles` — routes stay stable as the role→permission map evolves.
+ * this over `@Roles` - routes stay stable as the role→permission map evolves.
  */
 export const RequirePerm = (...perms: AdminPermission[]) =>
   SetMetadata(PERMS_KEY, perms);

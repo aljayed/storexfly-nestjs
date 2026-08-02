@@ -40,14 +40,14 @@ export interface AdminUserView {
   name: string;
   email: string;
   role: AdminUserRow['role'];
-  /** Resolved capability strings for `role` — drives the console UI gating. */
+  /** Resolved capability strings for `role` - drives the console UI gating. */
   permissions: readonly AdminPermission[];
   shopId: string;
   twoFactorEnabled: boolean;
 }
 
 /**
- * Admin-console authentication — the stricter, 2FA-gated flow. Credentials are
+ * Admin-console authentication - the stricter, 2FA-gated flow. Credentials are
  * scoped to a shop "workspace" (its handle); a verified TOTP step is required
  * before an admin-scoped JWT is issued.
  */
@@ -62,15 +62,15 @@ export class AdminAuthService {
   ) {}
 
   /**
-   * Stage 1 — verify the workspace + credentials, branch on 2FA.
+   * Stage 1 - verify the workspace + credentials, branch on 2FA.
    *
    * Authentication accepts either credential store, so a seller can use the
    * same email/password they use on Hoomri:
-   *  - **Shop owner** — the password is checked against the platform `users`
+   *  - **Shop owner** - the password is checked against the platform `users`
    *    account; any shop the seller owns is a valid workspace (the admin token
    *    is scoped to that shop, not to the one their `admin_users` row happens to
    *    be pinned to). The console identity is provisioned on first use.
-   *  - **Dedicated staff** — falls back to the `admin_users` password for a
+   *  - **Dedicated staff** - falls back to the `admin_users` password for a
    *    record explicitly scoped to this shop (e.g. a non-owner manager).
    */
   async login(dto: AdminLoginDto): Promise<AdminLoginResult> {
@@ -100,7 +100,7 @@ export class AdminAuthService {
     }
 
     // First time an owner opens the console: mint their admin identity. The
-    // stored hash is a throwaway — owners always authenticate via `users` above.
+    // stored hash is a throwaway - owners always authenticate via `users` above.
     if (!admin) {
       const passwordHash = await bcrypt.hash(randomUUID(), 10);
       admin = await this.adminUsers.create({
@@ -123,7 +123,7 @@ export class AdminAuthService {
       return { twoFactorRequired: true, ticket };
     }
 
-    // No second factor configured — issue the console token directly. A
+    // No second factor configured - issue the console token directly. A
     // seller signing into a workspace they own is 'owner' there even if their
     // staff row is pinned to another shop.
     await this.adminUsers.markLogin(admin.id);
@@ -139,7 +139,7 @@ export class AdminAuthService {
     };
   }
 
-  /** Stage 2 — verify the TOTP code against the ticket, issue the console JWT. */
+  /** Stage 2 - verify the TOTP code against the ticket, issue the console JWT. */
   async verifyTwoFactor(dto: AdminTwoFactorDto): Promise<AdminAuthResult> {
     const ticket = await this.tokens.verifyTwoFactorTicket(dto.ticket);
     const admin = await this.adminUsers.findById(ticket.sub);
@@ -173,7 +173,7 @@ export class AdminAuthService {
    * switch the active shop of an existing one. The seller JWT is proof of
    * identity, so no password/2FA is needed. An owner may have several shops;
    * `targetShopId` selects which one to open (defaulting to the most recent),
-   * and the issued token is scoped to it — verified here to belong to the
+   * and the issued token is scoped to it - verified here to belong to the
    * seller so the token's shop claim can be trusted downstream.
    */
   async sellerSession(

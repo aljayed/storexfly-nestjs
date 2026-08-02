@@ -13,7 +13,7 @@ export const authMethodEnum = pgEnum('auth_method', [
 ]);
 
 // Console access tiers. Postgres enum values are append-only, so 'editor'
-// (reports + full item CRUD — between 'manager' and 'staff') sits last here;
+// (reports + full item CRUD - between 'manager' and 'staff') sits last here;
 // what each role can do is defined in common/auth/admin-permissions.ts.
 export const adminRoleEnum = pgEnum('admin_role', [
   'owner',
@@ -23,7 +23,7 @@ export const adminRoleEnum = pgEnum('admin_role', [
 ]);
 
 // The storefront UI language buyers land on for this shop. Buyers can still
-// switch languages themselves — this only sets which one they see first.
+// switch languages themselves - this only sets which one they see first.
 export const shopLanguageEnum = pgEnum('shop_language', ['en', 'bn']);
 
 // Broad retail taxonomy so any kind of shop finds a fit, with 'Other' as the
@@ -52,14 +52,14 @@ export const shopCategoryEnum = pgEnum('shop_category', [
   'Digital products & services',
 ]);
 
-/** Display order for pickers — alphabetical with 'Other' last. */
+/** Display order for pickers - alphabetical with 'Other' last. */
 export const SHOP_CATEGORIES: string[] = [
   ...shopCategoryEnum.enumValues.filter((c) => c !== 'Other').sort(),
   'Other',
 ];
 
 // Seller business verification (trade-license KYC) state. Optional at shop
-// creation — a shop starts 'unsubmitted' and can be completed any time from
+// creation - a shop starts 'unsubmitted' and can be completed any time from
 // the seller console. 'pending' means a document was submitted and is awaiting
 // review; an operator can later move it to 'verified' or 'rejected'.
 export const kycStatusEnum = pgEnum('kyc_status', [
@@ -78,7 +78,7 @@ export const brandSwatchEnum = pgEnum('brand_swatch', [
   'clay',
 ]);
 
-// Universal product badges that apply to any catalog — food, fashion,
+// Universal product badges that apply to any catalog - food, fashion,
 // electronics, etc. The legacy food-specific values ('In season', 'Snack')
 // are kept so existing rows stay valid; new universal tags are appended.
 export const productTagEnum = pgEnum('product_tag', [
@@ -96,14 +96,14 @@ export const productTagEnum = pgEnum('product_tag', [
 
 // How a product can be acquired. 'sale' is the normal online-checkout flow;
 // 'showcase' items are advertised only (e.g. flat shares, big-ticket goods
-// sold offline) — buyers read about them and contact the seller directly.
+// sold offline) - buyers read about them and contact the seller directly.
 export const listingTypeEnum = pgEnum('listing_type', ['sale', 'showcase']);
 
 // Fulfilment pipeline. Buyers land on 'New' (awaiting the seller's confirmation
-// call); the seller confirms — 'Confirmed' — before the order is packed and sent
+// call); the seller confirms - 'Confirmed' - before the order is packed and sent
 // out. 'Cancelled' is a terminal state for orders the customer never confirmed.
 // Enum values are append-only in Postgres, so 'Confirmed'/'Cancelled' sit at the
-// end here — the logical order (New → Confirmed → Packed → Shipped → Delivered)
+// end here - the logical order (New → Confirmed → Packed → Shipped → Delivered)
 // is enforced by STATUS_FLOW in the orders service and the UI, not by this list.
 export const orderStatusEnum = pgEnum('order_status', [
   'New',
@@ -117,7 +117,7 @@ export const orderStatusEnum = pgEnum('order_status', [
 // 'Paid' = money confirmed received (gateway-verified or seller-confirmed).
 // 'Due' = order accepted, money not yet in hand (COD before delivery, or a
 // direct wallet transfer the seller hasn't confirmed). 'Pending' = a gateway
-// payment is in flight (buyer redirected to bKash but not returned yet) —
+// payment is in flight (buyer redirected to bKash but not returned yet) -
 // pending orders are hidden from the seller pipeline and auto-expire.
 // Enum values are append-only in Postgres, so the new states sit last.
 export const paymentStatusEnum = pgEnum('payment_status', [

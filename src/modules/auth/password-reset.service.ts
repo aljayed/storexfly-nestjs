@@ -16,7 +16,7 @@ interface ResetEntry {
  * Forgot/reset password for seller (email) accounts. The issued token is mailed
  * as a link to the Vue app; verifying it lets the user set a new password.
  *
- * Like {@link OtpService} this keeps tokens in memory — a reference store that
+ * Like {@link OtpService} this keeps tokens in memory - a reference store that
  * should be swapped for Redis (or a DB table) in production so links survive a
  * restart and scale across instances.
  */
@@ -39,7 +39,7 @@ export class PasswordResetService {
    */
   async request(email: string): Promise<void> {
     const user = await this.users.findByEmail(email);
-    // Only email/password accounts can reset a password — social/phone-only
+    // Only email/password accounts can reset a password - social/phone-only
     // accounts (no passwordHash) have nothing to reset.
     if (!user || !user.passwordHash || !user.email) {
       return;
@@ -112,7 +112,7 @@ export class PasswordResetService {
   }
 }
 
-/** The display name is user-supplied — never interpolate it into HTML raw. */
+/** The display name is user-supplied - never interpolate it into HTML raw. */
 function escapeHtml(s: string): string {
   return s
     .replace(/&/g, '&amp;')

@@ -100,7 +100,7 @@ export class CreditStateResponse {
   used!: number;
   @ApiProperty({ example: 81600, description: 'What is left, in ৳' })
   balance!: number;
-  @ApiProperty({ example: 73, description: 'Share of the credit used, 0–100' })
+  @ApiProperty({ example: 73, description: 'Share of the credit used, 0-100' })
   pct!: number;
   @ApiProperty({
     example: 1000000,
@@ -171,7 +171,7 @@ export class SubscriptionResponse {
   @ApiProperty({ enum: ['credits', 'commission'] }) billingMode!: string;
   @ApiProperty({
     description:
-      'The shop may switch to commission — its trade licence is verified',
+      'The shop may switch to commission - its trade licence is verified',
   })
   canUseCommission!: boolean;
   @ApiProperty({
@@ -181,7 +181,7 @@ export class SubscriptionResponse {
   kycStatus!: string;
   @ApiProperty({
     type: CreditStateResponse,
-    description: 'Always present — leftover credit is spent on either track',
+    description: 'Always present - leftover credit is spent on either track',
   })
   credit!: CreditStateResponse;
   @ApiPropertyOptional({
@@ -284,7 +284,7 @@ export class SubscriptionResponse {
   }
 
   /**
-   * The card for a shop that has no subscription row at all — only possible
+   * The card for a shop that has no subscription row at all - only possible
    * for a shop created before this system existed and not yet touched. The
    * shelf rides along so the card can still show what buying credit costs.
    */

@@ -36,7 +36,7 @@ export interface TrustBadge {
   enabled: boolean;
 }
 
-/** Most a shop can show — keeps the strip to a single tidy row. */
+/** Most a shop can show - keeps the strip to a single tidy row. */
 export const MAX_TRUST_BADGES = 4;
 
 /** Field length caps, shared with the DTO validators. */

@@ -83,7 +83,7 @@ export class ProductsService {
    * Second pass over the saved groups: `onlyWith` points at option ids in the
    * *other* group, which only makes sense once both groups have their ids.
    *
-   * Anything dangling is dropped rather than rejected — an id can legitimately
+   * Anything dangling is dropped rather than rejected - an id can legitimately
    * disappear when the seller deletes an option in the same save, and a stale
    * reference must not be allowed to make a colour unbuyable. A list that ends
    * up covering every option (or nothing at all) means "no restriction", and
@@ -145,7 +145,7 @@ export class ProductsService {
     };
   }
 
-  /** Public product page — product + reviews + rating distribution. */
+  /** Public product page - product + reviews + rating distribution. */
   async getBySlug(
     handle: string,
     slug: string,
@@ -184,7 +184,7 @@ export class ProductsService {
         .where(eq(products.shopId, shopId));
       if (Number(n) >= FREE_MAX_PRODUCTS) {
         throw new ForbiddenException(
-          `The free plan allows ${FREE_MAX_PRODUCTS} product — subscribe to add more.`,
+          `The free plan allows ${FREE_MAX_PRODUCTS} product - subscribe to add more.`,
         );
       }
     } else {
@@ -196,13 +196,13 @@ export class ProductsService {
       });
       if (sub?.status === 'cancelled') {
         throw new ForbiddenException(
-          'Your subscription is cancelled — resume it to add new products.',
+          'Your subscription is cancelled - resume it to add new products.',
         );
       }
     }
     const slug = await this.uniqueSlug(shopId, dto.name);
     // Showcase items can't be ordered online, so stock is meaningless for
-    // them — pin it to 0 regardless of what the caller sends.
+    // them - pin it to 0 regardless of what the caller sends.
     const listingType = dto.listingType ?? 'sale';
     // Upload any inline base64 photos to object storage, keeping only the URLs.
     const images = await this.storage.absorbMany(dto.images, 'products');
@@ -215,7 +215,7 @@ export class ProductsService {
         cat: dto.cat,
         listingType,
         priceCents: dollarsToCents(dto.price),
-        // 0 (or absent) means "no compare-at price" — stored as null.
+        // 0 (or absent) means "no compare-at price" - stored as null.
         comparePriceCents: dto.comparePrice
           ? dollarsToCents(dto.comparePrice)
           : null,

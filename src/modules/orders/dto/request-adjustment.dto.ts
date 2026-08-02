@@ -3,7 +3,7 @@ import { Transform } from 'class-transformer';
 import { IsNumber, IsString, MaxLength, MinLength, Min } from 'class-validator';
 
 /**
- * POST /shops/:shopId/orders/:id/adjustment — the seller proposes a new order
+ * POST /shops/:shopId/orders/:id/adjustment - the seller proposes a new order
  * total (major units, e.g. 1500 = ৳1,500) with a reason. The buyer must approve
  * it before it replaces the order total.
  */

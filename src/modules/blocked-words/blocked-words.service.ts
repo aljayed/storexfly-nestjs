@@ -14,7 +14,7 @@ import type { DrizzleDB } from '../../database/drizzle.types';
 import { blockedWords, type BlockedWordRow } from '../../database/schema';
 
 /**
- * Seeded on boot so a fresh database still rejects the obvious cases —
+ * Seeded on boot so a fresh database still rejects the obvious cases -
  * common profanity, plus terms that would let a shop or account impersonate
  * the platform itself. Operators can add to or remove from this list from
  * the platform-admin console; this is only the starting point.
@@ -112,7 +112,7 @@ export class BlockedWordsService implements OnModuleInit {
     const hit = rows.find((row) => haystack.includes(row.word));
     if (hit) {
       throw new BadRequestException(
-        `"${text}" isn't allowed — it contains a blocked word.`,
+        `"${text}" isn't allowed - it contains a blocked word.`,
       );
     }
   }

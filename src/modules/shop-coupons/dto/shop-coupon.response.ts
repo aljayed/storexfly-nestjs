@@ -11,7 +11,7 @@ export class ShopCouponResponse {
 
   @ApiProperty({
     example: 25,
-    description: 'Percentage (1–100) or, for a fixed coupon, the ৳ amount off.',
+    description: 'Percentage (1-100) or, for a fixed coupon, the ৳ amount off.',
   })
   value!: number;
 
@@ -32,7 +32,7 @@ export class ShopCouponResponse {
   @ApiPropertyOptional({ example: 1 }) perCustomerLimit?: number;
 
   /**
-   * Whether the code would be accepted right now, ignoring cart contents —
+   * Whether the code would be accepted right now, ignoring cart contents -
    * drives the "Live / Scheduled / Expired / Used up / Paused" badge so the
    * console doesn't re-derive the rules.
    */
@@ -86,7 +86,7 @@ export class ShopCouponResponse {
 /**
  * The storefront's answer when a buyer types a code: whether it applies to the
  * cart they are looking at, and what it would take off. `reason` is a stable
- * machine key the Vue app localizes (en/bn) — never a server-language string.
+ * machine key the Vue app localizes (en/bn) - never a server-language string.
  */
 export class CouponQuoteResponse {
   @ApiProperty({ example: true }) valid!: boolean;
@@ -105,10 +105,10 @@ export class CouponQuoteResponse {
 
   @ApiPropertyOptional({
     example: 1000,
-    description: 'The unmet minimum, in ৳ — only set when reason = min_order.',
+    description: 'The unmet minimum, in ৳ - only set when reason = min_order.',
   })
   minOrder?: number;
 
-  @ApiPropertyOptional({ example: 'Eid sale — 25% off everything' })
+  @ApiPropertyOptional({ example: 'Eid sale - 25% off everything' })
   description?: string;
 }

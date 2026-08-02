@@ -12,7 +12,7 @@ import {
 
 /**
  * The credit packs a seller on the pre-paid track buys. A pack pays for
- * `salesCreditCents` worth of *selling*, and costs `priceCents` — bigger
+ * `salesCreditCents` worth of *selling*, and costs `priceCents` - bigger
  * packs carry a better rate, which is the only reason to buy one.
  *
  * Seeded from `CREDIT_PACKS`; the operator can re-price a pack or retire it

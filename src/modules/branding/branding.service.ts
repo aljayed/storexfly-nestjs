@@ -25,7 +25,7 @@ import {
 const GALLERY_LIMIT = 12;
 
 /**
- * Platform branding — the logo shown across every surface, either a text
+ * Platform branding - the logo shown across every surface, either a text
  * wordmark or an uploaded image. Backed by a singleton {@link platformSettings}
  * row (seeded at boot) plus a {@link brandLogos} gallery of recent uploads.
  */
@@ -68,7 +68,7 @@ export class BrandingService implements OnModuleInit {
     return row;
   }
 
-  /** Current branding — falls back to the code default before the seed lands. */
+  /** Current branding - falls back to the code default before the seed lands. */
   async get(): Promise<BrandingResponse> {
     const row = await this.row();
     return row

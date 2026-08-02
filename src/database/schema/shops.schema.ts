@@ -58,7 +58,7 @@ export const shops = pgTable(
     // product-emoji bubbles). Also inline data URLs, in display order.
     floatingImages: text('floating_images').array(),
     // Seller-managed "why buy" strip on the product page (packed fresh, fast
-    // delivery, …). Null means the seller never touched it — the storefront
+    // delivery, …). Null means the seller never touched it - the storefront
     // then shows its translated defaults. See constants/trust-badges.ts.
     trustBadges: jsonb('trust_badges').$type<TrustBadge[]>(),
     cat: shopCategoryEnum('cat').notNull().default('Other'),

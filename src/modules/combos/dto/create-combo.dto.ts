@@ -17,7 +17,7 @@ import {
   ValidateNested,
 } from 'class-validator';
 
-/** One member product of a combo — `qty` units of it per combo set. */
+/** One member product of a combo - `qty` units of it per combo set. */
 export class ComboItemDto {
   @ApiProperty()
   @IsUUID()
@@ -62,7 +62,7 @@ export class CreateComboDto {
   @IsBoolean()
   active?: boolean;
 
-  @ApiProperty({ type: [ComboItemDto], description: '2–6 member products' })
+  @ApiProperty({ type: [ComboItemDto], description: '2-6 member products' })
   @IsArray()
   @ArrayMinSize(2)
   @ArrayMaxSize(6)

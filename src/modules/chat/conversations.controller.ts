@@ -54,7 +54,7 @@ export class ConversationsController {
   @ChatRole('customer')
   @ApiOperation({
     summary:
-      'Start (or return) the thread with a shop — used by "Chat with seller"',
+      'Start (or return) the thread with a shop - used by "Chat with seller"',
   })
   async start(
     @CurrentChatActor() actor: CustomerActor,

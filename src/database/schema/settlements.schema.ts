@@ -50,7 +50,7 @@ export const settlements = pgTable(
     // platform changes the rates.
     mbankFeeBp: integer('mbank_fee_bp').notNull().default(300),
     cardFeeBp: integer('card_fee_bp').notNull().default(450),
-    // Per-method snapshot of the online volume — one entry per payment method
+    // Per-method snapshot of the online volume - one entry per payment method
     // that had orders, with the fee rate applied to it. Rows recorded before
     // payment methods became dynamic have null here; their breakdown is
     // reconstructed from the mbank/card columns above.

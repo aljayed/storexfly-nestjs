@@ -22,7 +22,7 @@ function isPostgresError(e: unknown): e is { code: string; detail?: string } {
 
 /**
  * Drizzle (≥0.44) wraps driver failures in a DrizzleQueryError whose `cause`
- * holds the original postgres-js error — walk the cause chain to find it.
+ * holds the original postgres-js error - walk the cause chain to find it.
  */
 function unwrapPostgresError(
   e: unknown,

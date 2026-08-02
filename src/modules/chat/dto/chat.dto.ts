@@ -15,7 +15,7 @@ import {
 } from 'class-validator';
 import type { ChatMessageType, ChatOriginType } from '../../../database/schema';
 
-/** Inline attachment payload — data URL, same approach as product images. */
+/** Inline attachment payload - data URL, same approach as product images. */
 export class ChatAttachmentDto {
   @IsIn(['image', 'file'])
   kind!: 'image' | 'file';
@@ -48,12 +48,12 @@ export class SendMessageDto {
   @MaxLength(4000)
   text?: string;
 
-  /** For type 'product' — the server builds the snapshot. */
+  /** For type 'product' - the server builds the snapshot. */
   @IsOptional()
   @IsUUID()
   productId?: string;
 
-  /** For type 'order' — the server builds the snapshot. */
+  /** For type 'order' - the server builds the snapshot. */
   @IsOptional()
   @IsUUID()
   orderId?: string;

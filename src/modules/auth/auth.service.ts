@@ -131,7 +131,7 @@ export class AuthService {
   // A shop may only be opened by an account with one verified email *and*
   // one verified phone number, both unique to that account. Registration
   // already proves the email; the phone is proved here. The SMS side is a
-  // stub — {@link OtpService} has no gateway yet, so while `smsEnabled` is
+  // stub - {@link OtpService} has no gateway yet, so while `smsEnabled` is
   // false the issued code comes back in the response and the console shows
   // it. Nothing else about the flow changes when real SMS lands.
 
@@ -223,7 +223,7 @@ export class AuthService {
       email,
       code,
     );
-    // The code is bound to the account that requested it — a code emailed to
+    // The code is bound to the account that requested it - a code emailed to
     // one seller can't be pasted into another's session.
     if (!pending || pending.userId !== user.id) {
       throw new UnauthorizedException('Invalid or expired code');

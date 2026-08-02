@@ -16,7 +16,7 @@ import { users } from './users.schema';
 import { shops } from './shops.schema';
 
 /**
- * Hoomri Chat — customer ↔ seller messaging (see design_handoff_hoomri_chat).
+ * Hoomri Chat - customer ↔ seller messaging (see design_handoff_hoomri_chat).
  * Deliberately self-contained: every chat table is prefixed `chat_` and the
  * only links into the platform schema are the two participant FKs, so the
  * module can be lifted into another project by swapping those references.
@@ -64,7 +64,7 @@ export interface ChatMessagePreviewValue {
 }
 
 /**
- * Point-in-time copy of a product embedded in a product-card message — a
+ * Point-in-time copy of a product embedded in a product-card message - a
  * snapshot, not a live join, because catalog rows change and get deleted.
  * Price is decimal (same shape the REST product endpoints expose).
  */
@@ -109,13 +109,13 @@ export interface ChatAdjustmentSnapshotValue {
 }
 
 /**
- * Card summary of an order offer. Deliberately small — enough to render the
+ * Card summary of an order offer. Deliberately small - enough to render the
  * bubble with a total and a status; the View screen fetches the full offer,
  * which is the authoritative copy (see `chatOrderOffers`).
  */
 export interface ChatOfferSnapshotValue {
   offerId: string;
-  /** "2 × Alphonso Mango Box + 1 more" — precomputed for the bubble. */
+  /** "2 × Alphonso Mango Box + 1 more" - precomputed for the bubble. */
   itemsSummary: string;
   itemCount: number;
   total: number;
@@ -128,7 +128,7 @@ export interface ChatOfferSnapshotValue {
   imageUrl?: string;
   emoji?: string;
   tone?: string;
-  /** First line's slug and video — the card links to the product page, and
+  /** First line's slug and video - the card links to the product page, and
       falls back to the video's still when the item has no photo. */
   slug?: string;
   videoUrl?: string;
@@ -162,7 +162,7 @@ export const chatConversations = pgTable(
     shopId: uuid('shop_id')
       .notNull()
       .references(() => shops.id, { onDelete: 'cascade' }),
-    // What started (or most recently re-entered) the thread — drives the
+    // What started (or most recently re-entered) the thread - drives the
     // context strip under the thread header.
     originType: chatOriginTypeEnum('origin_type'),
     originRefId: uuid('origin_ref_id'),
@@ -261,12 +261,12 @@ export interface ChatOfferItemValue {
  * This is a table rather than only a card payload because it gates money: it
  * is the single authority for what was offered and whether it has been used.
  * Acceptance flips `status` under a row lock, so a buyer double-tapping
- * "Accept" — or accepting on two devices — can only ever create one order.
+ * "Accept" - or accepting on two devices - can only ever create one order.
  * The message card carries a summary copy for rendering (see
  * {@link ChatOfferSnapshotValue}); this row is what the accept path trusts.
  *
- * Prices are the seller's, not the catalog's — that is the point of an offer
- * — but stock is still checked and decremented at acceptance, so an offer can
+ * Prices are the seller's, not the catalog's - that is the point of an offer
+ * - but stock is still checked and decremented at acceptance, so an offer can
  * never oversell.
  */
 export const chatOrderOffers = pgTable(
@@ -286,8 +286,8 @@ export const chatOrderOffers = pgTable(
     items: jsonb('items').$type<ChatOfferItemValue[]>().notNull(),
     itemsSubtotalCents: integer('items_subtotal_cents').notNull(),
     /** Delivery charged on this offer. 0 until the buyer confirms where it is
-        going — the charge comes from the items' zone rates and their district,
-        the same rule checkout applies — then written here with the total. */
+        going - the charge comes from the items' zone rates and their district,
+        the same rule checkout applies - then written here with the total. */
     deliveryCents: integer('delivery_cents').notNull().default(0),
     /** Items only until accepted; delivery is added once the district is known. */
     totalCents: integer('total_cents').notNull(),
@@ -295,7 +295,7 @@ export const chatOrderOffers = pgTable(
     note: varchar('note', { length: 300 }),
 
     status: chatOfferStatusEnum('status').notNull().default('pending'),
-    /** Set once accepted — the order this offer became. */
+    /** Set once accepted - the order this offer became. */
     orderId: uuid('order_id'),
     /** Optional deadline; past it the offer can no longer be accepted. */
     expiresAt: timestamp('expires_at', { withTimezone: true }),
@@ -326,7 +326,7 @@ export const chatQuickReplies = pgTable(
     sortOrder: integer('sort_order').notNull().default(0),
     /** Platform-seeded starter replies; sellers can remove but not edit them. */
     isDefault: boolean('is_default').notNull().default(false),
-    /** Removed defaults are hidden, not deleted — the surviving rows mark the
+    /** Removed defaults are hidden, not deleted - the surviving rows mark the
         shop as already seeded so `list()` never re-inserts the starter set. */
     hidden: boolean('hidden').notNull().default(false),
     createdAt: timestamp('created_at', { withTimezone: true })

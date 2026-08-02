@@ -16,5 +16,5 @@ export type DrizzleTx = Parameters<
   Parameters<DrizzleDB['transaction']>[0]
 >[0];
 
-/** Either the root client or a transaction — for composable data-access. */
+/** Either the root client or a transaction - for composable data-access. */
 export type DbExecutor = DrizzleDB | DrizzleTx;

@@ -3,8 +3,8 @@
  *
  * Sellers receive their prepaid (online) revenue in monthly payouts: each
  * calendar month's earnings are settled by the platform between the 15th and
- * 21st of the following month. COD money never flows through the platform —
- * the seller collects it in cash — so it carries no fee and no payout.
+ * 21st of the following month. COD money never flows through the platform -
+ * the seller collects it in cash - so it carries no fee and no payout.
  *
  * Fee rates are stored in basis points so fee math stays in integers. The
  * live rates are platform-configurable per payment method (see
@@ -24,11 +24,11 @@ export function feeCents(amountCents: number, basisPoints: number): number {
 /**
  * Lifecycle of one earnings month:
  *  - accruing:  the month is still running, totals keep growing
- *  - scheduled: month closed; payout window (15th–21st next month) not open yet
+ *  - scheduled: month closed; payout window (15th-21st next month) not open yet
  *  - due:       today is inside the payout window and the payout is unpaid
  *  - overdue:   the window has passed and the payout is still unpaid
  *  - paid:      a platform operator recorded the payout
- *  - none:      month closed with no online revenue — nothing to pay out
+ *  - none:      month closed with no online revenue - nothing to pay out
  */
 export type SettlementStatus =
   | 'accruing'

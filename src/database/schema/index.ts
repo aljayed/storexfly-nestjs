@@ -1,5 +1,5 @@
 /**
- * Schema barrel — single source of truth for Drizzle. Imported by the database
+ * Schema barrel - single source of truth for Drizzle. Imported by the database
  * provider (for the typed `db` client + relational queries) and by drizzle-kit
  * (for migration generation). Keep every table/enum/relation exported here.
  */

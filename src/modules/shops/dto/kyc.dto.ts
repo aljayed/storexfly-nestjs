@@ -33,7 +33,7 @@ export class SubmitKycDto {
   @IsOptional()
   @IsString()
   // Strict shape check: this string is later rendered in the platform-admin
-  // console, so only base64 image/PDF data URLs are ever accepted — never
+  // console, so only base64 image/PDF data URLs are ever accepted - never
   // markup or other URL schemes.
   @Matches(
     /^data:(image\/(png|jpeg|jpg|webp)|application\/pdf);base64,[A-Za-z0-9+/]+=*$/,

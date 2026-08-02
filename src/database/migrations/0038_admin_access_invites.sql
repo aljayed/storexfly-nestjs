@@ -1,5 +1,5 @@
 -- Shop-admin access management: a fourth console role tier and email invites.
--- Hand-written (not db:generate) so it stays idempotent and free of drift —
+-- Hand-written (not db:generate) so it stays idempotent and free of drift -
 -- see 0025 for the precedent.
 
 ALTER TYPE "public"."admin_role" ADD VALUE IF NOT EXISTS 'editor';--> statement-breakpoint

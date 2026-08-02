@@ -42,7 +42,7 @@ export interface CreditPackView {
   price: number;
   /**
    * The pack as a share of the sales it covers, e.g. 1.9 for ৳1,899 per
-   * ৳1,00,000 — the number a seller weighs against the commission rate.
+   * ৳1,00,000 - the number a seller weighs against the commission rate.
    */
   ratePct: number;
   badge: string | null;
@@ -60,7 +60,7 @@ export interface PricingView {
   creditCap: number;
   /** The packs on sale, cheapest first. */
   packs: CreditPackView[];
-  /** The cheapest pack — what "from ৳X" quotes. */
+  /** The cheapest pack - what "from ৳X" quotes. */
   entryPack: CreditPackView | null;
 }
 
@@ -101,7 +101,7 @@ const FALLBACK_PACKS: CreditPackView[] = CREDIT_PACKS.map((seed, i) =>
 );
 
 /**
- * The credit-pack catalogue and the commission rate — everything the platform
+ * The credit-pack catalogue and the commission rate - everything the platform
  * charges for. Read from `credit_packs` rather than constants so the operator
  * can re-price a pack from the console without a deploy; every quote and
  * every charge resolves a pack through here.
@@ -123,7 +123,7 @@ export class BillingSettingsService {
 
   // ── Catalogue ─────────────────────────────────────────────────
 
-  /** Every pack, cheapest first — retired ones included. */
+  /** Every pack, cheapest first - retired ones included. */
   async allPacks(): Promise<CreditPackView[]> {
     const now = Date.now();
     if (
@@ -140,7 +140,7 @@ export class BillingSettingsService {
       this.cached = { packs, at: now };
       return packs;
     } catch (err) {
-      // Never let a catalogue read failure block a purchase — quote the
+      // Never let a catalogue read failure block a purchase - quote the
       // seeded shelf and let the next call retry.
       this.logger.error(
         `Falling back to the seeded credit packs: ${String(err)}`,
@@ -149,7 +149,7 @@ export class BillingSettingsService {
     }
   }
 
-  /** The packs on sale, cheapest first — what a seller may buy. */
+  /** The packs on sale, cheapest first - what a seller may buy. */
   async packs(): Promise<CreditPackView[]> {
     return (await this.allPacks()).filter((p) => p.active);
   }
@@ -164,7 +164,7 @@ export class BillingSettingsService {
     return (await this.allPacks()).find((p) => p.code === code) ?? null;
   }
 
-  /** The cheapest pack on sale — what "from ৳X" quotes. */
+  /** The cheapest pack on sale - what "from ৳X" quotes. */
   async entryPack(): Promise<CreditPackView | null> {
     const sellable = await this.packs();
     return (
@@ -269,7 +269,7 @@ export class BillingSettingsService {
 
   /**
    * Set the verified track's rate. The platform runs one rate, so every shop
-   * currently on the post-paid track is moved to it in the same breath —
+   * currently on the post-paid track is moved to it in the same breath -
    * otherwise a merchant who verified last month would keep being billed at a
    * rate the platform no longer offers.
    *

@@ -12,8 +12,8 @@ import { subscriptionPayments } from './subscriptions.schema';
 
 /**
  * Platform-level discount coupons, managed from the platform admin console.
- * A coupon discounts one subscription payment — the one-off shop-creation fee
- * or, applied from the shop console, a subscription's next renewal — and each
+ * A coupon discounts one subscription payment - the one-off shop-creation fee
+ * or, applied from the shop console, a subscription's next renewal - and each
  * seller can redeem a given code once. Codes are stored uppercase and matched
  * case-insensitively.
  */

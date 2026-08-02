@@ -7,7 +7,7 @@ import * as path from 'node:path';
 /**
  * Standalone migration runner (used by `pnpm db:migrate`). Applies every
  * pending SQL migration in `src/database/migrations` then exits. Safe to run
- * repeatedly — Drizzle tracks applied migrations in `__drizzle_migrations`.
+ * repeatedly - Drizzle tracks applied migrations in `__drizzle_migrations`.
  */
 async function runMigrations(): Promise<void> {
   const url = process.env.DATABASE_URL;

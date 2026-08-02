@@ -48,7 +48,7 @@ const PRODUCTS: {
     rating: 4.9,
     reviews: 312,
     blurb:
-      'The king of mangoes — buttery, fragrant Ratnagiri Alphonsos, hand-picked and ripened naturally.',
+      'The king of mangoes - buttery, fragrant Ratnagiri Alphonsos, hand-picked and ripened naturally.',
   },
   {
     name: 'Kesar Mango Box',
@@ -111,7 +111,7 @@ const PRODUCTS: {
     tone: '#e2f1e8',
     rating: 4.5,
     reviews: 58,
-    blurb: 'Creamy sitaphal, naturally sweet — back soon.',
+    blurb: 'Creamy sitaphal, naturally sweet - back soon.',
   },
   {
     name: 'Dried Mango Slices',
@@ -160,7 +160,7 @@ const PRODUCTS: {
     tone: '#f8eed5',
     rating: 4.5,
     reviews: 64,
-    blurb: 'Large, firm, mildly sweet — great for slicing.',
+    blurb: 'Large, firm, mildly sweet - great for slicing.',
   },
   {
     name: 'Seasonal Fruit Basket',

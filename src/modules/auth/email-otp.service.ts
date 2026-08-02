@@ -11,7 +11,7 @@ interface PendingEntry {
 
 /**
  * Email OTP for blocking signup verification (seller + buyer). Like
- * {@link OtpService} (phone) this is an in-memory reference store — swap for
+ * {@link OtpService} (phone) this is an in-memory reference store - swap for
  * Redis in production so codes survive a restart and scale across instances.
  *
  * The pending signup payload travels alongside the code: nothing is written to

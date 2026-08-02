@@ -11,7 +11,7 @@ import { BuyerService } from './buyer.service';
 /**
  * Storefront-shopper account flows (register/login/profile), operating on the
  * unified `users` account. Authenticated storefront routes use the global
- * account JWT guard — there is no separate buyer session anymore.
+ * account JWT guard - there is no separate buyer session anymore.
  */
 @Module({
   imports: [AuthModule, PassportModule, BlockedWordsModule, OrdersModule],

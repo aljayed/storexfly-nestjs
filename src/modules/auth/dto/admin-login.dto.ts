@@ -9,11 +9,11 @@ import {
   MinLength,
 } from 'class-validator';
 
-/** Stage 1 of admin login — workspace + credentials. */
+/** Stage 1 of admin login - workspace + credentials. */
 export class AdminLoginDto {
   @ApiProperty({
     example: 'mango-shop',
-    description: 'Shop handle (workspace) — hoomri.com/admin/<workspace>',
+    description: 'Shop handle (workspace) - hoomri.com/admin/<workspace>',
   })
   @IsString()
   @MinLength(1)
@@ -32,7 +32,7 @@ export class AdminLoginDto {
   password!: string;
 }
 
-/** Seller→admin elevation / shop switch — optionally pick which owned shop. */
+/** Seller→admin elevation / shop switch - optionally pick which owned shop. */
 export class AdminSessionDto {
   @ApiPropertyOptional({
     description: 'Owned shop to open. Omit to use the most recent shop.',
@@ -42,7 +42,7 @@ export class AdminSessionDto {
   shopId?: string;
 }
 
-/** Stage 2 of admin login — TOTP verification against the issued ticket. */
+/** Stage 2 of admin login - TOTP verification against the issued ticket. */
 export class AdminTwoFactorDto {
   @ApiProperty({ description: 'Ticket returned by /auth/admin/login' })
   @IsString()

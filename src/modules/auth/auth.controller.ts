@@ -106,7 +106,7 @@ export class AuthController {
   @ApiOperation({ summary: 'Email a password-reset link (email accounts)' })
   async forgotPassword(@Body() dto: ForgotPasswordDto) {
     await this.passwordReset.request(dto.email);
-    // Always 200 with the same shape — never reveal whether the email exists.
+    // Always 200 with the same shape - never reveal whether the email exists.
     return { ok: true };
   }
 
@@ -229,7 +229,7 @@ export class AuthController {
   @ApiBearerAuth()
   @Post('logout')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Logout (stateless — client discards token)' })
+  @ApiOperation({ summary: 'Logout (stateless - client discards token)' })
   logout() {
     return { ok: true };
   }

@@ -23,7 +23,7 @@ type CouponType = (typeof shopCouponTypeEnum.enumValues)[number];
 /**
  * Create a buyer-facing discount code for a shop.
  *
- * Money fields are in major units (৳) like the rest of the seller-facing API —
+ * Money fields are in major units (৳) like the rest of the seller-facing API -
  * the service converts them to integer cents.
  */
 export class CreateShopCouponDto {
@@ -37,11 +37,11 @@ export class CreateShopCouponDto {
   @MaxLength(40)
   @Matches(/^[A-Za-z0-9_-]{3,40}$/, {
     message:
-      'Use 3–40 letters, numbers, dashes or underscores for the coupon code',
+      'Use 3-40 letters, numbers, dashes or underscores for the coupon code',
   })
   code!: string;
 
-  @ApiPropertyOptional({ example: 'Eid sale — 25% off everything' })
+  @ApiPropertyOptional({ example: 'Eid sale - 25% off everything' })
   @IsOptional()
   @IsString()
   @MaxLength(200)
@@ -54,7 +54,7 @@ export class CreateShopCouponDto {
   @ApiProperty({
     example: 25,
     description:
-      'For `percent`: whole-number 1–100. For `fixed`: the taka amount off.',
+      'For `percent`: whole-number 1-100. For `fixed`: the taka amount off.',
   })
   @Type(() => Number)
   @Min(1)
@@ -137,5 +137,5 @@ export class CreateShopCouponDto {
   perCustomerLimit?: number;
 }
 
-/** Every field optional — the seller edits one thing at a time. */
+/** Every field optional - the seller edits one thing at a time. */
 export class UpdateShopCouponDto extends PartialType(CreateShopCouponDto) {}

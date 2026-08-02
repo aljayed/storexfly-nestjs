@@ -40,7 +40,7 @@ export class UsersService {
 
   /**
    * The account that has already proven this number, if any. Used to keep one
-   * verified phone tied to one account — otherwise a single number could
+   * verified phone tied to one account - otherwise a single number could
    * unlock free shops on an unlimited number of throwaway signups.
    */
   async findByVerifiedPhone(phone: string): Promise<UserRow | undefined> {

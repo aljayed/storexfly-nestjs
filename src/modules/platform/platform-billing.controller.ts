@@ -65,7 +65,7 @@ export class UpdateCreditPackDto {
     description: 'Shelf label on the pack card; null clears it',
   })
   @IsOptional()
-  // null is meaningful here — it is how a label is removed.
+  // null is meaningful here - it is how a label is removed.
   @ValidateIf((_, value) => value !== null)
   @IsString()
   @Length(1, 40)
@@ -94,7 +94,7 @@ export class UpdateCommissionDto {
 
 /**
  * Operator console: the credit packs sellers buy. Re-pricing a pack only
- * changes what is on the shelf from here on — credit a seller already bought
+ * changes what is on the shelf from here on - credit a seller already bought
  * is theirs at the price they paid, and the ledger keeps its own amounts.
  */
 @ApiTags('platform-admin')

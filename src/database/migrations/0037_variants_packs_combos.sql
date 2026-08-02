@@ -1,9 +1,9 @@
 -- Variants, multi-buy packs, and combo offers.
---   • products.variant_groups — jsonb [{ id, name, options: [{ id, label, priceDeltaCents }] }]
+--   • products.variant_groups - jsonb [{ id, name, options: [{ id, label, priceDeltaCents }] }]
 --     (≤ 2 buyer-facing option groups; deltas adjust the base unit price)
---   • products.packs — jsonb [{ id, label, units, priceCents }] (multi-buy bundles)
---   • order_items.variant — snapshot of what was picked ("Size: L · Pack of 3")
---   • combos / combo_items — 2+ shop items sold together at a special price
+--   • products.packs - jsonb [{ id, label, units, priceCents }] (multi-buy bundles)
+--   • order_items.variant - snapshot of what was picked ("Size: L · Pack of 3")
+--   • combos / combo_items - 2+ shop items sold together at a special price
 -- Hand-written and idempotent (see 0025 for why we avoid `drizzle-kit generate`).
 ALTER TABLE "products" ADD COLUMN IF NOT EXISTS "variant_groups" jsonb NOT NULL DEFAULT '[]'::jsonb;
 ALTER TABLE "products" ADD COLUMN IF NOT EXISTS "packs" jsonb NOT NULL DEFAULT '[]'::jsonb;

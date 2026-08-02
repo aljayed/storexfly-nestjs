@@ -35,7 +35,7 @@ export class ProductsController {
 
   @Public()
   @Get('shops/:handle/products/:slug')
-  @ApiOperation({ summary: 'Product page — product + reviews' })
+  @ApiOperation({ summary: 'Product page - product + reviews' })
   getOne(@Param('handle') handle: string, @Param('slug') slug: string) {
     return this.products.getBySlug(handle, slug);
   }

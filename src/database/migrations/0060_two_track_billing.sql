@@ -5,7 +5,7 @@
 --               credit up front and every taka it sells draws it down.
 --               ৳1,899 buys ৳1,00,000 of selling; ৳3,499 buys ৳2,00,000;
 --               ৳8,299 buys ৳5,00,000. A shop may hold at most ৳10,00,000 of
---               credit at once — a ceiling on the balance, not a lifetime cap,
+--               credit at once - a ceiling on the balance, not a lifetime cap,
 --               so selling it down opens room to buy again.
 --
 --   commission  Only for shops with a verified trade licence. Nothing up
@@ -72,7 +72,7 @@ ALTER TABLE "subscriptions"
 -- Some databases already carry a stray, nullable `due_cents` from an earlier
 -- experiment, in which case ADD COLUMN IF NOT EXISTS above did nothing and
 -- left it without the default or the NOT NULL this code relies on. Normalise
--- it either way — the statements are no-ops on a column that is already right.
+-- it either way - the statements are no-ops on a column that is already right.
 UPDATE "subscriptions" SET "due_cents" = 0 WHERE "due_cents" IS NULL;--> statement-breakpoint
 ALTER TABLE "subscriptions" ALTER COLUMN "due_cents" SET DEFAULT 0;--> statement-breakpoint
 ALTER TABLE "subscriptions" ALTER COLUMN "due_cents" SET NOT NULL;--> statement-breakpoint

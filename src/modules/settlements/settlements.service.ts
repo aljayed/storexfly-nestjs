@@ -56,7 +56,7 @@ import type {
  * Pending months are always aggregated live from `orders` and classified
  * against the platform's payment-method catalog (each method carries its own
  * fee rate), so refunds, late orders and fee changes are reflected until the
- * moment a platform operator marks the month paid — that writes an immutable
+ * moment a platform operator marks the month paid - that writes an immutable
  * per-method snapshot which is used for display from then on. Only 'Paid'
  * orders count; COD and manually recorded orders are shown for context but
  * never paid out (the seller already holds that money).
@@ -171,7 +171,7 @@ export class SettlementsService {
           catalog,
         ),
       }))
-      // Biggest payouts first — the ones the operator needs to act on.
+      // Biggest payouts first - the ones the operator needs to act on.
       .sort((a, b) => b.payout - a.payout || b.total - a.total);
 
     const totals = new Map<string, PlatformSettlementTotalResponse>();
@@ -204,7 +204,7 @@ export class SettlementsService {
     const shop = await this.shops.requireById(shopId);
     if (period >= currentPeriod()) {
       throw new BadRequestException(
-        'Only completed months can be settled — this month is still accruing.',
+        'Only completed months can be settled - this month is still accruing.',
       );
     }
 
@@ -227,7 +227,7 @@ export class SettlementsService {
     const payout = payoutCents(core);
     if (payout <= 0) {
       throw new BadRequestException(
-        'No online payments this month — there is nothing to pay out.',
+        'No online payments this month - there is nothing to pay out.',
       );
     }
     // The mbank/card columns predate dynamic methods; they are still filled
@@ -340,8 +340,8 @@ export class SettlementsService {
     paid: SettlementRow | undefined,
     catalog: MethodCatalog,
   ): SettlementMonthResponse {
-    // A paid month renders from its snapshot — amounts *and* the fee rates in
-    // force at payment time — so the record never shifts under a rate change.
+    // A paid month renders from its snapshot - amounts *and* the fee rates in
+    // force at payment time - so the record never shifts under a rate change.
     const core: MonthCore = paid
       ? snapshotCore(paid)
       : classify(live ?? emptyBuckets(), catalog);

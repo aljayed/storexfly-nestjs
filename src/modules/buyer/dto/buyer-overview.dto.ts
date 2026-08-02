@@ -24,13 +24,13 @@ export class BuyerGeoDto implements BuyerGeoValue {
   // Exact coordinates from the interactive delivery map.
   @ApiPropertyOptional() @IsOptional() @IsNumber() lat?: number;
   @ApiPropertyOptional() @IsOptional() @IsNumber() lng?: number;
-  // Legacy canvas-pin position (percent) — older saved pins only.
+  // Legacy canvas-pin position (percent) - older saved pins only.
   @ApiPropertyOptional() @IsOptional() @IsNumber() x?: number;
   @ApiPropertyOptional() @IsOptional() @IsNumber() y?: number;
 }
 
 /**
- * PATCH /buyer/profile — update the display name and/or the saved checkout
+ * PATCH /buyer/profile - update the display name and/or the saved checkout
  * details. Every field is optional so the screen can send a partial patch
  * (e.g. just the name, or just the saved address).
  */
@@ -78,7 +78,7 @@ export class UpdateBuyerProfileDto {
   @Type(() => BuyerGeoDto)
   geo?: BuyerGeoDto | null;
 
-  // Payment method code (platform catalog) from the buyer's latest order —
+  // Payment method code (platform catalog) from the buyer's latest order -
   // written by checkout so the next order preselects the same method.
   @ApiProperty({ example: 'cod', required: false })
   @IsOptional()
@@ -116,7 +116,7 @@ export interface BuyerOverviewPendingAdjustment {
 
 export interface BuyerOverviewOrder {
   reference: string;
-  /** Shop id — needed to address buyer order actions (claim/cancel/approve). */
+  /** Shop id - needed to address buyer order actions (claim/cancel/approve). */
   shopId: string;
   shopName: string;
   shopHandle: string;
@@ -142,7 +142,7 @@ export interface BuyerOverviewReview {
   shopName: string;
 }
 
-/** GET /buyer/profile — everything the profile screen renders, in one payload. */
+/** GET /buyer/profile - everything the profile screen renders, in one payload. */
 export interface BuyerOverview {
   buyer: BuyerProfile & { memberSince: string };
   stats: { orders: number; reviews: number; totalSpent: number };

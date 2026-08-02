@@ -68,7 +68,7 @@ class AddressDto {
 }
 
 /**
- * One line of a cart checkout — a product with the pick the buyer made for it.
+ * One line of a cart checkout - a product with the pick the buyer made for it.
  * The same product may appear twice with different variants; each is its own
  * line (stock is still summed per product).
  */
@@ -140,7 +140,7 @@ export class CheckoutDto {
     example: 1,
     minimum: 1,
     description:
-      'Units, packs, or combo sets — whichever was picked. Ignored for a ' +
+      'Units, packs, or combo sets - whichever was picked. Ignored for a ' +
       'cart checkout, where every line carries its own qty.',
   })
   @IsOptional()
@@ -158,7 +158,7 @@ export class CheckoutDto {
   variant?: Record<string, string>;
 
   @ApiPropertyOptional({
-    description: 'A multi-buy pack id — qty then counts packs, not units.',
+    description: 'A multi-buy pack id - qty then counts packs, not units.',
   })
   @IsOptional()
   @IsString()
@@ -180,7 +180,7 @@ export class CheckoutDto {
   @ApiProperty({
     example: 'cod',
     description:
-      'Code of a platform-configured payment method — validated against the live catalog',
+      'Code of a platform-configured payment method - validated against the live catalog',
   })
   @IsString()
   @MaxLength(40)
@@ -195,7 +195,7 @@ export class CheckoutDto {
     example: 'EID25',
     description:
       "A discount code from this shop. Silently ignored if it doesn't apply " +
-      'to this order — the storefront previews it first via /checkout/coupon.',
+      'to this order - the storefront previews it first via /checkout/coupon.',
   })
   @IsOptional()
   @IsString()

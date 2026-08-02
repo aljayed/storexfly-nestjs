@@ -3,7 +3,7 @@
 -- climbs the ladder again as the month's sales come in. A seller who peaked at
 -- ৳2,499 last month therefore pays ৳599 for a quiet one.
 --
--- It is meaningless on its own — nothing would ever put the shop back up — so
+-- It is meaningless on its own - nothing would ever put the shop back up - so
 -- it can only be on while auto_scale is on, enforced in the service and by the
 -- backfill below.
 -- Idempotent by convention.

@@ -9,7 +9,7 @@ interface OtpEntry {
 
 /**
  * Phone OTP issuing/verification. This is an in-memory reference
- * implementation — swap the store for Redis and wire `dispatch()` to an SMS
+ * implementation - swap the store for Redis and wire `dispatch()` to an SMS
  * provider (Twilio, etc.) in production. In non-production the code is logged so
  * the flow is testable without a gateway.
  */
@@ -22,7 +22,7 @@ export class OtpService {
 
   /**
    * False until `dispatch()` really talks to an SMS gateway. While it is
-   * false callers may show the issued code to the user (dummy verification) —
+   * false callers may show the issued code to the user (dummy verification) -
    * flip it to true the moment SMS goes live so codes stop leaking into
    * responses.
    */

@@ -16,11 +16,11 @@ export const appConfig = registerAs('app', () => {
     port: parseInt(process.env.PORT ?? '3000', 10),
     apiPrefix: process.env.API_PREFIX ?? 'api',
     corsOrigins,
-    // Public origin of the Vue app — used to build links emailed to users
+    // Public origin of the Vue app - used to build links emailed to users
     // (e.g. the password-reset page). Defaults to the first CORS origin.
     webUrl:
       process.env.PUBLIC_WEB_URL ?? corsOrigins[0] ?? 'http://localhost:5173',
-    // Public origin of this API — bKash needs an absolute callback URL that
+    // Public origin of this API - bKash needs an absolute callback URL that
     // its servers redirect the buyer's browser to.
     apiUrl: process.env.PUBLIC_API_URL ?? 'http://localhost:3000',
   };
@@ -43,7 +43,7 @@ export const adminAuthConfig = registerAs('adminAuth', () => ({
 }));
 
 // Platform-admin console (hoomri.com/platform-admin). A single operator
-// identity whose credentials come from the environment — no DB row, so the
+// identity whose credentials come from the environment - no DB row, so the
 // console works even on an empty database. Use a strong unique password and
 // secret in production.
 export const platformAdminConfig = registerAs('platformAdmin', () => ({
@@ -86,7 +86,7 @@ export const throttleConfig = registerAs('throttle', () => ({
   limit: parseInt(process.env.THROTTLE_LIMIT ?? '120', 10),
 }));
 
-// S3-compatible object storage (Contabo) for user-uploaded media — product
+// S3-compatible object storage (Contabo) for user-uploaded media - product
 // photos, shop banners, review images, brand logos. Images are uploaded to a
 // private bucket and served back through the app's own /media proxy (Nginx
 // caches them), so the bucket needs no public access. When unset, StorageService

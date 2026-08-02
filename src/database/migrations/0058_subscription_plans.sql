@@ -50,7 +50,7 @@ ALTER TABLE "subscriptions"
   ADD COLUMN IF NOT EXISTS "cap_exceeded_at" timestamp with time zone;--> statement-breakpoint
 
 -- Everyone already paying was on the single flat fee, which is now the entry
--- rung — put them on Starter at Starter's price. Cancelled subscriptions keep
+-- rung - put them on Starter at Starter's price. Cancelled subscriptions keep
 -- their historical amount; recorded payments are never rewritten.
 UPDATE "subscriptions" SET "plan_code" = 'starter', "amount_cents" = 59900
   WHERE "status" <> 'cancelled' AND "amount_cents" <> 59900;--> statement-breakpoint

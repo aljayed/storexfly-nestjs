@@ -21,7 +21,7 @@ export class SettlementMonthResponse {
   @ApiProperty() ordersCount!: number;
   @ApiProperty({ description: 'All paid orders (every method)' })
   total!: number;
-  @ApiProperty({ description: 'Collected by the seller in cash — no payout' })
+  @ApiProperty({ description: 'Collected by the seller in cash - no payout' })
   cod!: number;
   @ApiProperty({ description: 'Total collected through online methods' })
   online!: number;
@@ -35,7 +35,7 @@ export class SettlementMonthResponse {
   @ApiProperty({ description: 'Total fees deducted from the online volume' })
   fees!: number;
   @ApiProperty({
-    description: 'Online revenue minus fees — what gets paid out',
+    description: 'Online revenue minus fees - what gets paid out',
   })
   payout!: number;
   @ApiProperty({

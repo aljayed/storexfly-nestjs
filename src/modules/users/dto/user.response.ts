@@ -10,7 +10,7 @@ export class UserResponse {
   @ApiProperty({ enum: ['email', 'google', 'phone'] })
   via!: 'email' | 'google' | 'phone';
   @ApiPropertyOptional() isAdmin?: boolean;
-  // Shop creation needs both proven — the console reads them off /auth/me.
+  // Shop creation needs both proven - the console reads them off /auth/me.
   @ApiProperty() emailVerified!: boolean;
   @ApiProperty() phoneVerified!: boolean;
 

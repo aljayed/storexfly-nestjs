@@ -2,7 +2,7 @@ import type { Request } from 'express';
 
 /**
  * The authenticated chat participant, resolved by ChatTokenService. This is
- * the chat module's own principal type — deliberately decoupled from the
+ * the chat module's own principal type - deliberately decoupled from the
  * platform's `Principal` union so the module ports to another host by
  * re-implementing only the token adapter.
  */
@@ -16,7 +16,7 @@ export interface CustomerActor {
 
 export interface SellerActor {
   role: 'seller';
-  /** Admin-user id — the staff member replying on the shop's behalf. */
+  /** Admin-user id - the staff member replying on the shop's behalf. */
   id: string;
   /** The shop this seller session is scoped to. */
   shopId: string;

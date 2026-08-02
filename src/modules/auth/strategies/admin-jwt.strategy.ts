@@ -44,7 +44,7 @@ export class AdminJwtStrategy extends PassportStrategy(Strategy, 'admin-jwt') {
       // For the home shop, the live DB role wins so a role change (or a
       // pending removal) applies to existing sessions immediately. When the
       // token is scoped to a *different* shop, the row's role is meaningless
-      // there — trust the claim, which was set after verifying the seller
+      // there - trust the claim, which was set after verifying the seller
       // owns that shop (an invited staffer of shop A stays 'owner' on their
       // own shop B, and vice versa).
       role: shopId === admin.shopId ? admin.role : payload.role,

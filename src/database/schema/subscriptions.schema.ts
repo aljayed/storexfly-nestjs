@@ -26,7 +26,7 @@ import { users } from './users.schema';
  * is on (see `common/constants/billing.ts`).
  *
  * **Credits.** `creditGrantedCents` is the running total of sales credit the
- * shop has ever bought. What it has *used* is not stored — it is the value of
+ * shop has ever bought. What it has *used* is not stored - it is the value of
  * the shop's non-cancelled orders since `meterStartAt`, so the balance is
  * `granted - used` and a cancelled order hands its allowance straight back
  * without anything having to un-write a counter. `creditExhaustedAt` marks
@@ -71,7 +71,7 @@ export const subscriptions = pgTable(
     meterStartAt: timestamp('meter_start_at', { withTimezone: true })
       .notNull()
       .defaultNow(),
-    /** When the balance last hit zero — what paused the storefront. */
+    /** When the balance last hit zero - what paused the storefront. */
     creditExhaustedAt: timestamp('credit_exhausted_at', { withTimezone: true }),
 
     // ── Commission track ───────────────────────────────────────────
@@ -79,7 +79,7 @@ export const subscriptions = pgTable(
     commissionBps: integer('commission_bps').notNull().default(150),
     /** An issued monthly bill that has not been paid yet, in paisa. */
     dueCents: integer('due_cents').notNull().default(0),
-    /** When that bill was issued — the start of the 25-day manual-pay clock. */
+    /** When that bill was issued - the start of the 25-day manual-pay clock. */
     dueSince: timestamp('due_since', { withTimezone: true }),
     /** The month the outstanding bill covers, for the console to name it. */
     duePeriodStart: timestamp('due_period_start', { withTimezone: true }),
@@ -122,7 +122,7 @@ export const subscriptions = pgTable(
 );
 
 /**
- * Ledger of platform payments — every taka a seller has paid the platform.
+ * Ledger of platform payments - every taka a seller has paid the platform.
  *
  * `credit_pack` rows are a sales-credit purchase: `amountCents` is what the
  * seller paid, `salesCreditCents` is how much selling it bought, and

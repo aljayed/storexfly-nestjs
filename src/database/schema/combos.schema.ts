@@ -14,7 +14,7 @@ import { products } from './products.schema';
 
 /**
  * A combo offer: two or more items from the same shop sold together at a
- * special price (below the summed member prices — the storefront shows the
+ * special price (below the summed member prices - the storefront shows the
  * savings). Members live in `combo_items`. Money in integer cents.
  */
 export const combos = pgTable(
@@ -49,7 +49,7 @@ export const comboItems = pgTable(
     comboId: uuid('combo_id')
       .notNull()
       .references(() => combos.id, { onDelete: 'cascade' }),
-    // Deleting a member product deletes the row — the combo then has fewer
+    // Deleting a member product deletes the row - the combo then has fewer
     // than 2 members and the API stops exposing it to buyers.
     productId: uuid('product_id')
       .notNull()

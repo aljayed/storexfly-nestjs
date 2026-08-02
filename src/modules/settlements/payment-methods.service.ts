@@ -49,7 +49,7 @@ export class PaymentMethodsService {
     return rows.filter((m) => m.enabled).map(view);
   }
 
-  /** Every method (disabled included), keyed by code — for settlement math. */
+  /** Every method (disabled included), keyed by code - for settlement math. */
   async byCode(): Promise<Map<string, PaymentMethodRow>> {
     const rows = await this.ensureSeeded();
     return new Map(rows.map((m) => [m.code, m]));
@@ -195,7 +195,7 @@ export class PaymentMethodsService {
   }
 
   /**
-   * All rows in display order, seeding the three defaults on first use — a
+   * All rows in display order, seeding the three defaults on first use - a
    * fresh `db:push` database has the table but not the migration's seed rows.
    */
   private async ensureSeeded(): Promise<PaymentMethodRow[]> {
@@ -227,7 +227,7 @@ export class PaymentMethodsService {
           code: 'card',
           kind: 'card',
           title: 'Card',
-          subtitle: 'Visa · Mastercard — via SSLCommerz',
+          subtitle: 'Visa · Mastercard - via SSLCommerz',
           feeBp: CARD_FEE_BP,
           sortOrder: 2,
         },

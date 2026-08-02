@@ -2,7 +2,7 @@
 -- `coupons` table (which discounts seller subscription payments): these
 -- discount a storefront order's item subtotal, never delivery.
 --
--- Scope is either the whole order ('all' — showcase items never reach
+-- Scope is either the whole order ('all' - showcase items never reach
 -- checkout, so they are excluded by construction), one product, or one combo.
 -- Hand-written and idempotent.
 

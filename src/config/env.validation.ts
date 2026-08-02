@@ -17,7 +17,7 @@ export enum NodeEnv {
 }
 
 /**
- * Strongly-typed view of `process.env`. Validated once at boot — the app
+ * Strongly-typed view of `process.env`. Validated once at boot - the app
  * refuses to start with a missing/invalid required variable, which is far
  * safer than discovering it on the first request in production.
  */
@@ -189,7 +189,7 @@ export function validateEnv(
     throw new Error(`Invalid environment configuration: ${detail}`);
   }
 
-  // Refuse to boot production on the .env.example placeholders — every signed
+  // Refuse to boot production on the .env.example placeholders - every signed
   // token would otherwise be forgeable by anyone who has read the repo.
   if (validated.NODE_ENV === NodeEnv.Production) {
     const secrets: [string, string][] = [

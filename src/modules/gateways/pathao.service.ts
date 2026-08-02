@@ -75,7 +75,7 @@ export class PathaoService {
     if (!res.ok || !data.access_token) {
       this.logger.warn(`Pathao token request failed (HTTP ${res.status})`);
       throw new BadRequestException(
-        'Pathao rejected the credentials — check the client ID, secret, email and password.',
+        'Pathao rejected the credentials - check the client ID, secret, email and password.',
       );
     }
     this.tokens.set(key, {
@@ -246,7 +246,7 @@ export class PathaoService {
       if (err instanceof BadRequestException) throw err;
       this.logger.error('Pathao booking failed', err as Error);
       throw new ServiceUnavailableException(
-        'Could not book the courier — please try again in a moment.',
+        'Could not book the courier - please try again in a moment.',
       );
     }
   }

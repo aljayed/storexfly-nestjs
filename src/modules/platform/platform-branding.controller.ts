@@ -26,8 +26,8 @@ import {
 } from '../branding/dto/branding.dto';
 
 /**
- * Brand wordmark + image logo. The GET is public so every surface — including
- * the unauthenticated storefront — can render the current brand; the writes and
+ * Brand wordmark + image logo. The GET is public so every surface - including
+ * the unauthenticated storefront - can render the current brand; the writes and
  * the gallery listing are restricted to a logged-in platform operator.
  */
 @ApiTags('platform-admin')

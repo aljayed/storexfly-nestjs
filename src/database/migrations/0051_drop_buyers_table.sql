@@ -2,7 +2,7 @@
 -- (see 0050). Repoint the three FKs that referenced `buyers` at `users` (the
 -- `buyer_id` column names are kept; only the target changes) and drop `buyers`.
 -- Hand-written and idempotent. Databases are cleared for this cutover, so no
--- data merge is needed — the FK values are remapped by re-seeding, not here.
+-- data merge is needed - the FK values are remapped by re-seeding, not here.
 
 -- reviews.buyer_id → users.id (onDelete set null)
 ALTER TABLE "reviews" DROP CONSTRAINT IF EXISTS "reviews_buyer_id_buyers_id_fk";--> statement-breakpoint

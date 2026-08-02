@@ -14,7 +14,7 @@ import { coupons } from './coupons.schema';
  * Referral links, managed from the platform admin console. Each link is a
  * shareable URL (hoomri.com/r/<slug>) tied to one coupon: opening it shows
  * the seller a discounted first month and auto-applies the coupon to the
- * shop-creation payment. Renewals always charge full price — later coupons
+ * shop-creation payment. Renewals always charge full price - later coupons
  * are applied manually from the seller console. Slugs are stored lowercase
  * and matched case-insensitively.
  */

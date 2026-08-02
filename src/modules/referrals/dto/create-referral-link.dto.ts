@@ -15,7 +15,7 @@ export class CreateReferralLinkDto {
   @IsString()
   @Matches(/^[A-Za-z0-9_-]{3,60}$/, {
     message:
-      'Slug must be 3–60 characters using letters, numbers, "-" or "_" only',
+      'Slug must be 3-60 characters using letters, numbers, "-" or "_" only',
   })
   slug!: string;
 
@@ -23,7 +23,7 @@ export class CreateReferralLinkDto {
   @IsUUID()
   couponId!: string;
 
-  @ApiPropertyOptional({ example: 'Facebook campaign — July' })
+  @ApiPropertyOptional({ example: 'Facebook campaign - July' })
   @IsOptional()
   @IsString()
   @MaxLength(120)

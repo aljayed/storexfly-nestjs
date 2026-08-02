@@ -17,7 +17,7 @@ import { StorageService } from './storage.service';
 const RESIZE_WIDTHS = new Set([240, 480, 960]);
 
 /* Formats sharp can safely resize without losing something (gif animation,
-   svg vectors) — everything else streams through untouched. */
+   svg vectors) - everything else streams through untouched. */
 const RESIZABLE = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/avif']);
 
 /**

@@ -7,7 +7,7 @@
 --
 -- Seller-authored content: 6 of 7 live products had highlights when this ran.
 -- That text was exported to product-highlights-backup-20260729.json in the
--- project root before the column was dropped — restoring it means re-adding
+-- project root before the column was dropped - restoring it means re-adding
 -- the column and reloading from that file.
 --
 -- Hand-written and idempotent.

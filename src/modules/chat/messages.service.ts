@@ -34,7 +34,7 @@ const MAX_FILE_BYTES = 8 * 1024 * 1024;
 
 /**
  * Attachment allow-lists. Data URLs are echoed back to the counterpart's
- * browser, so only inert renderable/downloadable types are accepted — never
+ * browser, so only inert renderable/downloadable types are accepted - never
  * text/html, SVG (scriptable) or other active content.
  */
 const IMAGE_MIMES = new Set([
@@ -105,7 +105,7 @@ export class MessagesService {
         ),
       });
       if (!anchor) throw new BadRequestException('Unknown cursor');
-      // Compare against the stored value, not the JS Date — Postgres keeps
+      // Compare against the stored value, not the JS Date - Postgres keeps
       // microseconds that a Date round-trip truncates away.
       beforeFilter = sql`${chatMessages.sentAt} < (select m.sent_at from chat_messages m where m.id = ${anchor.id})`;
     }
@@ -221,7 +221,7 @@ export class MessagesService {
           and(
             eq(chatMessages.conversationId, conversationId),
             eq(chatMessages.senderRole, counterpart),
-            // Subquery keeps Postgres's microsecond precision — a JS Date
+            // Subquery keeps Postgres's microsecond precision - a JS Date
             // round-trip truncates to ms and would miss the anchor message.
             sql`${chatMessages.sentAt} <= (select m.sent_at from chat_messages m where m.id = ${upTo.id})`,
             ne(chatMessages.status, 'read'),
@@ -384,7 +384,7 @@ export class MessagesService {
             `Attachment type ${a.mimeType} is not allowed`,
           );
         }
-        // The data URL must be plain base64 of exactly the declared type —
+        // The data URL must be plain base64 of exactly the declared type -
         // a mismatched or non-base64 payload is rejected outright.
         const prefix = `data:${mime};base64,`;
         if (!a.dataUrl.toLowerCase().startsWith(prefix)) {
@@ -437,7 +437,7 @@ export class MessagesService {
 
   /**
    * Post a shop-initiated message into the (buyer, shop) thread on the
-   * platform's behalf — used for order-amount change cards, not a live seller.
+   * platform's behalf - used for order-amount change cards, not a live seller.
    * Creates the thread if it doesn't exist. The bubble reads as from the shop
    * (senderRole 'seller', senderId = the shop's owner account).
    */

@@ -29,8 +29,8 @@ const DEFAULT_COUPON = {
 
 /**
  * The launch offer on credit packs. The landing page advertises this code, but
- * only while it is genuinely redeemable — see {@link CouponsService.launchOffer}
- * — so deactivating or deleting it here takes the offer off the page too.
+ * only while it is genuinely redeemable - see {@link CouponsService.launchOffer}
+ * - so deactivating or deleting it here takes the offer off the page too.
  */
 export const LAUNCH_COUPON = {
   code: 'LAUNCH50',
@@ -65,7 +65,7 @@ export type CouponCheck =
   | { ok: false; reason: RejectReason };
 
 /**
- * Platform coupons. A coupon discounts a single subscription payment — the
+ * Platform coupons. A coupon discounts a single subscription payment - the
  * one-off shop-creation fee, or (applied from the console) a shop's next
  * monthly renewal. A seller can redeem the same code repeatedly; instead,
  * coupons are withheld from high-volume sellers (any shop with ≥৳100,000 in
@@ -149,7 +149,7 @@ export class CouponsService implements OnModuleInit {
   }
 
   /**
-   * The launch offer, or null when it isn't redeemable right now — deleted,
+   * The launch offer, or null when it isn't redeemable right now - deleted,
    * deactivated, expired or fully redeemed. The public pricing route serves
    * this, so the landing page never advertises a code that would be refused
    * at checkout.

@@ -48,7 +48,7 @@ const MIME_BY_EXT: Record<string, string> = Object.fromEntries(
  * `data:` URLs; {@link absorb} uploads them once to a private bucket under a
  * content-hash key and returns a same-origin `/media/...` URL that the app's
  * media proxy streams back (Nginx caches it). Content-hash keys make objects
- * immutable — safe to cache forever — and automatically de-duplicate identical
+ * immutable - safe to cache forever - and automatically de-duplicate identical
  * uploads.
  *
  * When S3 is not configured the service stays in passthrough mode: `absorb`
@@ -67,7 +67,7 @@ export class StorageService implements OnModuleInit {
     this.cfg = this.config.getOrThrow<StorageCfg>('storage');
     if (!this.cfg.enabled) {
       this.logger.warn(
-        'S3 storage not configured — media stays as inline data URLs.',
+        'S3 storage not configured - media stays as inline data URLs.',
       );
       return;
     }
@@ -100,7 +100,7 @@ export class StorageService implements OnModuleInit {
     if (!value) return value;
     if (!this.client) return value; // passthrough when S3 is off
     const parsed = parseDataUrl(value);
-    if (!parsed) return value; // not a data URL — leave as-is
+    if (!parsed) return value; // not a data URL - leave as-is
     return this.upload(parsed, folder);
   }
 
@@ -147,7 +147,7 @@ export class StorageService implements OnModuleInit {
         Key: key,
         Body: data.buffer,
         ContentType: data.mime,
-        // Immutable content-hash key — long-lived cache once served.
+        // Immutable content-hash key - long-lived cache once served.
         CacheControl: 'public, max-age=31536000, immutable',
       }),
     );

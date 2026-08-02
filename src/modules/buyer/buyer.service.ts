@@ -59,7 +59,7 @@ function normalizePhone(raw: string | null | undefined): string {
 }
 
 /**
- * Storefront-shopper account flows — register / login / profile — operating on
+ * Storefront-shopper account flows - register / login / profile - operating on
  * the unified `users` account (buyer & seller are one identity). Accounts made
  * here are ordinary `users` rows: the same email/password works at the seller
  * sign-in, and creating a shop turns the account into a seller. Issues the
@@ -118,7 +118,7 @@ export class BuyerService {
   }
 
   /**
-   * Instant, unverified account creation — used only by the "create my
+   * Instant, unverified account creation - used only by the "create my
    * account" checkbox at checkout, after the order has already succeeded.
    * Deliberately not OTP-gated: it's an optional bonus on top of a completed
    * purchase, not a security boundary. Creates a normal `users` account.
@@ -217,7 +217,7 @@ export class BuyerService {
     });
     if (!order) throw new NotFoundException('Order not found');
 
-    // Already linked (email already matches, case-insensitively) — idempotent.
+    // Already linked (email already matches, case-insensitively) - idempotent.
     if (
       account.email &&
       order.email.toLowerCase() === account.email.toLowerCase()
@@ -460,7 +460,7 @@ export class BuyerService {
   }
 }
 
-/** "Mango Pickle +2 more" — a compact one-line summary of an order's items. */
+/** "Mango Pickle +2 more" - a compact one-line summary of an order's items. */
 function summarizeItems(names: string[]): string {
   if (!names.length) return '';
   const [first, ...rest] = names;

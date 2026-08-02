@@ -48,7 +48,7 @@ export class TrustBadgeDto {
   @MaxLength(TRUST_BADGE_TITLE_MAX)
   title!: string;
 
-  @ApiProperty({ example: '1–2 days inside Dhaka' })
+  @ApiProperty({ example: '1-2 days inside Dhaka' })
   @IsString()
   @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
   @MaxLength(TRUST_BADGE_SUBTITLE_MAX)

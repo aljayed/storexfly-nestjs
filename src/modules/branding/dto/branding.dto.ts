@@ -17,7 +17,7 @@ import type {
 /** Which background a logo image is for. */
 export type LogoTheme = 'light' | 'dark';
 
-/** Patch the platform brand — text wordmark and/or the active image logo. */
+/** Patch the platform brand - text wordmark and/or the active image logo. */
 export class UpdateBrandingDto {
   @ApiProperty({ example: 'hoomri', description: 'The logotype text' })
   @IsString()

@@ -23,7 +23,7 @@ export const PLATFORM_CURRENCY = 'BDT';
 // Credit it already bought is never lost in the move: sales draw the balance
 // down first, and commission only starts being charged once it runs out.
 
-/** The verified track's rate, in basis points — 150 bps = 1.5%. */
+/** The verified track's rate, in basis points - 150 bps = 1.5%. */
 export const COMMISSION_BPS = 150;
 
 /**

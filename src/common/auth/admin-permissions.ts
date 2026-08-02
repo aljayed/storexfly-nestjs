@@ -2,14 +2,14 @@ import type { AdminRole } from '../../database/schema/enums';
 
 /**
  * Fine-grained capabilities of the shop admin console. Roles are resolved to
- * permission sets here — the single source of truth shared by the HTTP guard
+ * permission sets here - the single source of truth shared by the HTTP guard
  * (`RolesGuard`), the chat token adapter and the payloads sent to the Vue
  * console (which drives its nav/route gating off the same strings).
  *
  * Access tiers exposed to sellers when inviting staff:
- *  - `manager`  — full access (orders, customers, settings, settlements, …)
- *  - `editor`   — view reports + add/edit/delete items
- *  - `staff`    — view reports + add items only
+ *  - `manager`  - full access (orders, customers, settings, settlements, …)
+ *  - `editor`   - view reports + add/edit/delete items
+ *  - `staff`    - view reports + add items only
  * `owner` is never assignable by invite; it additionally covers the
  * owner-only seller-token flows (business verification / KYC).
  */

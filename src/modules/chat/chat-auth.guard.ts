@@ -26,7 +26,7 @@ export const CurrentChatActor = createParamDecorator(
  * Bearer-token guard for chat REST routes. Accepts either platform session
  * kind via ChatTokenService and attaches the resolved actor to the request.
  * Chat controllers are marked @Public() to opt out of the global seller-JWT
- * guard, then protected by this one — same pattern the reviews module uses
+ * guard, then protected by this one - same pattern the reviews module uses
  * with the buyer guard.
  */
 @Injectable()

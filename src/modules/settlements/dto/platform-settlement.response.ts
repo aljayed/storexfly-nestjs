@@ -10,7 +10,7 @@ export class PlatformSettlementRowResponse extends SettlementMonthResponse {
   @ApiProperty({ example: 'BDT' }) currency!: string;
 }
 
-/** Payout totals per currency — shops can price in different currencies. */
+/** Payout totals per currency - shops can price in different currencies. */
 export class PlatformSettlementTotalResponse {
   @ApiProperty({ example: 'BDT' }) currency!: string;
   @ApiProperty({ description: 'Unpaid payouts for the period' })

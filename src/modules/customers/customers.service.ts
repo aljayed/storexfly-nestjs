@@ -42,7 +42,7 @@ export interface RecordOrderInput {
   placedAt: Date;
 }
 
-/** Segment thresholds (derived server-side — never trusted from the client). */
+/** Segment thresholds (derived server-side - never trusted from the client). */
 const VIP_MIN_ORDERS = 20;
 const REPEAT_MIN_ORDERS = 2;
 

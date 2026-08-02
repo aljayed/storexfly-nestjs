@@ -138,7 +138,7 @@ export class ReportsService {
     };
   }
 
-  /** Repeat-buyer report — customers with more than one lifetime order. */
+  /** Repeat-buyer report - customers with more than one lifetime order. */
   async repeatBuyers(shopId: string): Promise<RepeatBuyersResponse> {
     await this.shops.requireById(shopId);
     const all = await this.db.query.customers.findMany({
@@ -329,7 +329,7 @@ function addDays(d: Date, days: number): Date {
   return next;
 }
 
-/** Local calendar date as "YYYY-MM-DD" (not UTC — buckets are local days). */
+/** Local calendar date as "YYYY-MM-DD" (not UTC - buckets are local days). */
 function isoDate(d: Date): string {
   const m = String(d.getMonth() + 1).padStart(2, '0');
   const day = String(d.getDate()).padStart(2, '0');

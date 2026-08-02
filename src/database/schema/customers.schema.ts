@@ -15,7 +15,7 @@ import { orders } from './orders.schema';
 /**
  * A buyer who has ordered from a shop. Maps to `Customer` in the design
  * handoff. The lifetime aggregates (`orders`, `spentCents`, `first`, `last`,
- * `segment`) are recomputed server-side whenever an order lands — never
+ * `segment`) are recomputed server-side whenever an order lands - never
  * trusted from the client.
  */
 export const customers = pgTable(

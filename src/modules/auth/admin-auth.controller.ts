@@ -33,7 +33,7 @@ export class AdminAuthController {
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @Post('login')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Admin login stage 1 — credentials → 2FA ticket' })
+  @ApiOperation({ summary: 'Admin login stage 1 - credentials → 2FA ticket' })
   login(@Body() dto: AdminLoginDto) {
     return this.adminAuth.login(dto);
   }
@@ -42,7 +42,7 @@ export class AdminAuthController {
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @Post('2fa')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Admin login stage 2 — verify TOTP → console JWT' })
+  @ApiOperation({ summary: 'Admin login stage 2 - verify TOTP → console JWT' })
   verify(@Body() dto: AdminTwoFactorDto) {
     return this.adminAuth.verifyTwoFactor(dto);
   }
@@ -50,7 +50,7 @@ export class AdminAuthController {
   // `@Public()` exempts the route from the global seller JwtAuthGuard, which
   // would otherwise verify the admin token against the seller secret and 401.
   // The route-level AdminJwtAuthGuard still enforces a valid, 2FA-verified admin
-  // token — see the same pairing on the admin-scoped shop controllers.
+  // token - see the same pairing on the admin-scoped shop controllers.
   @Public()
   @ApiBearerAuth()
   @UseGuards(AdminJwtAuthGuard)

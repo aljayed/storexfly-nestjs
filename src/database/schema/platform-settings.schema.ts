@@ -9,10 +9,10 @@ import {
 } from 'drizzle-orm/pg-core';
 
 /**
- * Platform-wide settings — a single global row managed from the platform-admin
+ * Platform-wide settings - a single global row managed from the platform-admin
  * console. Holds the brand: either the text wordmark (the rounded "happy" font
  * logotype) or, when set, an uploaded image logo that takes precedence. Every
- * surface — the public storefront included — reads it, so an operator can
+ * surface - the public storefront included - reads it, so an operator can
  * rebrand without a code change.
  *
  * Singleton: the app seeds one row at boot and always reads/updates the first.
@@ -27,7 +27,7 @@ export const platformSettings = pgTable('platform_settings', {
   // null/empty = no tinted segment.
   brandAccent: varchar('brand_accent', { length: 40 }).default('oo'),
   // Active image logos, stored inline as data URLs (same approach as product
-  // photos — no upload server needed). A surface picks the one matching its
+  // photos - no upload server needed). A surface picks the one matching its
   // background; null = fall back to the text wordmark for that theme.
   logoLight: text('logo_light'),
   logoDark: text('logo_dark'),
@@ -67,7 +67,7 @@ export const platformSettings = pgTable('platform_settings', {
 });
 
 /**
- * Gallery of uploaded brand logos — the "recent images" an operator can pick
+ * Gallery of uploaded brand logos - the "recent images" an operator can pick
  * from on the branding screen. Each image is a resized data URL.
  */
 export const brandLogos = pgTable('brand_logos', {

@@ -49,7 +49,7 @@ async function bootstrap(): Promise<void> {
 
   app.enableShutdownHooks();
 
-  // OpenAPI docs at /<prefix>/docs — development tooling only, never exposed
+  // OpenAPI docs at /<prefix>/docs - development tooling only, never exposed
   // in production (the spec maps the whole API surface for an attacker).
   if (!isProduction) {
     const swaggerConfig = new DocumentBuilder()

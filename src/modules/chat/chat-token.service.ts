@@ -10,8 +10,8 @@ import type { ChatActor } from './chat-actor';
 
 /**
  * The chat module's ONLY tie into the host platform's auth. Accepts the
- * platform's existing session tokens — the account JWT for the customer side and
- * admin-console JWTs for the seller side — so chat needs no login of its own.
+ * platform's existing session tokens - the account JWT for the customer side and
+ * admin-console JWTs for the seller side - so chat needs no login of its own.
  *
  * Porting the module to another host means re-implementing just this class
  * (verify a raw bearer token, return a ChatActor); guards, gateway and
@@ -44,7 +44,7 @@ export class ChatTokenService {
         };
       }
     } catch {
-      /* not an account token — try the admin secret */
+      /* not an account token - try the admin secret */
     }
 
     // Admin-console session (typ 'admin', own secret) → seller side. The 2FA

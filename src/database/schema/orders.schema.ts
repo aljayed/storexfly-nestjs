@@ -110,17 +110,17 @@ export const orderItems = pgTable(
     name: varchar('name', { length: 200 }).notNull(),
     qty: integer('qty').notNull(),
     // Physical units this line took out of stock. Differs from `qty` whenever
-    // a multi-buy pack is involved — qty counts picks ("2 × Pack of 3"), this
+    // a multi-buy pack is involved - qty counts picks ("2 × Pack of 3"), this
     // counts the 6 units that actually left the shelf, which is what a
     // cancellation has to give back. Null on rows written before this column;
     // the restock path falls back to `qty` for those.
     units: integer('units'),
     unitPriceCents: integer('unit_price_cents').notNull(),
     // Human-readable snapshot of what was picked at purchase time
-    // ("Size: L · Red · Pack of 3") — survives later catalog edits.
+    // ("Size: L · Red · Pack of 3") - survives later catalog edits.
     variant: varchar('variant', { length: 240 }),
     // Machine-readable twin of `variant`: the picked `{ groupId: optionId }`
-    // map. Only options that track their own stock need it — cancelling an
+    // map. Only options that track their own stock need it - cancelling an
     // order has to know *which* choice to hand the units back to. Null for
     // lines with no variants (and for orders placed before this column).
     variantPick: jsonb('variant_pick').$type<Record<string, string>>(),

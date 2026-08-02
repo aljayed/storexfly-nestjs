@@ -5,7 +5,7 @@ import type { DbExecutor } from '../../database/drizzle.types';
 /**
  * A shop's sales-credit position.
  *
- * `used` is not a stored counter — it is the value of the shop's non-cancelled
+ * `used` is not a stored counter - it is the value of the shop's non-cancelled
  * orders since its meter started, so cancelling an order hands the allowance
  * straight back and nothing can drift out of sync with the orders table.
  *
@@ -21,7 +21,7 @@ export interface CreditPosition {
 }
 
 /**
- * Read one shop's credit position, or null when it has none to enforce —
+ * Read one shop's credit position, or null when it has none to enforce -
  * no billing record, on the post-paid track, or still on the free trial with
  * nothing ever bought. Runs on any executor, so a checkout can call it inside
  * the transaction that holds the shop lock.

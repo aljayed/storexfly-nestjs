@@ -11,7 +11,7 @@ import { QuickRepliesController } from './quick-replies.controller';
 import { QuickRepliesService } from './quick-replies.service';
 
 /**
- * Hoomri Chat — standalone customer ↔ seller messaging
+ * Hoomri Chat - standalone customer ↔ seller messaging
  * (design_handoff_hoomri_chat). Self-contained on purpose: it depends only on
  * the global DatabaseModule and the platform's JWT secrets (via
  * ChatTokenService, its single auth seam), never on the other feature
@@ -30,7 +30,7 @@ import { QuickRepliesService } from './quick-replies.service';
     ChatGateway,
   ],
   // Exported so the platform can post shop-initiated cards (e.g. order-amount
-  // changes) into a thread. Chat still imports no feature module — the
+  // changes) into a thread. Chat still imports no feature module - the
   // dependency is one-way (orders → chat).
   //
   // The guard and its token service go out too, so a module layered on top

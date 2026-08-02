@@ -101,7 +101,7 @@ export class ShopsController {
     return this.shops.submitKyc(user.id, id, dto);
   }
 
-  // ── Admin console (admin JWT — works for invited staff who have no
+  // ── Admin console (admin JWT - works for invited staff who have no
   //    seller session; ShopScopeGuard pins access to the token's shop) ──
   @Public()
   @UseGuards(AdminJwtAuthGuard, ShopScopeGuard, RolesGuard)
@@ -161,7 +161,7 @@ export class ShopsController {
     return this.shops.setPayoutBank(shopId, null);
   }
 
-  // ── Shop deletion — owner role only, confirmed by an email OTP ──
+  // ── Shop deletion - owner role only, confirmed by an email OTP ──
   @Public()
   @UseGuards(AdminJwtAuthGuard, ShopScopeGuard, RolesGuard)
   @Roles('owner')
