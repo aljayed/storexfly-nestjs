@@ -21,6 +21,7 @@ import {
   products,
   settlements,
   shops,
+  subscriptionPayments,
   subscriptions,
   users,
   type PayoutBank,
@@ -64,6 +65,25 @@ interface OwedMonth {
   feeCents: number;
 }
 
+/** Whether a seller who already owns a shop may open another one. */
+export interface ShopEligibility {
+  shopCount: number;
+  /** The free trial is the first shop only. */
+  freeTrialAvailable: boolean;
+  /** Any shop of theirs with a verified trade licence. */
+  hasVerifiedBusiness: boolean;
+  /** Credit packs this seller has ever bought, across all their shops. */
+  creditPacksBought: number;
+  /** One is spent per shop opened beyond the free first one. */
+  creditPacksUsed: number;
+  canCreate: boolean;
+}
+
+/** "৳1,200" - the platform bills in taka, so no currency lookup is needed. */
+function taka(cents: number): string {
+  return `৳${(cents / 100).toLocaleString('en-US')}`;
+}
+
 /** j***b@gmail.com - enough for the owner to recognise the inbox. */
 function maskEmail(email: string): string {
   const [local, domain] = email.split('@');
@@ -100,18 +120,19 @@ export class ShopsService {
     // Both a verified email and a verified phone, whatever the plan - an
     // account nobody can be reached on has no business opening a storefront.
     await this.assertContactVerified(ownerId);
-    if (plan === 'free') {
+    const owned = await this.db.query.shops.findMany({
+      where: eq(shops.ownerId, ownerId),
+      columns: { id: true, kycStatus: true },
+    });
+    if (owned.length) {
       // The free tier is a first-shop trial, not a way to run a fleet of
       // capped shops: any existing shop (free or paid) means this one is paid.
-      const existing = await this.db.query.shops.findFirst({
-        where: eq(shops.ownerId, ownerId),
-        columns: { id: true },
-      });
-      if (existing) {
+      if (plan === 'free') {
         throw new ForbiddenException(
-          'The free plan is only for your first shop. Subscribe to open another one.',
+          'The free trial is only for your first shop - a second one starts on a paid track.',
         );
       }
+      await this.assertSecondShopAllowed(ownerId, owned);
     }
     // Nothing is charged to open a shop. The seller picks how they pay for
     // sales - a credit pack, or the verified commission track - from the
@@ -149,6 +170,83 @@ export class ShopsService {
     // starts counting from the shop's first day.
     await this.subscriptionsService.openForNewShop(ownerId, row.id);
     return ShopResponse.fromRow(row);
+  }
+
+  /**
+   * Whether this seller may open another shop, and why. The wizard reads it
+   * up front so a locked seller is shown the two ways out instead of filling
+   * in five steps and being refused at the end.
+   */
+  async eligibility(ownerId: string): Promise<ShopEligibility> {
+    const owned = await this.db.query.shops.findMany({
+      where: eq(shops.ownerId, ownerId),
+      columns: { id: true, kycStatus: true },
+    });
+    return this.additionalShopUnlock(ownerId, owned);
+  }
+
+  /**
+   * The first shop is free to open - that is the trial. Every shop after it
+   * has to come from a seller who has shown they are a real merchant, in one
+   * of the two ways the platform already recognises: a verified trade licence,
+   * or a credit pack bought for each shop they open. Both are done from the
+   * console of a shop they already have, and either one unlocks the next shop
+   * the moment it lands.
+   */
+  private async assertSecondShopAllowed(
+    ownerId: string,
+    owned: { kycStatus: ShopRow['kycStatus'] }[],
+  ): Promise<void> {
+    const unlock = await this.additionalShopUnlock(ownerId, owned);
+    if (unlock.canCreate) {
+      return;
+    }
+    throw new ForbiddenException({
+      statusCode: HttpStatus.FORBIDDEN,
+      error: 'AdditionalShopLocked',
+      message: unlock.creditPacksBought
+        ? `Every shop after your first one opens on its own credit pack, and the ${unlock.creditPacksUsed === 1 ? 'one you bought is' : `${unlock.creditPacksUsed} you bought are`} already carrying the shops you have. Buy another pack - or get your trade licence verified - to open this one.`
+        : 'Your first shop is the free trial. To open another one, buy a credit pack or get your trade licence verified from your shop console - the new shop unlocks as soon as either goes through.',
+    });
+  }
+
+  /**
+   * The two things that unlock a seller's second (and every later) shop.
+   *
+   * A verified trade licence covers every shop they open. Credit packs don't:
+   * one is spent per shop beyond the free first one, so a seller running three
+   * shops on the pre-paid track has bought at least two packs. Packs are
+   * counted per *seller*, not per shop - the ledger row survives its shop
+   * being deleted (the FK nulls `shopId`), which also hands the slot back when
+   * a shop goes, exactly as it would have if the shop had never been opened.
+   */
+  private async additionalShopUnlock(
+    ownerId: string,
+    owned: { kycStatus: ShopRow['kycStatus'] }[],
+  ): Promise<ShopEligibility> {
+    const [{ n }] = await this.db
+      .select({ n: count() })
+      .from(subscriptionPayments)
+      .where(
+        and(
+          eq(subscriptionPayments.userId, ownerId),
+          eq(subscriptionPayments.type, 'credit_pack'),
+        ),
+      );
+    const creditPacksBought = Number(n);
+    const creditPacksUsed = Math.max(0, owned.length - 1);
+    const hasVerifiedBusiness = owned.some((s) => s.kycStatus === 'verified');
+    return {
+      shopCount: owned.length,
+      freeTrialAvailable: owned.length === 0,
+      hasVerifiedBusiness,
+      creditPacksBought,
+      creditPacksUsed,
+      canCreate:
+        owned.length === 0 ||
+        hasVerifiedBusiness ||
+        creditPacksBought > creditPacksUsed,
+    };
   }
 
   /**
@@ -463,14 +561,23 @@ export class ShopsService {
 
   /**
    * What stands between this shop and deletion, shown in the confirm
-   * dialog before any code is sent: in-progress orders block outright;
-   * unsettled payout money doesn't block, but the seller is told when and
-   * where it will be transferred (and must have a payout account on file).
+   * dialog before any code is sent.
+   *
+   * Blocking: orders still in progress, and post-paid commission the shop
+   * hasn't paid us for the sales it has already made. Not blocking: unsettled
+   * payout money (the seller is told when and where it will be transferred,
+   * and must have a payout account on file), and pre-paid credit still on the
+   * balance - that is the seller's to forfeit, as long as they are told the
+   * figure and say they understand it.
    */
   async deletePrecheck(shopId: string): Promise<{
     inProgressOrders: number;
     pendingPayout: number;
+    commissionOwed: number;
+    creditBalance: number;
     currency: string;
+    /** Billing is always in the platform's currency, whatever the shop sells in. */
+    billingCurrency: string;
     months: {
       period: string;
       payout: number;
@@ -480,15 +587,19 @@ export class ShopsService {
     hasBankAccount: boolean;
   }> {
     const shop = await this.requireById(shopId);
-    const [inProgress, owed] = await Promise.all([
+    const [inProgress, owed, position] = await Promise.all([
       this.inProgressOrderCount(shopId),
       this.owedSettlements(shopId),
+      this.subscriptionsService.closingPosition(shopId),
     ]);
     const pendingCents = owed.reduce((sum, o) => sum + o.payoutCents, 0);
     return {
       inProgressOrders: inProgress,
       pendingPayout: centsToDollars(pendingCents),
+      commissionOwed: centsToDollars(position.commissionOwedCents),
+      creditBalance: centsToDollars(position.creditBalanceCents),
       currency: shop.currency,
+      billingCurrency: position.currency,
       months: owed.map((o) => {
         const window = windowOf(o.period);
         return {
@@ -541,6 +652,7 @@ export class ShopsService {
   async deleteWithOtp(
     shopId: string,
     code: string,
+    creditAcknowledged = false,
   ): Promise<{ deleted: boolean; pendingPayout: number; currency: string }> {
     const shop = await this.requireById(shopId);
     const email = await this.requireOwnerEmail(shop);
@@ -554,7 +666,7 @@ export class ShopsService {
         'That code is invalid or has expired. Request a new one and try again.',
       );
     }
-    const owed = await this.assertDeletable(shop);
+    const owed = await this.assertDeletable(shop, creditAcknowledged);
     await this.db.transaction(async (tx) => {
       if (owed.length) {
         await tx.insert(deletedShopSettlements).values(
@@ -575,7 +687,8 @@ export class ShopsService {
           })),
         );
       }
-      // Bill whatever the verified track earned before the shop goes. The
+      // Belt and braces on the commission guard above: an order that landed
+      // between the check and this transaction is billed rather than lost. The
       // ledger row survives the delete (its shopId is nulled by the FK), so
       // the seller's payment history stays honest - and a merchant can't sell
       // all month post-paid and delete the shop to avoid the bill.
@@ -598,18 +711,41 @@ export class ShopsService {
   /**
    * The deletion guards. Returns the owed settlement months so the delete
    * transaction can snapshot exactly what was checked.
+   *
+   * `creditAcknowledged` is only meaningful on the final delete: the seller
+   * has to have seen the credit they are forfeiting and said so. Asking for it
+   * when merely requesting the confirmation code would be premature - the
+   * dialog shows the figure at that point, it doesn't have an answer yet.
    */
-  private async assertDeletable(shop: ShopRow): Promise<OwedMonth[]> {
+  private async assertDeletable(
+    shop: ShopRow,
+    creditAcknowledged = false,
+  ): Promise<OwedMonth[]> {
     const inProgress = await this.inProgressOrderCount(shop.id);
     if (inProgress > 0) {
       throw new ConflictException(
         `${inProgress} order${inProgress === 1 ? ' is' : 's are'} still in progress. Deliver or cancel every order before deleting the shop.`,
       );
     }
+    // Post-paid means we have already let this shop sell on trust. It doesn't
+    // get to walk away from the bill for those sales: the seller settles it
+    // from Billing, then comes back. Pre-paid credit is the opposite case -
+    // that money is already ours, so it only has to be declared.
+    const position = await this.subscriptionsService.closingPosition(shop.id);
+    if (position.commissionOwedCents > 0) {
+      throw new ConflictException(
+        `You still owe ${taka(position.commissionOwedCents)} in commission on the sales this shop has already made. Settle it from Billing, then delete the shop.`,
+      );
+    }
     const owed = await this.owedSettlements(shop.id);
     if (owed.length && !shop.payoutBank) {
       throw new BadRequestException(
         'You have settlement money pending. Add the bank account it should be transferred to before deleting the shop.',
+      );
+    }
+    if (position.creditBalanceCents > 0 && !creditAcknowledged) {
+      throw new BadRequestException(
+        `This shop still holds ${taka(position.creditBalanceCents)} of unused sales credit, which is forfeited when it is deleted. Confirm you understand that before continuing.`,
       );
     }
     return owed;

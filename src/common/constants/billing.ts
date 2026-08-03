@@ -88,11 +88,14 @@ export const CREDIT_PACKS: readonly CreditPackSeed[] = [
 export const ENTRY_PACK_CODE = CREDIT_PACKS[0].code;
 
 // ── Free tier ─────────────────────────────────────────────────────
-// Creating a shop costs nothing, so every new shop starts here: one product
-// in the catalog and 10 lifetime (non-cancelled) orders, enough to try the
-// platform with real buyers. The order that fills the last slot still
-// completes; the shop is then paused until it buys credit or gets verified.
-export const FREE_MAX_PRODUCTS = 1;
+// Creating a shop costs nothing, so every new shop starts here: a full
+// catalog and 10 lifetime (non-cancelled) orders, enough to try the platform
+// with real buyers. The order that fills the last slot still completes; the
+// shop is then paused until it buys credit or gets verified.
+//
+// The catalog is deliberately uncapped. Nothing is charged per product on
+// either track - what a shop pays for is the selling it does - so a limit on
+// listings would only stop a seller getting ready to sell.
 export const FREE_ORDER_CAP = 10;
 export const FREE_TIER_LIMIT_MESSAGE =
   'This shop used up the free plan’s 10 free orders and is paused. Buy sales credit to keep selling.';

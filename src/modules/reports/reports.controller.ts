@@ -34,23 +34,30 @@ export class ReportsController {
     return this.reports.dashboard(shopId, query.from, query.to);
   }
 
-  @Get('reports/repeat-buyers')
-  @ApiOperation({ summary: 'Admin: repeat-buyer report' })
-  repeatBuyers(@Param('shopId') shopId: string) {
-    return this.reports.repeatBuyers(shopId);
+  @Get('reports/insights')
+  @ApiOperation({
+    summary:
+      'Admin: full insights report for a window - sales, fulfilment, payments, channels, discounts, areas, products',
+  })
+  insights(@Param('shopId') shopId: string, @Query() query: DashboardQuery) {
+    return this.reports.insights(shopId, query.from, query.to);
   }
 
   @Get('reports/export')
-  @Header('Content-Type', 'text/csv')
-  @ApiOperation({ summary: 'Admin: export orders as CSV' })
+  @Header('Content-Type', 'text/csv; charset=utf-8')
+  @ApiOperation({
+    summary: 'Admin: export orders as CSV (optional ?from=&to= scopes it)',
+  })
   async export(
     @Param('shopId') shopId: string,
+    @Query() query: DashboardQuery,
     @Res({ passthrough: true }) res: Response,
   ): Promise<string> {
+    const suffix = query.from ? `-${query.from.slice(0, 10)}` : '';
     res.setHeader(
       'Content-Disposition',
-      `attachment; filename="orders-${shopId}.csv"`,
+      `attachment; filename="orders${suffix}.csv"`,
     );
-    return this.reports.exportOrdersCsv(shopId);
+    return this.reports.exportOrdersCsv(shopId, query.from, query.to);
   }
 }

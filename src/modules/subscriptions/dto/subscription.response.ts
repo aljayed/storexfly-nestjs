@@ -144,14 +144,15 @@ export class CommissionStateResponse {
   @ApiPropertyOptional() duePeriodEnd?: string;
 }
 
-/** Free-plan usage numbers rendered on the Subscription page. */
+/**
+ * Free-plan usage numbers rendered on the Subscription page. Orders are all
+ * the trial meters - the catalog is unlimited on every track.
+ */
 export class FreeTierUsageResponse {
   @ApiProperty({ example: 4, description: 'Orders taken so far' })
   ordersUsed!: number;
   @ApiProperty({ example: 10, description: 'Free-trial order cap' })
   ordersCap!: number;
-  @ApiProperty({ example: 1 }) productsUsed!: number;
-  @ApiProperty({ example: 1 }) maxProducts!: number;
 }
 
 /** Admin-console subscription view (the Subscription page). */

@@ -45,7 +45,7 @@ export class CustomersController {
     @Param('shopId') shopId: string,
     @Query() query: RepeatAnalyticsQueryDto,
   ) {
-    return this.customers.repeatAnalytics(shopId, query.days);
+    return this.customers.repeatAnalytics(shopId, query.from, query.to);
   }
 
   @Get(':id')

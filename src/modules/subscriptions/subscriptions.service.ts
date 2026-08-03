@@ -9,11 +9,10 @@ import {
   type OnModuleDestroy,
   type OnModuleInit,
 } from '@nestjs/common';
-import { and, count, desc, eq, gte, lt, ne, sql } from 'drizzle-orm';
+import { and, desc, eq, gte, lt, ne, sql } from 'drizzle-orm';
 import {
   COMMISSION_DUE_GRACE_MS,
   CREDIT_BALANCE_CAP_CENTS,
-  FREE_MAX_PRODUCTS,
   FREE_ORDER_CAP,
   FREE_TIER_LIMIT_MESSAGE,
   PLATFORM_CURRENCY,
@@ -22,7 +21,6 @@ import { DRIZZLE } from '../../database/database.constants';
 import type { DbExecutor, DrizzleDB } from '../../database/drizzle.types';
 import {
   orders,
-  products,
   shops,
   subscriptionPayments,
   subscriptions,
@@ -38,6 +36,19 @@ import {
 } from './dto/subscription.response';
 
 export { PLATFORM_CURRENCY };
+
+/**
+ * Where a shop stands with the platform right now, for the flows that need
+ * to know before they let it go: deleting a shop is refused while post-paid
+ * commission is unpaid, and warns about pre-paid credit it would forfeit.
+ */
+export interface ClosingPosition {
+  /** Post-paid commission still to pay: the part-month plus any issued bill. */
+  commissionOwedCents: number;
+  /** Pre-paid credit bought and not yet sold through - lost with the shop. */
+  creditBalanceCents: number;
+  currency: string;
+}
 
 /** What a verified shop owes if its billing stopped right now. */
 interface CommissionOwed {
@@ -510,6 +521,101 @@ export class SubscriptionsService implements OnModuleInit, OnModuleDestroy {
       `Shop ${shopId} closed owing ${owed.total / 100} BDT of commission - billed`,
     );
     return owed.total;
+  }
+
+  /**
+   * The two numbers that decide whether a shop can be deleted: what it still
+   * owes us on the post-paid track (which blocks the delete until it is paid),
+   * and the pre-paid credit it would walk away from (which only warns).
+   *
+   * Settles first, so a bill that fell due while nobody was looking is part of
+   * the figure rather than arriving after the seller agreed to delete.
+   */
+  async closingPosition(shopId: string): Promise<ClosingPosition> {
+    const sub = await this.findByShop(shopId);
+    if (!sub) {
+      return {
+        commissionOwedCents: 0,
+        creditBalanceCents: 0,
+        currency: PLATFORM_CURRENCY,
+      };
+    }
+    const current = await this.settle(sub);
+    // Mirrors what `settleOnClose` would actually bill: a cancelled shop has
+    // already been settled, and a credits shop is paid up by definition.
+    const commissionOwedCents =
+      current.status !== 'cancelled' && current.billingMode === 'commission'
+        ? (await this.commissionOwed(current, new Date())).total
+        : 0;
+    // Credit is spent first on either track, so leftover credit is forfeited
+    // whichever track the shop is on when it goes.
+    const { balance } = await this.creditState(current);
+    return {
+      commissionOwedCents,
+      creditBalanceCents: balance,
+      currency: current.currency,
+    };
+  }
+
+  /**
+   * Pay everything the verified track owes right now - the month part-way
+   * through plus any bill already issued - without leaving the track. `payNow`
+   * only clears an issued bill, which would leave a seller who wants to delete
+   * mid-month with an unpayable balance and no way out.
+   *
+   * The month is re-anchored to today, exactly as leaving the track does, so
+   * the window just paid for is never billed a second time.
+   */
+  async settleOutstanding(shopId: string): Promise<SubscriptionResponse> {
+    const sub = await this.settle(await this.requireByShop(shopId));
+    if (sub.status === 'cancelled') {
+      throw new ForbiddenException(
+        'This shop is cancelled. Resume it before paying.',
+      );
+    }
+    if (sub.billingMode !== 'commission') {
+      throw new BadRequestException(
+        'This shop is on pre-paid credit - there is no commission to settle.',
+      );
+    }
+    const now = new Date();
+    const owed = await this.commissionOwed(sub, now);
+    if (owed.total <= 0) {
+      throw new BadRequestException('No payment is due.');
+    }
+    // Guarded on the anchor, like `settleCommission`: if the sweep bills the
+    // same window concurrently, exactly one of them wins.
+    const [settled] = await this.db
+      .update(subscriptions)
+      .set({
+        dueCents: 0,
+        dueSince: null,
+        duePeriodStart: null,
+        duePeriodEnd: null,
+        dueBillableSalesCents: null,
+        status: 'active',
+        startedAt: now,
+        nextBillingAt: addOneMonth(now, now.getDate()),
+      })
+      .where(
+        and(
+          eq(subscriptions.id, sub.id),
+          eq(subscriptions.nextBillingAt, sub.nextBillingAt),
+        ),
+      )
+      .returning();
+    if (!settled) {
+      throw new ConflictException(
+        'Your billing just changed - refresh to see the latest state.',
+      );
+    }
+    await this.recordClosingCommission(sub, owed, now);
+    // Paying up lifts a pause the unpaid bill caused.
+    await this.liftPause(sub.shopId);
+    this.logger.log(
+      `Shop ${shopId} settled ${owed.total / 100} BDT of outstanding commission`,
+    );
+    return this.toResponse(settled);
   }
 
   /**
@@ -1059,25 +1165,21 @@ export class SubscriptionsService implements OnModuleInit, OnModuleDestroy {
     return this.openForNewShop(shop.ownerId, shopId);
   }
 
-  /** Free-trial usage for one shop (products used, orders vs cap). */
+  /**
+   * Free-trial usage for one shop: orders against the cap. The catalog is not
+   * part of it - listing products is free and unlimited on every track, so
+   * orders are the only thing the trial meters.
+   */
   private async freeTierUsage(shopId: string): Promise<FreeTierUsageResponse> {
-    const [[{ placed }], [{ n }]] = await Promise.all([
-      this.db
-        .select({
-          placed: sql<string>`count(*) filter (where ${orders.status} <> 'Cancelled')`,
-        })
-        .from(orders)
-        .where(eq(orders.shopId, shopId)),
-      this.db
-        .select({ n: count() })
-        .from(products)
-        .where(eq(products.shopId, shopId)),
-    ]);
+    const [{ placed }] = await this.db
+      .select({
+        placed: sql<string>`count(*) filter (where ${orders.status} <> 'Cancelled')`,
+      })
+      .from(orders)
+      .where(eq(orders.shopId, shopId));
     return {
       ordersUsed: Number(placed),
       ordersCap: FREE_ORDER_CAP,
-      productsUsed: Number(n),
-      maxProducts: FREE_MAX_PRODUCTS,
     };
   }
 

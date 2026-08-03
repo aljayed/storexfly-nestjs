@@ -127,8 +127,9 @@ export const paymentStatusEnum = pgEnum('payment_status', [
   'Pending',
 ]);
 
-// Shop pricing tier. 'free' = no subscription: 1 product, 10 lifetime orders,
-// deactivated at the cap until upgraded. 'paid' = the monthly fee.
+// Shop pricing tier. 'free' = nothing bought yet: a full catalog and 10
+// lifetime orders, deactivated at the order cap until the shop buys credit or
+// verifies. 'paid' = it has done one of the two.
 export const shopPlanEnum = pgEnum('shop_plan', ['free', 'paid']);
 
 // Which payment gateway (if any) collects a checkout method's money. 'none'

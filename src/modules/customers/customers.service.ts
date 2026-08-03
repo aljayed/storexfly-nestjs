@@ -5,6 +5,7 @@ import {
   countDistinct,
   desc,
   eq,
+  gt,
   gte,
   ilike,
   inArray,
@@ -18,6 +19,14 @@ import {
 } from 'drizzle-orm';
 import { centsToDollars } from '../../common/utils/money.util';
 import { productLines } from '../../common/utils/order-line.util';
+import {
+  buildBuckets,
+  isoDate,
+  pctChange,
+  pctOf,
+  resolveWindow,
+  startOfDay,
+} from '../../common/utils/report-window.util';
 import { DRIZZLE } from '../../database/database.constants';
 import type { DbExecutor, DrizzleDB } from '../../database/drizzle.types';
 import { customers, orders, type CustomerRow } from '../../database/schema';
@@ -282,27 +291,39 @@ export class CustomersService {
     };
   }
 
-  /** Decision-oriented repeat-buyer report. A repeat buyer has at least two
-   * non-cancelled orders inside the selected window; the comparison uses the
-   * immediately preceding window of the same length. */
-  async repeatAnalytics(shopId: string, days: number) {
-    const end = new Date();
-    const start = new Date(end.getTime() - days * 86_400_000);
-    const previousStart = new Date(start.getTime() - days * 86_400_000);
+  /**
+   * Decision-oriented repeat-buyer report for a [from, to] window (the same
+   * window contract every other report uses - see `resolveWindow`). A repeat
+   * buyer has at least two live orders inside the window; the comparison uses
+   * the immediately preceding window of the same length.
+   *
+   * `Pending` orders are excluded alongside cancelled ones: a gateway payment
+   * still in flight is not a purchase, and counting it would let an abandoned
+   * checkout promote a first-time buyer to "repeat".
+   *
+   * Product performance is *not* computed here - it belongs to the insights
+   * report, which measures the same catalogue on more axes.
+   */
+  async repeatAnalytics(shopId: string, fromIso?: string, toIso?: string) {
+    const win = resolveWindow(fromIso, toIso, (now) => {
+      const d = startOfDay(now);
+      d.setDate(d.getDate() - 29);
+      return d;
+    });
     const rows = await this.db.query.orders.findMany({
       where: and(
         eq(orders.shopId, shopId),
         isNotNull(orders.customerId),
         ne(orders.status, 'Cancelled'),
-        gte(orders.placedAt, previousStart),
-        lt(orders.placedAt, end),
+        ne(orders.pay, 'Pending'),
+        gte(orders.placedAt, win.prevFrom),
+        lt(orders.placedAt, win.end),
       ),
       columns: { customerId: true, totalCents: true, placedAt: true },
-      with: { items: { columns: { productId: true, name: true, qty: true, unitPriceCents: true } } },
       orderBy: [desc(orders.placedAt)],
     });
-    const current = rows.filter((o) => o.placedAt >= start);
-    const previous = rows.filter((o) => o.placedAt < start);
+    const current = rows.filter((o) => o.placedAt >= win.from);
+    const previous = rows.filter((o) => o.placedAt < win.from);
 
     type BuyerAcc = { orders: number; revenueCents: number; dates: Date[] };
     const group = (source: typeof rows) => {
@@ -315,28 +336,39 @@ export class CustomersService {
         acc.dates.push(o.placedAt);
         buyers.set(o.customerId, acc);
       }
-      const repeat = [...buyers.values()].filter((b) => b.orders >= 2);
+      const repeat = [...buyers].filter(([, b]) => b.orders >= 2);
       const revenueCents = source.reduce((n, o) => n + o.totalCents, 0);
-      const repeatRevenueCents = repeat.reduce((n, b) => n + b.revenueCents, 0);
+      const repeatRevenueCents = repeat.reduce((n, [, b]) => n + b.revenueCents, 0);
       return { buyers, repeat, revenueCents, repeatRevenueCents };
     };
     const cur = group(current);
     const prev = group(previous);
-    const pct = (a: number, b: number) => b ? Math.round(((a - b) / b) * 1000) / 10 : a ? 100 : 0;
-    const repeatOrders = cur.repeat.reduce((n, b) => n + b.orders, 0);
+    const repeatOrders = cur.repeat.reduce((n, [, b]) => n + b.orders, 0);
     const gaps: number[] = [];
-    for (const b of cur.repeat) {
+    for (const [, b] of cur.repeat) {
       const dates = [...b.dates].sort((a, z) => a.getTime() - z.getTime());
       for (let i = 1; i < dates.length; i++) gaps.push((dates[i].getTime() - dates[i - 1].getTime()) / 86_400_000);
     }
+    const averageDaysBetween = gaps.length
+      ? Math.round(gaps.reduce((a, b) => a + b, 0) / gaps.length)
+      : 0;
+
+    // How deep the repeat habit runs. Counted over *every* repeat buyer, not
+    // just the ones that fit on the leaderboard below.
+    const depth = (min: number, max: number) =>
+      cur.repeat.filter(([, b]) => b.orders >= min && b.orders <= max).length;
+    const frequencyBands = [
+      { key: 'twice', count: depth(2, 2) },
+      { key: 'threeFour', count: depth(3, 4) },
+      { key: 'fivePlus', count: depth(5, Infinity) },
+    ];
 
     const ids = [...cur.buyers.keys()];
     const customerRows = ids.length
       ? await this.db.query.customers.findMany({ where: inArray(customers.id, ids) })
       : [];
     const byId = new Map(customerRows.map((c) => [c.id, c]));
-    const topCustomers = [...cur.buyers]
-      .filter(([, b]) => b.orders >= 2)
+    const topCustomers = [...cur.repeat]
       .sort((a, b) => b[1].revenueCents - a[1].revenueCents)
       .slice(0, 50)
       .map(([id, b]) => ({
@@ -348,82 +380,116 @@ export class CustomersService {
       }))
       .filter((r) => r.customer);
 
-    const bucketCount = days <= 7 ? 7 : days <= 30 ? 10 : days <= 180 ? 6 : 12;
-    const bucketMs = (days * 86_400_000) / bucketCount;
-    const trend = Array.from({ length: bucketCount }, (_, i) => {
-      const from = new Date(start.getTime() + i * bucketMs);
-      const to = new Date(start.getTime() + (i + 1) * bucketMs);
-      const bucket = group(current.filter((o) => o.placedAt >= from && o.placedAt < to));
+    // Trend buckets come from the shared series builder, so a bar covers the
+    // period its label names instead of a fraction the seller has to guess at.
+    const buckets = buildBuckets(win);
+    const trend = buckets.map((bucket) => {
+      const inBucket = current.filter(
+        (o) => o.placedAt >= bucket.from && o.placedAt < bucket.to,
+      );
+      const b = group(inBucket);
       return {
-        from: from.toISOString(), to: to.toISOString(),
-        buyers: bucket.buyers.size, repeatBuyers: bucket.repeat.length,
-        orders: current.filter((o) => o.placedAt >= from && o.placedAt < to).length,
-        revenue: centsToDollars(bucket.revenueCents),
+        label: bucket.label,
+        from: bucket.from.toISOString(),
+        to: bucket.to.toISOString(),
+        buyers: b.buyers.size,
+        repeatBuyers: b.repeat.length,
+        orders: inBucket.length,
+        revenue: centsToDollars(b.revenueCents),
       };
     });
 
-    const newBuyers = customerRows.filter((c) => c.firstOrderAt && c.firstOrderAt >= start).length;
-
-    // Product ranking deliberately measures both volume and repeat pull. A
-    // product with many units sold once is different from one that brings the
-    // same customers back across multiple orders.
-    type ProductAcc = {
-      name: string; units: number; revenueCents: number; orders: Set<string>;
-      buyerOrders: Map<string, Set<string>>; lastOrdered: Date;
-    };
-    const productMap = new Map<string, ProductAcc>();
-    current.forEach((o, orderIndex) => {
-      if (!o.customerId) return;
-      for (const item of o.items) {
-        const orderKey = `${orderIndex}`;
-        const key = item.productId ?? `name:${item.name.trim().toLocaleLowerCase()}`;
-        const p = productMap.get(key) ?? {
-          name: item.name, units: 0, revenueCents: 0, orders: new Set<string>(),
-          buyerOrders: new Map<string, Set<string>>(), lastOrdered: o.placedAt,
-        };
-        p.units += item.qty;
-        p.revenueCents += item.qty * item.unitPriceCents;
-        p.orders.add(orderKey);
-        const buyerOrders = p.buyerOrders.get(o.customerId) ?? new Set<string>();
-        buyerOrders.add(orderKey);
-        p.buyerOrders.set(o.customerId, buyerOrders);
-        if (o.placedAt > p.lastOrdered) p.lastOrdered = o.placedAt;
-        productMap.set(key, p);
-      }
-    });
-    const topProducts = [...productMap.values()].map((p) => {
-      const repeatBuyers = [...p.buyerOrders.values()].filter((buyerOrders) => buyerOrders.size >= 2).length;
-      const buyers = p.buyerOrders.size;
-      return {
-        name: p.name,
-        units: p.units, orders: p.orders.size, buyers, repeatBuyers,
-        repeatRate: buyers ? Math.round((repeatBuyers / buyers) * 1000) / 10 : 0,
-        revenue: centsToDollars(p.revenueCents),
-        averageUnitsPerOrder: p.orders.size ? Math.round((p.units / p.orders.size) * 10) / 10 : 0,
-        lastOrdered: p.lastOrdered.toISOString(),
-      };
-    }).sort((a, b) => b.repeatBuyers - a.repeatBuyers || b.orders - a.orders || b.units - a.units);
+    const newBuyers = customerRows.filter(
+      (c) => c.firstOrderAt && c.firstOrderAt >= win.from,
+    ).length;
 
     return {
-      days, start: start.toISOString(), end: end.toISOString(),
+      start: isoDate(win.from),
+      end: isoDate(win.toInclusive),
+      days: win.spanDays,
+      granularity: win.granularity,
       metrics: {
         buyers: cur.buyers.size,
         repeatBuyers: cur.repeat.length,
-        repeatRate: cur.buyers.size ? Math.round((cur.repeat.length / cur.buyers.size) * 1000) / 10 : 0,
+        repeatRate: pctOf(cur.repeat.length, cur.buyers.size),
         repeatRevenue: centsToDollars(cur.repeatRevenueCents),
-        repeatRevenueShare: cur.revenueCents ? Math.round((cur.repeatRevenueCents / cur.revenueCents) * 1000) / 10 : 0,
+        repeatRevenueShare: pctOf(cur.repeatRevenueCents, cur.revenueCents),
         repeatOrders,
-        orderFrequency: cur.repeat.length ? Math.round((repeatOrders / cur.repeat.length) * 10) / 10 : 0,
-        averageRepeatOrder: repeatOrders ? centsToDollars(Math.round(cur.repeatRevenueCents / repeatOrders)) : 0,
-        averageDaysBetween: gaps.length ? Math.round(gaps.reduce((a, b) => a + b, 0) / gaps.length) : 0,
+        orderFrequency: cur.repeat.length
+          ? Math.round((repeatOrders / cur.repeat.length) * 10) / 10
+          : 0,
+        averageRepeatOrder: repeatOrders
+          ? centsToDollars(Math.round(cur.repeatRevenueCents / repeatOrders))
+          : 0,
+        averageDaysBetween,
         newBuyers,
       },
       changes: {
-        repeatBuyers: pct(cur.repeat.length, prev.repeat.length),
-        repeatRate: pct(cur.buyers.size ? cur.repeat.length / cur.buyers.size : 0, prev.buyers.size ? prev.repeat.length / prev.buyers.size : 0),
-        repeatRevenue: pct(cur.repeatRevenueCents, prev.repeatRevenueCents),
+        repeatBuyers: pctChange(cur.repeat.length, prev.repeat.length),
+        // A rate moves in percentage *points* - expressing it as a percentage
+        // of a percentage reads as a much bigger swing than it is.
+        repeatRate:
+          Math.round(
+            (pctOf(cur.repeat.length, cur.buyers.size) -
+              pctOf(prev.repeat.length, prev.buyers.size)) *
+              10,
+          ) / 10,
+        repeatRevenue: pctChange(cur.repeatRevenueCents, prev.repeatRevenueCents),
       },
-      trend, topCustomers, topProducts,
+      frequencyBands,
+      winBack: await this.winBackCandidates(shopId, averageDaysBetween),
+      trend,
+      topCustomers,
+    };
+  }
+
+  /**
+   * Repeat buyers who have gone quiet: their last order is further back than
+   * the shop's own reorder rhythm, so they are overdue rather than merely
+   * idle. `cooling` is still worth a nudge; `lapsed` needs a real offer.
+   * Falls back to a 30-day rhythm before there is enough history to measure.
+   */
+  private async winBackCandidates(shopId: string, averageGapDays: number) {
+    // Floored at a week: a burst of orders in one afternoon can drag the
+    // measured rhythm down to a day or two, and nobody who bought on Tuesday
+    // has "gone quiet" by Thursday.
+    const gapDays = Math.max(7, averageGapDays || 30);
+    const rows = await this.db
+      .select({
+        lastOrderAt: customers.lastOrderAt,
+        spentCents: customers.spentCents,
+      })
+      .from(customers)
+      .where(
+        and(
+          eq(customers.shopId, shopId),
+          gt(customers.ordersCount, 1),
+          isNotNull(customers.lastOrderAt),
+        ),
+      );
+
+    const now = Date.now();
+    let active = 0;
+    let cooling = 0;
+    let lapsed = 0;
+    let lapsedValueCents = 0;
+    for (const c of rows) {
+      const since = (now - c.lastOrderAt!.getTime()) / 86_400_000;
+      if (since <= gapDays) active += 1;
+      else if (since <= gapDays * 2) cooling += 1;
+      else {
+        lapsed += 1;
+        lapsedValueCents += c.spentCents;
+      }
+    }
+    return {
+      gapDays,
+      active,
+      cooling,
+      lapsed,
+      // What has already walked out of the door - lifetime spend of the
+      // buyers who have stopped coming back.
+      lapsedValue: centsToDollars(lapsedValueCents),
     };
   }
 

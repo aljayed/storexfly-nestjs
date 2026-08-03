@@ -77,9 +77,9 @@ export const shops = pgTable(
     // and checkout endpoints all refuse to serve the shop. Forced off when
     // the platform subscription is cancelled.
     live: boolean('live').notNull().default(true),
-    // Pricing tier. Free shops carry hard limits (1 product, 10 lifetime
-    // orders) and are deactivated at the order cap until they subscribe.
-    // Existing shops predate the free tier and stay 'paid'.
+    // Pricing tier. Free shops list as much as they like but are capped at 10
+    // lifetime orders, and are deactivated at that cap until they buy credit
+    // or verify. Existing shops predate the free tier and stay 'paid'.
     plan: shopPlanEnum('plan').notNull().default('paid'),
     // Bank/wallet account monthly settlements are transferred to.
     payoutBank: jsonb('payout_bank').$type<PayoutBank>(),

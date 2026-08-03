@@ -1,5 +1,5 @@
-import { ApiProperty } from '@nestjs/swagger';
-import { IsString, Length } from 'class-validator';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { IsBoolean, IsOptional, IsString, Length } from 'class-validator';
 
 export class DeleteShopDto {
   @ApiProperty({
@@ -9,4 +9,13 @@ export class DeleteShopDto {
   @IsString()
   @Length(6, 6)
   code!: string;
+
+  @ApiPropertyOptional({
+    example: true,
+    description:
+      'The seller has seen the unused sales credit this shop still holds and accepts that deleting it forfeits that credit. Required when the balance is above zero.',
+  })
+  @IsOptional()
+  @IsBoolean()
+  creditAcknowledged?: boolean;
 }

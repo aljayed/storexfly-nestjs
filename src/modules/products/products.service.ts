@@ -5,8 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { randomUUID } from 'crypto';
-import { and, asc, count, desc, eq } from 'drizzle-orm';
-import { FREE_MAX_PRODUCTS } from '../../common/constants/billing';
+import { and, asc, desc, eq } from 'drizzle-orm';
 import { dollarsToCents } from '../../common/utils/money.util';
 import { handleize } from '../../common/utils/slug.util';
 import { DRIZZLE } from '../../database/database.constants';
@@ -175,30 +174,19 @@ export class ProductsService {
     shopId: string,
     dto: CreateProductDto,
   ): Promise<ProductResponse> {
-    const shop = await this.shops.requireById(shopId);
-    // Free-plan shops carry a hard catalog limit until they subscribe.
-    if (shop.plan === 'free') {
-      const [{ n }] = await this.db
-        .select({ n: count() })
-        .from(products)
-        .where(eq(products.shopId, shopId));
-      if (Number(n) >= FREE_MAX_PRODUCTS) {
-        throw new ForbiddenException(
-          `The free plan allows ${FREE_MAX_PRODUCTS} product - subscribe to add more.`,
-        );
-      }
-    } else {
-      // A cancelled subscription freezes the catalog: the existing items are
-      // kept, but nothing new can be added until the seller resumes.
-      const sub = await this.db.query.subscriptions.findFirst({
-        where: eq(subscriptions.shopId, shopId),
-        columns: { status: true },
-      });
-      if (sub?.status === 'cancelled') {
-        throw new ForbiddenException(
-          'Your subscription is cancelled - resume it to add new products.',
-        );
-      }
+    await this.shops.requireById(shopId);
+    // The catalog itself is never capped - a shop pays for the selling it
+    // does, not for the listings it keeps. A cancelled subscription still
+    // freezes it: the existing items are kept, but nothing new can be added
+    // until the seller resumes.
+    const sub = await this.db.query.subscriptions.findFirst({
+      where: eq(subscriptions.shopId, shopId),
+      columns: { status: true },
+    });
+    if (sub?.status === 'cancelled') {
+      throw new ForbiddenException(
+        'Your subscription is cancelled - resume it to add new products.',
+      );
     }
     const slug = await this.uniqueSlug(shopId, dto.name);
     // Showcase items can't be ordered online, so stock is meaningless for

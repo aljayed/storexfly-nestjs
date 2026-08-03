@@ -81,6 +81,17 @@ export class ShopsController {
     return this.shops.listForOwner(user.id);
   }
 
+  // Declared before `:handle` so "eligibility" never resolves as a shop.
+  @ApiBearerAuth()
+  @Get('eligibility')
+  @ApiOperation({
+    summary:
+      'Whether the seller may open (another) shop - the first is free, later ones need a credit purchase or a verified licence',
+  })
+  eligibility(@CurrentUser() user: SellerPrincipal) {
+    return this.shops.eligibility(user.id);
+  }
+
   @ApiBearerAuth()
   @Get(':id/kyc')
   @ApiOperation({ summary: 'Read the shop business verification (owner only)' })
@@ -197,7 +208,7 @@ export class ShopsController {
       'Admin (owner): verify the emailed code, cancel billing and delete the shop',
   })
   deleteShop(@Param('shopId') shopId: string, @Body() dto: DeleteShopDto) {
-    return this.shops.deleteWithOtp(shopId, dto.code);
+    return this.shops.deleteWithOtp(shopId, dto.code, !!dto.creditAcknowledged);
   }
 
   @Public()

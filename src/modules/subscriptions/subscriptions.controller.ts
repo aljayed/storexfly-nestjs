@@ -142,6 +142,20 @@ export class SubscriptionsController {
   @UseGuards(AdminJwtAuthGuard, ShopScopeGuard, RolesGuard)
   @RequirePerm('subscription.manage')
   @ApiBearerAuth()
+  @Post('shops/:shopId/subscription/settle-outstanding')
+  @ApiOperation({
+    summary:
+      'Admin: pay all outstanding commission (issued bill + the month so far) - what unblocks deleting the shop',
+  })
+  @ApiOkResponse({ type: SubscriptionResponse })
+  settleOutstanding(@Param('shopId') shopId: string) {
+    return this.subscriptions.settleOutstanding(shopId);
+  }
+
+  @Public()
+  @UseGuards(AdminJwtAuthGuard, ShopScopeGuard, RolesGuard)
+  @RequirePerm('subscription.manage')
+  @ApiBearerAuth()
   @Post('shops/:shopId/subscription/cancel')
   @ApiOperation({ summary: 'Admin: cancel billing (shop goes off)' })
   @ApiOkResponse({ type: SubscriptionResponse })
