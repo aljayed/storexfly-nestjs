@@ -8,6 +8,7 @@ import { ShopScopeGuard } from '../../common/guards/shop-scope.guard';
 import { CustomersService } from './customers.service';
 import { CustomerQueryDto } from './dto/customer-query.dto';
 import { MonthlyActivityQueryDto } from './dto/monthly-activity-query.dto';
+import { RepeatAnalyticsQueryDto } from './dto/repeat-analytics-query.dto';
 
 @ApiTags('customers')
 @Controller('shops/:shopId/customers')
@@ -35,6 +36,16 @@ export class CustomersController {
     @Query() query: MonthlyActivityQueryDto,
   ) {
     return this.customers.monthlyActivity(shopId, query);
+  }
+
+  @Get('analytics/repeat')
+  @RequirePerm('reports.view')
+  @ApiOperation({ summary: 'Admin: repeat-buyer report for a selected date window' })
+  repeatAnalytics(
+    @Param('shopId') shopId: string,
+    @Query() query: RepeatAnalyticsQueryDto,
+  ) {
+    return this.customers.repeatAnalytics(shopId, query.days);
   }
 
   @Get(':id')
