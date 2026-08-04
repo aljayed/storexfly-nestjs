@@ -12,7 +12,7 @@
  * mobile-banking and card methods on a fresh database.
  */
 export const MBANK_FEE_BP = 300; // 3% maintenance charge (bKash, Nagad, Rocket)
-export const CARD_FEE_BP = 450; // 4.5% SSLCommerz processing fee
+export const CARD_FEE_BP = 350; // 3.5% SSLCommerz processing fee
 
 export const SETTLEMENT_WINDOW_START_DAY = 15;
 export const SETTLEMENT_WINDOW_END_DAY = 21;

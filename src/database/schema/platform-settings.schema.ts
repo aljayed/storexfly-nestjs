@@ -41,7 +41,7 @@ export const platformSettings = pgTable('platform_settings', {
   // on `payment_methods`; these only seed that table's first migration and
   // back old paid-settlement snapshots.
   mbankFeeBp: integer('mbank_fee_bp').notNull().default(300),
-  cardFeeBp: integer('card_fee_bp').notNull().default(450),
+  cardFeeBp: integer('card_fee_bp').notNull().default(350),
   // Operator-editable copy of the info banner on the seller settlements page.
   // null/empty = the app renders its built-in default explanation.
   settlementBanner: text('settlement_banner'),

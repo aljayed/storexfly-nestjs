@@ -421,6 +421,13 @@
       "when": 1791072000000,
       "tag": "0062_due_billable_sales",
       "breakpoints": true
+    },
+    {
+      "idx": 63,
+      "version": "7",
+      "when": 1791158400000,
+      "tag": "0063_card_fee_default_350",
+      "breakpoints": true
     }
   ]
 }
