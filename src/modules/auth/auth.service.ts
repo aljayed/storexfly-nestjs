@@ -20,7 +20,6 @@ import { SessionScopeService } from './session-scope.service';
 import { TokenService } from './token.service';
 
 const BCRYPT_ROUNDS = 12;
-const REGISTER_OTP_SCOPE = 'seller-register';
 /** OTP scopes for proving contact details on an *existing* account. */
 const VERIFY_PHONE_SCOPE = 'account-phone';
 const VERIFY_EMAIL_SCOPE = 'account-email';
@@ -30,15 +29,15 @@ export interface AuthResult {
   token: string;
 }
 
-interface PendingRegistration {
-  name: string;
-  email: string;
-  passwordHash: string;
-}
-
 /**
- * Seller/buyer authentication: email register/login, Google upsert, and the
- * phone OTP flow. Issues seller-scoped JWTs via {@link TokenService}.
+ * Seller/buyer authentication: email register/login and the Google upsert.
+ * Issues seller-scoped JWTs via {@link TokenService}.
+ *
+ * Signing up proves nothing - no code is emailed or texted, and the account
+ * starts with both contact details unverified, which {@link
+ * SessionScopeService} reads as a `storefront` session. Proving an email and a
+ * phone number is asked for once, in the create-shop wizard, and that is what
+ * lifts the session to a full `account` one.
  */
 @Injectable()
 export class AuthService {
@@ -51,42 +50,21 @@ export class AuthService {
     private readonly sessionScope: SessionScopeService,
   ) {}
 
-  /** Step 1: validate + stash the pending account, email a verification code. */
-  async registerStart(dto: RegisterDto): Promise<{ ok: true }> {
+  /** Creates the account and signs it straight in - no code to type first. */
+  async register(dto: RegisterDto): Promise<AuthResult> {
     const existing = await this.users.findByEmail(dto.email);
     if (existing) {
       throw new ConflictException('An account with this email already exists');
     }
     await this.blockedWords.assertClean(dto.name);
-    const passwordHash = await bcrypt.hash(dto.password, BCRYPT_ROUNDS);
-    await this.emailOtp.start<PendingRegistration>(
-      REGISTER_OTP_SCOPE,
-      dto.email,
-      { name: dto.name, email: dto.email, passwordHash },
-    );
-    return { ok: true };
-  }
-
-  /** Step 2: verify the code and actually create the account. */
-  async registerVerify(email: string, code: string): Promise<AuthResult> {
-    const pending = this.emailOtp.verify<PendingRegistration>(
-      REGISTER_OTP_SCOPE,
-      email,
-      code,
-    );
-    if (!pending) {
-      throw new UnauthorizedException('Invalid or expired code');
-    }
-    const existing = await this.users.findByEmail(pending.email);
-    if (existing) {
-      throw new ConflictException('An account with this email already exists');
-    }
     const user = await this.users.create({
-      name: pending.name,
-      email: pending.email,
-      passwordHash: pending.passwordHash,
+      name: dto.name,
+      email: dto.email,
+      passwordHash: await bcrypt.hash(dto.password, BCRYPT_ROUNDS),
       via: 'email',
-      emailVerified: true,
+      // Typing an address doesn't prove it. The create-shop wizard asks for
+      // the proof, for both the email and a phone number, in one place.
+      emailVerified: false,
     });
     return this.toAuthResult(user);
   }
@@ -108,40 +86,15 @@ export class AuthService {
     return this.toAuthResult(user);
   }
 
-  async startPhone(phone: string): Promise<{ ok: true }> {
-    await this.otp.issue(phone);
-    return { ok: true };
-  }
-
-  async verifyPhone(phone: string, code: string): Promise<AuthResult> {
-    if (!this.otp.verify(phone, code)) {
-      throw new UnauthorizedException('Invalid or expired code');
-    }
-    let user = await this.users.findByPhone(phone);
-    if (!user) {
-      user = await this.users.create({
-        name: phone,
-        phone,
-        via: 'phone',
-        // The OTP just proved this number - record it, or the account would
-        // look unverified to the shop-creation gate and to session scoping
-        // despite having logged in with the number itself.
-        phoneVerified: true,
-      });
-    } else if (!user.phoneVerified) {
-      user = await this.users.setVerifiedPhone(user.id, phone);
-    }
-    return this.toAuthResult(user);
-  }
-
   // ── Contact verification (prerequisite for creating a shop) ────
   //
   // A shop may only be opened by an account with one verified email *and*
-  // one verified phone number, both unique to that account. Registration
-  // already proves the email; the phone is proved here. The SMS side is a
-  // stub - {@link OtpService} has no gateway yet, so while `smsEnabled` is
-  // false the issued code comes back in the response and the console shows
-  // it. Nothing else about the flow changes when real SMS lands.
+  // one verified phone number, both unique to that account. Signing up proves
+  // neither, so both are proved here - the only place in the product that ever
+  // asks for a code. The SMS side is a stub - {@link OtpService} has no gateway
+  // yet, so while `smsEnabled` is false the issued code comes back in the
+  // response and the wizard shows it. Nothing else about the flow changes when
+  // real SMS lands.
 
   async contactStatus(userId: string): Promise<ContactStatus> {
     const user = await this.requireUser(userId);

@@ -10,15 +10,17 @@ interface PendingEntry {
 }
 
 /**
- * Email OTP for blocking signup verification (seller + buyer). Like
- * {@link OtpService} (phone) this is an in-memory reference store - swap for
- * Redis in production so codes survive a restart and scale across instances.
+ * Email OTP for proving an address someone has claimed - a seller's contact
+ * details before their first shop, a shopper's profile email, a shop deletion.
+ * Signing up never goes through here: an account is created and signed in on
+ * the spot, and proof is asked for once, later, where it actually matters.
  *
- * The pending signup payload travels alongside the code: nothing is written to
- * the database until the code is verified, so there's no such thing as an
- * unverified account row sitting around. `scope` namespaces the store per
- * flow (e.g. 'seller-register' vs 'buyer-signup') so the same email can't
- * collide across flows.
+ * Like {@link OtpService} (phone) this is an in-memory reference store - swap
+ * for Redis in production so codes survive a restart and scale across
+ * instances. The caller's payload travels alongside the code and comes back on
+ * a successful verify, which is what binds a code to the account that asked
+ * for it. `scope` namespaces the store per flow (e.g. 'account-email' vs
+ * 'buyer-email-verify') so the same address can't collide across flows.
  */
 @Injectable()
 export class EmailOtpService {

@@ -29,10 +29,8 @@ import type {
 import type { UserRow } from '../../database/schema';
 import { UserResponse } from '../users/dto/user.response';
 import { AuthService } from './auth.service';
-import { EmailOtpVerifyDto } from './dto/email-otp-verify.dto';
 import { LoginDto } from './dto/login.dto';
 import { ForgotPasswordDto, ResetPasswordDto } from './dto/password-reset.dto';
-import { PhoneStartDto, PhoneVerifyDto } from './dto/phone.dto';
 import { RegisterDto } from './dto/register.dto';
 import {
   VerifyEmailConfirmDto,
@@ -62,20 +60,9 @@ export class AuthController {
   @Throttle({ default: { limit: 5, ttl: 60_000 } })
   @Post('register')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({
-    summary: 'Start seller registration (email): sends a verification code',
-  })
-  registerStart(@Body() dto: RegisterDto) {
-    return this.auth.registerStart(dto);
-  }
-
-  @Public()
-  @Throttle({ default: { limit: 10, ttl: 60_000 } })
-  @Post('register/verify')
-  @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Verify the code and complete seller registration' })
-  registerVerify(@Body() dto: EmailOtpVerifyDto) {
-    return this.auth.registerVerify(dto.email, dto.code);
+  @ApiOperation({ summary: 'Create a seller account (email) and sign it in' })
+  register(@Body() dto: RegisterDto) {
+    return this.auth.register(dto);
   }
 
   @Public()
@@ -85,24 +72,6 @@ export class AuthController {
   @ApiOperation({ summary: 'Sign in a seller account (email)' })
   login(@Body() dto: LoginDto) {
     return this.auth.login(dto);
-  }
-
-  @Public()
-  @Throttle({ default: { limit: 5, ttl: 60_000 } })
-  @Post('phone/start')
-  @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Send a phone OTP' })
-  startPhone(@Body() dto: PhoneStartDto) {
-    return this.auth.startPhone(dto.phone);
-  }
-
-  @Public()
-  @Throttle({ default: { limit: 10, ttl: 60_000 } })
-  @Post('phone/verify')
-  @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Verify a phone OTP and sign in' })
-  verifyPhone(@Body() dto: PhoneVerifyDto) {
-    return this.auth.verifyPhone(dto.phone, dto.code);
   }
 
   @Public()
