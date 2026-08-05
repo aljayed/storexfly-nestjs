@@ -1,5 +1,6 @@
 import {
   ConflictException,
+  HttpStatus,
   Injectable,
   UnauthorizedException,
 } from '@nestjs/common';
@@ -69,10 +70,34 @@ export class AuthService {
     return this.toAuthResult(user);
   }
 
+  /**
+   * The sign-in form offers to create the account on the spot when the email
+   * is unknown, so this has to answer *why* it refused. Saying "no account
+   * uses this email" does confirm which addresses are registered - but
+   * `register` already answers that with its 409, so the pair of requests
+   * reveals nothing a single one didn't. A wrong password stays deliberately
+   * vague: that is the answer worth protecting.
+   */
   async login(dto: LoginDto): Promise<AuthResult> {
     const user = await this.users.findByEmail(dto.email);
-    if (!user || !user.passwordHash) {
-      throw new UnauthorizedException('Invalid email or password');
+    if (!user) {
+      throw new UnauthorizedException({
+        statusCode: HttpStatus.UNAUTHORIZED,
+        error: 'AccountNotFound',
+        message: 'No account uses this email address.',
+      });
+    }
+    if (!user.passwordHash) {
+      // An account *does* exist - it was made through Google (or the retired
+      // phone login), so offering to create one would only 409, and there is
+      // no password to reset either: PasswordResetService skips rows with no
+      // hash. Point at the door that actually opens.
+      throw new UnauthorizedException({
+        statusCode: HttpStatus.UNAUTHORIZED,
+        error: 'PasswordNotSet',
+        message:
+          'This account has no password - use Continue with Google to sign in.',
+      });
     }
     const ok = await bcrypt.compare(dto.password, user.passwordHash);
     if (!ok) {
