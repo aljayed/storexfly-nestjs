@@ -21,6 +21,7 @@ import { centsToDollars } from '../../common/utils/money.util';
 import { productLines } from '../../common/utils/order-line.util';
 import { BlockedWordsService } from '../blocked-words/blocked-words.service';
 import { EmailOtpService } from '../auth/email-otp.service';
+import { SessionScopeService } from '../auth/session-scope.service';
 import { TokenService } from '../auth/token.service';
 import {
   BuyerAuthResponse,
@@ -34,20 +35,10 @@ import type {
   UpdateBuyerProfileDto,
 } from './dto/buyer-overview.dto';
 
-const BCRYPT_ROUNDS = 10;
-const SIGNUP_OTP_SCOPE = 'buyer-signup';
+// Same cost as the seller sign-up path (auth.service): both write password
+// hashes to the one `users` table, so they must not disagree on strength.
+const BCRYPT_ROUNDS = 12;
 const EMAIL_VERIFY_OTP_SCOPE = 'buyer-email-verify';
-
-interface PendingBuyerSignup {
-  name: string;
-  email: string;
-  passwordHash: string;
-  phone: string | null;
-  address: string | null;
-  city: string | null;
-  pincode: string | null;
-  geo: NewUserRow['geo'];
-}
 
 /** Reduce any BD phone format to the bare 10-digit national number, so numbers
  *  captured as "+8801712…", "01712…" or "1712…" all compare equal. */
@@ -72,6 +63,7 @@ export class BuyerService {
     private readonly tokens: TokenService,
     private readonly emailOtp: EmailOtpService,
     private readonly blockedWords: BlockedWordsService,
+    private readonly sessionScope: SessionScopeService,
   ) {}
 
   async findById(id: string): Promise<UserRow | undefined> {
@@ -118,10 +110,12 @@ export class BuyerService {
   }
 
   /**
-   * Instant, unverified account creation - used only by the "create my
-   * account" checkbox at checkout, after the order has already succeeded.
-   * Deliberately not OTP-gated: it's an optional bonus on top of a completed
-   * purchase, not a security boundary. Creates a normal `users` account.
+   * Instant account creation for shoppers - the "create my account" tick at
+   * checkout and the storefront sign-up modal. Deliberately not OTP-gated: a
+   * shopper should never be made to leave for their inbox mid-purchase, and
+   * the account is not a security boundary on its own. What keeps that safe is
+   * the scope of the session it mints - nothing is verified, so `issue()`
+   * hands back a `storefront` token that cannot touch the seller-side API.
    */
   async register(dto: BuyerRegisterDto): Promise<BuyerAuthResponse> {
     const phone = dto.phone ? normalizePhone(dto.phone) : null;
@@ -140,57 +134,6 @@ export class BuyerService {
         addressCity: dto.city || null,
         addressPincode: dto.pincode || null,
         geo: dto.geo ?? null,
-      })
-      .returning();
-    return this.issue(row);
-  }
-
-  /**
-   * Step 1 of the explicit "create an account" flow (the auth modal): validate,
-   * stash the pending account, email a verification code. Nothing is written to
-   * the database until the code is verified.
-   */
-  async signupStart(dto: BuyerRegisterDto): Promise<{ ok: true }> {
-    const phone = dto.phone ? normalizePhone(dto.phone) : null;
-    await this.assertAvailable(dto.name, dto.email, phone);
-    const passwordHash = await bcrypt.hash(dto.password, BCRYPT_ROUNDS);
-    await this.emailOtp.start<PendingBuyerSignup>(SIGNUP_OTP_SCOPE, dto.email, {
-      name: dto.name,
-      email: dto.email.trim().toLowerCase(),
-      passwordHash,
-      phone,
-      address: dto.address || null,
-      city: dto.city || null,
-      pincode: dto.pincode || null,
-      geo: dto.geo ?? null,
-    });
-    return { ok: true };
-  }
-
-  /** Step 2: verify the code and actually create the (verified) account. */
-  async signupVerify(email: string, code: string): Promise<BuyerAuthResponse> {
-    const pending = this.emailOtp.verify<PendingBuyerSignup>(
-      SIGNUP_OTP_SCOPE,
-      email,
-      code,
-    );
-    if (!pending) {
-      throw new UnauthorizedException('Invalid or expired code');
-    }
-    await this.assertAvailable(pending.name, pending.email, pending.phone);
-    const [row] = await this.db
-      .insert(users)
-      .values({
-        name: pending.name,
-        email: pending.email,
-        passwordHash: pending.passwordHash,
-        via: 'email',
-        phone: pending.phone,
-        addressLine: pending.address,
-        addressCity: pending.city,
-        addressPincode: pending.pincode,
-        geo: pending.geo,
-        emailVerified: true,
       })
       .returning();
     return this.issue(row);
@@ -448,14 +391,23 @@ export class BuyerService {
     };
   }
 
-  /** Mint the account session token (same token the seller sign-in issues). */
+  /**
+   * Mint the account session token (same token the seller sign-in issues, at
+   * the scope the account has earned). An account created inline at checkout
+   * has verified nothing, so it gets a `storefront` session: enough to shop,
+   * review and chat, refused on the seller-side API until a contact detail is
+   * proved. See {@link SessionScopeService}.
+   */
   private async issue(row: UserRow): Promise<BuyerAuthResponse> {
-    const token = await this.tokens.signSellerToken({
-      sub: row.id,
-      email: row.email ?? undefined,
-      name: row.name,
-      isAdmin: row.isAdmin,
-    });
+    const token = await this.tokens.signSellerToken(
+      {
+        sub: row.id,
+        email: row.email ?? undefined,
+        name: row.name,
+        isAdmin: row.isAdmin,
+      },
+      await this.sessionScope.resolve(row),
+    );
     return BuyerAuthResponse.of(row, token);
   }
 }

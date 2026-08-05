@@ -14,6 +14,7 @@ import {
   ApiTags,
 } from '@nestjs/swagger';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { StorefrontSession } from '../../common/decorators/storefront-session.decorator';
 import type { AccountPrincipal } from '../../common/types/principal';
 import { ReviewResponse } from '../products/dto/product-detail.response';
 import {
@@ -27,6 +28,7 @@ import { ReviewsService } from './reviews.service';
  * JWT guard); the service additionally enforces a verified purchase. Reviews are
  * displayed via the public product-detail endpoint.
  */
+@StorefrontSession()
 @ApiTags('reviews')
 @ApiBearerAuth()
 @Controller('shops/:handle/products/:slug')

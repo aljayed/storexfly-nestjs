@@ -10,6 +10,7 @@ import {
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { StorefrontSession } from '../../common/decorators/storefront-session.decorator';
 import type { AccountPrincipal } from '../../common/types/principal';
 import { BuyerService } from './buyer.service';
 import { UpdateBuyerProfileDto } from './dto/buyer-overview.dto';
@@ -17,6 +18,7 @@ import { VerifyCodeDto } from './dto/verify-code.dto';
 
 /** Account storefront profile - info, order history and reviews. Authed by the
  *  global account JWT guard (the single session). */
+@StorefrontSession()
 @ApiTags('buyer')
 @ApiBearerAuth()
 @Controller('buyer/profile')

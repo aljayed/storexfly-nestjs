@@ -1,11 +1,13 @@
 import { Controller, Get, Post } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { StorefrontSession } from '../../common/decorators/storefront-session.decorator';
 import type { AccountPrincipal } from '../../common/types/principal';
 import { NotificationsService } from './notifications.service';
 
 /** In-app order notifications, shown on the account's storefront profile.
  *  Authed by the global account JWT guard. */
+@StorefrontSession()
 @ApiTags('buyer')
 @ApiBearerAuth()
 @Controller('buyer/notifications')

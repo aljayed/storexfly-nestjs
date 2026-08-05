@@ -16,6 +16,7 @@ import { EmailOtpService } from './email-otp.service';
 import type { LoginDto } from './dto/login.dto';
 import type { RegisterDto } from './dto/register.dto';
 import { OtpService } from './otp.service';
+import { SessionScopeService } from './session-scope.service';
 import { TokenService } from './token.service';
 
 const BCRYPT_ROUNDS = 12;
@@ -47,6 +48,7 @@ export class AuthService {
     private readonly otp: OtpService,
     private readonly emailOtp: EmailOtpService,
     private readonly blockedWords: BlockedWordsService,
+    private readonly sessionScope: SessionScopeService,
   ) {}
 
   /** Step 1: validate + stash the pending account, email a verification code. */
@@ -121,7 +123,13 @@ export class AuthService {
         name: phone,
         phone,
         via: 'phone',
+        // The OTP just proved this number - record it, or the account would
+        // look unverified to the shop-creation gate and to session scoping
+        // despite having logged in with the number itself.
+        phoneVerified: true,
       });
+    } else if (!user.phoneVerified) {
+      user = await this.users.setVerifiedPhone(user.id, phone);
     }
     return this.toAuthResult(user);
   }
@@ -254,12 +262,25 @@ export class AuthService {
   }
 
   private async toAuthResult(user: UserRow): Promise<AuthResult> {
-    const token = await this.tokens.signSellerToken({
-      sub: user.id,
-      email: user.email ?? undefined,
-      name: user.name,
-      isAdmin: user.isAdmin,
-    });
+    const token = await this.tokens.signSellerToken(
+      {
+        sub: user.id,
+        email: user.email ?? undefined,
+        name: user.name,
+        isAdmin: user.isAdmin,
+      },
+      await this.sessionScope.resolve(user),
+    );
     return { user: UserResponse.fromRow(user), token };
+  }
+
+  /**
+   * Re-mint the caller's session at the scope their account now deserves.
+   * Called by the client straight after a contact detail is verified, so
+   * proving an email or phone lifts a checkout-created storefront session to a
+   * full account session without making the shopper sign out and back in.
+   */
+  async refreshSession(userId: string): Promise<AuthResult> {
+    return this.toAuthResult(await this.requireUser(userId));
   }
 }

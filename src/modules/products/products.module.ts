@@ -4,11 +4,12 @@ import { CombosModule } from '../combos/combos.module';
 import { ShopsModule } from '../shops/shops.module';
 import { ProductsController } from './products.controller';
 import { ProductsService } from './products.service';
+import { SeoController } from './seo.controller';
 import { ShareController } from './share.controller';
 
 @Module({
   imports: [ShopsModule, AuthModule, CombosModule],
-  controllers: [ProductsController, ShareController],
+  controllers: [ProductsController, ShareController, SeoController],
   providers: [ProductsService],
   exports: [ProductsService],
 })

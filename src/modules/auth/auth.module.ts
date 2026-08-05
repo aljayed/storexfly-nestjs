@@ -13,6 +13,7 @@ import { AuthService } from './auth.service';
 import { EmailOtpService } from './email-otp.service';
 import { OtpService } from './otp.service';
 import { PasswordResetService } from './password-reset.service';
+import { SessionScopeService } from './session-scope.service';
 import { TokenService } from './token.service';
 import { AdminJwtStrategy } from './strategies/admin-jwt.strategy';
 import { GoogleStrategy } from './strategies/google.strategy';
@@ -38,11 +39,17 @@ import { PlatformJwtStrategy } from './strategies/platform-jwt.strategy';
     OtpService,
     EmailOtpService,
     PasswordResetService,
+    SessionScopeService,
     JwtStrategy,
     AdminJwtStrategy,
     PlatformJwtStrategy,
     GoogleStrategy,
   ],
-  exports: [AdminUsersService, TokenService, EmailOtpService],
+  exports: [
+    AdminUsersService,
+    TokenService,
+    EmailOtpService,
+    SessionScopeService,
+  ],
 })
 export class AuthModule {}

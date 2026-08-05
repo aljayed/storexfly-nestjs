@@ -8,6 +8,7 @@ import {
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { StorefrontSession } from '../../common/decorators/storefront-session.decorator';
 import type { AccountPrincipal } from '../../common/types/principal';
 import { OrdersService } from '../orders/orders.service';
 import { BuyerService } from './buyer.service';
@@ -17,6 +18,7 @@ import { RespondAdjustmentDto } from './dto/respond-adjustment.dto';
 
 /** Storefront order actions for the signed-in account (authed by the global
  *  account JWT guard). Orders match the account by email. */
+@StorefrontSession()
 @ApiTags('buyer')
 @ApiBearerAuth()
 @Controller('buyer/orders')

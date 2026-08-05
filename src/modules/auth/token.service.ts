@@ -1,6 +1,7 @@
 import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService, type JwtSignOptions } from '@nestjs/jwt';
+import type { SessionScope } from '../../common/types/principal';
 import type {
   AdminJwtPayload,
   PlatformJwtPayload,
@@ -22,11 +23,17 @@ export class TokenService {
     private readonly config: ConfigService,
   ) {}
 
+  /**
+   * Mints the account session token. `scp` says how much the session may do -
+   * see {@link SessionScope}; it is always written so a session can never be
+   * silently upgraded by an omitted claim.
+   */
   async signSellerToken(
-    payload: Omit<SellerJwtPayload, 'typ'>,
+    payload: Omit<SellerJwtPayload, 'typ' | 'scp'>,
+    scope: SessionScope = 'account',
   ): Promise<string> {
     return this.jwt.signAsync(
-      { ...payload, typ: 'seller' } satisfies SellerJwtPayload,
+      { ...payload, typ: 'seller', scp: scope } satisfies SellerJwtPayload,
       {
         secret: this.config.getOrThrow<string>('jwt.secret'),
         expiresIn: this.config.getOrThrow<string>('jwt.expiresIn'),

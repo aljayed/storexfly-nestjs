@@ -21,6 +21,7 @@ import { Throttle } from '@nestjs/throttler';
 import type { Response } from 'express';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { Public } from '../../common/decorators/public.decorator';
+import { StorefrontSession } from '../../common/decorators/storefront-session.decorator';
 import type {
   RequestWithPrincipal,
   SellerPrincipal,
@@ -43,6 +44,11 @@ import { GoogleOAuthFailureFilter } from './filters/google-oauth-failure.filter'
 import { GoogleOAuthGuard } from './guards/google-oauth.guard';
 import { PasswordResetService } from './password-reset.service';
 
+// Every route here is the account acting on itself - signing in, proving a
+// contact detail, reading or ending its own session - so a storefront-scoped
+// session is welcome throughout. Proving an email or phone here is also the
+// only way such a session is ever upgraded (see `session/refresh` below).
+@StorefrontSession()
 @ApiTags('auth')
 @Controller('auth')
 export class AuthController {
@@ -216,6 +222,21 @@ export class AuthController {
     @Body() dto: VerifyEmailConfirmDto,
   ) {
     return this.auth.confirmEmailVerification(user.id, dto.email, dto.code);
+  }
+
+  /**
+   * Re-mint the caller's session at the scope their account now deserves. The
+   * client calls it right after verifying an email or phone number, so a
+   * shopper who created their account at checkout and later opens a shop is
+   * upgraded in place instead of being bounced to a sign-out/sign-in.
+   */
+  @ApiBearerAuth()
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  @Post('session/refresh')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Re-issue the account token at its current scope' })
+  refreshSession(@CurrentUser() user: SellerPrincipal) {
+    return this.auth.refreshSession(user.id);
   }
 
   @ApiBearerAuth()

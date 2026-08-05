@@ -2,6 +2,22 @@ import type { Request } from 'express';
 import type { AdminRole } from '../../database/schema/enums';
 
 /**
+ * How much of the platform a session may act on. One `users` row backs both
+ * shopping and selling, but the two front doors do not prove the same things:
+ *
+ *  - `storefront` - minted for an account that has proved nothing (created by
+ *    the "create my account" tick at checkout, no OTP anywhere). Good enough to
+ *    shop, review, chat and manage its own orders; refused on everything that
+ *    runs a business.
+ *  - `account` - minted once the account has a verified email or phone (or
+ *    already owns a shop). The full seller-side surface.
+ *
+ * Tokens issued before scopes existed carry no claim and are read as `account`,
+ * so live sessions keep working.
+ */
+export type SessionScope = 'storefront' | 'account';
+
+/**
  * The authenticated account - the single human identity used for BOTH shopping
  * and selling (buyer and seller were unified into one `users` account). Attached
  * to `req.user` by the JWT strategy. `isAdmin` is the platform-admin flag; owning
@@ -14,6 +30,7 @@ export interface SellerPrincipal {
   email?: string;
   name: string;
   isAdmin: boolean;
+  scope: SessionScope;
 }
 
 /** Alias for the unified account principal - clearer in storefront/buyer code. */

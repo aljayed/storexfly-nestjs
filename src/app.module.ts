@@ -6,6 +6,7 @@ import { configurations } from './config/configuration';
 import { validateEnv } from './config/env.validation';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
+import { SessionScopeGuard } from './common/guards/session-scope.guard';
 import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
 import { DatabaseModule } from './database/database.module';
 import { AuthModule } from './modules/auth/auth.module';
@@ -81,6 +82,10 @@ import { UsersModule } from './modules/users/users.module';
   providers: [
     // Global seller-JWT guard - routes opt out with @Public().
     { provide: APP_GUARD, useClass: JwtAuthGuard },
+    // Runs straight after it, on the principal it just attached: keeps a
+    // storefront-scoped session (an account created inline at checkout) out of
+    // everything not marked @StorefrontSession().
+    { provide: APP_GUARD, useClass: SessionScopeGuard },
     // Rate limiting across the board.
     { provide: APP_GUARD, useClass: ThrottlerGuard },
     { provide: APP_FILTER, useClass: AllExceptionsFilter },

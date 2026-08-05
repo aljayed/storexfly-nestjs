@@ -19,6 +19,7 @@ import { UseGuards } from '@nestjs/common';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { Public } from '../../common/decorators/public.decorator';
 import { RequirePerm, Roles } from '../../common/decorators/roles.decorator';
+import { StorefrontSession } from '../../common/decorators/storefront-session.decorator';
 import { AdminJwtAuthGuard } from '../../common/guards/admin-jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { ShopScopeGuard } from '../../common/guards/shop-scope.guard';
@@ -66,6 +67,10 @@ export class ShopsController {
     return this.shops.discover();
   }
 
+  // Not @StorefrontSession(): opening a shop is the line between shopping and
+  // running a business. The service also demands a verified email *and* phone,
+  // and proving either of those is what upgrades the session in the first
+  // place - so by the time this can succeed, the scope check is already met.
   @ApiBearerAuth()
   @Post()
   @ApiOperation({ summary: 'Create a shop (create-shop wizard submit)' })
@@ -74,6 +79,10 @@ export class ShopsController {
     return this.shops.create(user.id, dto);
   }
 
+  // A read of the caller's own shops, which a shopper session simply has none
+  // of - the home page asks for it on every signed-in visit, so refusing it
+  // would only turn a normal empty list into a 403.
+  @StorefrontSession()
   @ApiBearerAuth()
   @Get('mine')
   @ApiOperation({ summary: "List the signed-in seller's shops" })
@@ -81,7 +90,10 @@ export class ShopsController {
     return this.shops.listForOwner(user.id);
   }
 
+  // Likewise read-only, and it is what tells a shopper what opening a shop
+  // would take - the answer they need *before* they can earn a full session.
   // Declared before `:handle` so "eligibility" never resolves as a shop.
+  @StorefrontSession()
   @ApiBearerAuth()
   @Get('eligibility')
   @ApiOperation({

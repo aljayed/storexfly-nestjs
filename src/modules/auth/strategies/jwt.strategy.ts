@@ -37,6 +37,9 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
       email: user.email ?? undefined,
       name: user.name,
       isAdmin: user.isAdmin,
+      // Tokens minted before session scopes existed carry no claim - read them
+      // as full scope so live sessions are not broken by the rollout.
+      scope: payload.scp ?? 'account',
     };
   }
 }

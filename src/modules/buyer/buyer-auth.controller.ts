@@ -1,11 +1,4 @@
-import {
-  Body,
-  Controller,
-  Get,
-  HttpCode,
-  HttpStatus,
-  Post,
-} from '@nestjs/common';
+import { Body, Controller, Get, Post } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 import {
   ApiBearerAuth,
@@ -14,9 +7,9 @@ import {
   ApiTags,
 } from '@nestjs/swagger';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { StorefrontSession } from '../../common/decorators/storefront-session.decorator';
 import { Public } from '../../common/decorators/public.decorator';
 import type { AccountPrincipal } from '../../common/types/principal';
-import { EmailOtpVerifyDto } from '../auth/dto/email-otp-verify.dto';
 import { BuyerService } from './buyer.service';
 import {
   BuyerAuthResponse,
@@ -25,37 +18,26 @@ import {
 } from './dto/buyer-auth.dto';
 
 /** Buyer (shopper) accounts - register / login / current session. */
+@StorefrontSession()
 @ApiTags('buyer')
 @Controller('buyer/auth')
 export class BuyerAuthController {
   constructor(private readonly buyers: BuyerService) {}
 
+  /**
+   * Shopper sign-up: instant, no verification code. Used both by the "create
+   * my account" tick at checkout and by the storefront sign-up modal - making
+   * a shopper break off to fetch a code from their inbox is the surest way to
+   * lose them. The account is created unverified and the session it gets is
+   * `storefront`-scoped, which is what keeps the low friction safe.
+   */
   @Public()
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @Post('register')
-  @ApiOperation({ summary: 'Buyer: create an account' })
+  @ApiOperation({ summary: 'Buyer: create an account (no verification code)' })
   @ApiOkResponse({ type: BuyerAuthResponse })
   register(@Body() dto: BuyerRegisterDto) {
     return this.buyers.register(dto);
-  }
-
-  @Public()
-  @Throttle({ default: { limit: 5, ttl: 60_000 } })
-  @Post('signup')
-  @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Buyer: start account creation, sends a verification code' })
-  signupStart(@Body() dto: BuyerRegisterDto) {
-    return this.buyers.signupStart(dto);
-  }
-
-  @Public()
-  @Throttle({ default: { limit: 10, ttl: 60_000 } })
-  @Post('signup/verify')
-  @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Buyer: verify the code and complete account creation' })
-  @ApiOkResponse({ type: BuyerAuthResponse })
-  signupVerify(@Body() dto: EmailOtpVerifyDto) {
-    return this.buyers.signupVerify(dto.email, dto.code);
   }
 
   @Public()

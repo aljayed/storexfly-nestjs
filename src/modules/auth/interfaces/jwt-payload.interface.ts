@@ -1,8 +1,11 @@
+import type { SessionScope } from '../../../common/types/principal';
 import type { AdminRole } from '../../../database/schema/enums';
 
 /**
  * Claims carried by the account-session JWT - the single login for shopping and
  * selling. (`typ:'seller'` kept for backward compatibility with live tokens.)
+ * `scp` narrows what the session may do; absent on tokens minted before scopes
+ * existed, which are read as full `account` scope.
  */
 export interface SellerJwtPayload {
   sub: string; // account (users) id
@@ -10,6 +13,7 @@ export interface SellerJwtPayload {
   name: string;
   isAdmin: boolean;
   typ: 'seller';
+  scp?: SessionScope;
 }
 
 /** Claims carried by the admin-console JWT (issued post-2FA). */
