@@ -428,6 +428,13 @@
       "when": 1791158400000,
       "tag": "0063_card_fee_default_350",
       "breakpoints": true
+    },
+    {
+      "idx": 64,
+      "version": "7",
+      "when": 1791244800000,
+      "tag": "0064_shop_bot_chat",
+      "breakpoints": true
     }
   ]
 }

@@ -113,6 +113,16 @@ export class UpdateShopDto {
   @IsEnum(brandSwatchEnum.enumValues)
   brandId?: BrandSwatchId;
 
+  // AI auto-reply in the inbox. When on, a customer message gets an answer
+  // drawn from this shop's own catalog while the seller is away; the agent
+  // hands the thread back to a human when it escalates.
+  @ApiPropertyOptional({
+    description: 'Auto-reply to inbox messages with the AI assistant',
+  })
+  @IsOptional()
+  @IsBoolean()
+  botChatEnabled?: boolean;
+
   // Storefront hero banner images as data URLs (or hosted URLs). Replaces the
   // whole set; an empty array clears all banners. Capped to keep the row small.
   @ApiPropertyOptional({

@@ -39,6 +39,17 @@ export class ShopResponse {
   kycStatus!: string;
   @ApiProperty() createdAt!: string;
 
+  /**
+   * AI auto-reply switch. Console-only - see `fromRowForConsole`. Absent from
+   * every public payload on purpose: the agent answers as the shop's own
+   * staff, and a storefront field announcing "this shop replies with a bot"
+   * would tell every buyer exactly what the agent is built not to.
+   */
+  @ApiPropertyOptional({
+    description: 'AI auto-reply in the inbox. Console responses only.',
+  })
+  botChatEnabled?: boolean;
+
   static fromRow(row: ShopRow): ShopResponse {
     return {
       id: row.id,
@@ -62,5 +73,10 @@ export class ShopResponse {
       kycStatus: row.kycStatus,
       createdAt: row.createdAt.toISOString(),
     };
+  }
+
+  /** The console's view: everything public plus the seller-only settings. */
+  static fromRowForConsole(row: ShopRow): ShopResponse {
+    return { ...ShopResponse.fromRow(row), botChatEnabled: row.botChatEnabled };
   }
 }

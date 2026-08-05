@@ -25,6 +25,7 @@ import {
 import { centsToDollars } from '../../common/utils/money.util';
 import { productLines } from '../../common/utils/order-line.util';
 import type { ChatActor } from './chat-actor';
+import { BotReplyService } from './bot-reply.service';
 import { ChatRealtimeService } from './chat-realtime.service';
 import { ConversationsService } from './conversations.service';
 import type { MarkReadDto, SendMessageDto } from './dto/chat.dto';
@@ -85,6 +86,7 @@ export class MessagesService {
     @Inject(DRIZZLE) private readonly db: DrizzleDB,
     private readonly conversations: ConversationsService,
     private readonly realtime: ChatRealtimeService,
+    private readonly botReply: BotReplyService,
   ) {}
 
   /** Page backwards through a thread (newest page first, items ascending). */
@@ -190,6 +192,16 @@ export class MessagesService {
       { conversationId, message },
     );
     await this.conversations.broadcastUpdated(conversationId);
+
+    // AI auto-reply, when the shop has it switched on. Deliberately not
+    // awaited: the customer's message is already committed and about to be
+    // returned, and a model round trip takes seconds. The bot answers text
+    // only - it has nothing useful to say to an image, an offer or an order
+    // card, and the agent's API takes a string.
+    if (senderRole === 'customer' && dto.type === 'text' && fields.text) {
+      this.botReply.maybeReply(convo, fields.text);
+    }
+
     return message;
   }
 

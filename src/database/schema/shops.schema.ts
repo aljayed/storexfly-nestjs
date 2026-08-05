@@ -81,6 +81,12 @@ export const shops = pgTable(
     // lifetime orders, and are deactivated at that cap until they buy credit
     // or verify. Existing shops predate the free tier and stay 'paid'.
     plan: shopPlanEnum('plan').notNull().default('paid'),
+    // AI auto-reply in the seller inbox. When on, an incoming customer message
+    // gets an answer from the shop's own catalog while the seller is away; the
+    // agent hands the thread back to the human when it escalates.
+    // Off by default - the agent writes as the shop's staff, so opting an
+    // existing seller in without asking would put words in their mouth.
+    botChatEnabled: boolean('bot_chat_enabled').notNull().default(false),
     // Bank/wallet account monthly settlements are transferred to.
     payoutBank: jsonb('payout_bank').$type<PayoutBank>(),
     // ── Business verification (trade-license KYC) ──────────────────

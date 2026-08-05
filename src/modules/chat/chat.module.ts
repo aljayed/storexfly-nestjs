@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { JwtModule } from '@nestjs/jwt';
 import { ChatGateway } from './chat.gateway';
+import { BotReplyService } from './bot-reply.service';
 import { ChatAuthGuard } from './chat-auth.guard';
 import { ChatRealtimeService } from './chat-realtime.service';
 import { ChatTokenService } from './chat-token.service';
@@ -25,6 +26,7 @@ import { QuickRepliesService } from './quick-replies.service';
     ChatAuthGuard,
     ChatRealtimeService,
     ConversationsService,
+    BotReplyService,
     MessagesService,
     QuickRepliesService,
     ChatGateway,

@@ -364,7 +364,7 @@ export class ShopsService {
   }
 
   async getById(id: string): Promise<ShopResponse> {
-    return ShopResponse.fromRow(await this.requireById(id));
+    return ShopResponse.fromRowForConsole(await this.requireById(id));
   }
 
   async update(
@@ -413,6 +413,9 @@ export class ShopsService {
     if (dto.supportPhone !== undefined) {
       patch.supportPhone = dto.supportPhone.trim() || null;
     }
+    if (dto.botChatEnabled !== undefined) {
+      patch.botChatEnabled = dto.botChatEnabled;
+    }
     if (dto.brandId) {
       const swatch = BRAND_SWATCHES[dto.brandId];
       patch.brandId = dto.brandId;
@@ -450,7 +453,10 @@ export class ShopsService {
       .set(patch)
       .where(eq(shops.id, id))
       .returning();
-    return ShopResponse.fromRow(row);
+    // Both callers of applyUpdate are seller-side (owner PATCH and the
+    // console PATCH), so the reply carries the seller-only settings. The
+    // public storefront reads go through getByHandle, which does not.
+    return ShopResponse.fromRowForConsole(row);
   }
 
   /** Owner-only read of the full KYC record (includes the trade licence). */
