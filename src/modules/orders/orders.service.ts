@@ -4,7 +4,10 @@ import {
   ForbiddenException,
   Inject,
   Injectable,
+  Logger,
   NotFoundException,
+  type OnModuleDestroy,
+  type OnModuleInit,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import {
@@ -16,6 +19,8 @@ import {
   gte,
   ilike,
   inArray,
+  isNull,
+  lt,
   ne,
   or,
   sql,
@@ -32,6 +37,7 @@ import { DRIZZLE } from '../../database/database.constants';
 import type { DrizzleDB } from '../../database/drizzle.types';
 import {
   combos,
+  courierWebhookEvents,
   gatewayPayments,
   subscriptions,
   orderAmountAdjustments,
@@ -40,6 +46,7 @@ import {
   products,
   shops,
   users,
+  type CourierWebhookEventRow,
   type OrderRow,
   type ProductRow,
 } from '../../database/schema';
@@ -121,6 +128,17 @@ const AMOUNT_ADJUSTABLE: readonly OrderStatus[] = [
   'Packed',
 ];
 
+/**
+ * How often unprocessed courier callbacks are retried, and how many times
+ * before one is left for a human. Five minutes is well inside the window that
+ * matters - a parcel's next event is minutes to hours away - and eight
+ * attempts spans over half an hour of whatever was briefly broken.
+ */
+const WEBHOOK_SWEEP_INTERVAL_MS = 5 * 60 * 1000;
+const MAX_WEBHOOK_ATTEMPTS = 8;
+/** Cap per sweep so a backlog can't monopolise a tick. */
+const WEBHOOK_SWEEP_BATCH = 200;
+
 /** Buyer-facing copy for status-change notifications. */
 const STATUS_NOTIFICATION: Partial<Record<OrderStatus, string>> = {
   Confirmed: 'has been confirmed by the seller',
@@ -186,7 +204,10 @@ interface CheckoutCart {
 }
 
 @Injectable()
-export class OrdersService {
+export class OrdersService implements OnModuleInit, OnModuleDestroy {
+  private readonly logger = new Logger(OrdersService.name);
+  private webhookSweepTimer?: NodeJS.Timeout;
+
   constructor(
     @Inject(DRIZZLE) private readonly db: DrizzleDB,
     private readonly customers: CustomersService,
@@ -201,6 +222,21 @@ export class OrdersService {
     private readonly messages: MessagesService,
     private readonly shopCoupons: ShopCouponsService,
   ) {}
+
+  onModuleInit(): void {
+    // Picks up callbacks whose inline processing failed. Nothing depends on
+    // this for the happy path - it exists so a transient fault costs a delay
+    // rather than a delivery nobody ever hears about.
+    this.webhookSweepTimer = setInterval(() => {
+      void this.sweepCourierWebhooks();
+    }, WEBHOOK_SWEEP_INTERVAL_MS);
+    this.webhookSweepTimer.unref();
+    void this.sweepCourierWebhooks();
+  }
+
+  onModuleDestroy(): void {
+    clearInterval(this.webhookSweepTimer);
+  }
 
   /**
    * Inline product-page checkout - a single product (with optional variant
@@ -2436,24 +2472,117 @@ export class OrdersService {
   }
 
   /**
-   * Apply one CarryBee webhook event to the order behind its consignment.
-   * Returns false when no such order exists (a parcel booked outside the
-   * platform, or one whose order was purged), which the webhook route treats
-   * as an accepted no-op rather than an error - CarryBee retries otherwise.
+   * Write a courier callback down, then act on it.
+   *
+   * The order of those two is the point. The courier decides whether an order
+   * shipped, was delivered, and whether its COD cash came in, so an event lost
+   * to a transient failure is money - and one handled inline left no record of
+   * what was missed. Recording first means the worst case is a delay the sweep
+   * closes, not a hole nobody can see.
+   *
+   * Never throws: the route has already promised CarryBee a 202, and a
+   * recorded-but-unprocessed row is exactly what the sweep is for.
    */
-  async applyCourierEvent(body: CarrybeeWebhookBody): Promise<boolean> {
-    const consignmentId = body.consignment_id?.trim();
-    if (!consignmentId || !body.event) return false;
-    const rule = CARRYBEE_EVENTS[body.event];
-    if (!rule) {
-      // An event CarryBee added since this was written: record nothing rather
-      // than guess at what it means for the order.
-      return false;
+  async recordCourierEvent(body: CarrybeeWebhookBody): Promise<void> {
+    const at = body.timestamptz ? new Date(body.timestamptz) : null;
+    let logged: CourierWebhookEventRow | undefined;
+    try {
+      [logged] = await this.db
+        .insert(courierWebhookEvents)
+        .values({
+          provider: 'carrybee',
+          event: (body.event ?? 'unknown').slice(0, 60),
+          consignmentId: body.consignment_id?.trim().slice(0, 64) ?? null,
+          merchantOrderId: body.merchant_order_id?.trim().slice(0, 64) ?? null,
+          payload: body,
+          eventAt: at && !Number.isNaN(at.getTime()) ? at : null,
+        })
+        .returning();
+    } catch (err) {
+      // Nothing left to fall back on, so this one really is lost - say so
+      // loudly rather than letting it look handled.
+      this.logger.error('Could not record a CarryBee webhook', err as Error);
+      return;
     }
+    await this.processCourierEvent(logged);
+  }
+
+  /**
+   * Run one logged callback against its order and mark the row either done or
+   * failed. "Done" includes events we knowingly do nothing with - an unknown
+   * event name, or a consignment that is not ours - because retrying those
+   * forever would bury the ones that are genuinely stuck.
+   */
+  private async processCourierEvent(
+    row: CourierWebhookEventRow,
+  ): Promise<void> {
+    try {
+      const orderId = await this.applyCourierEvent(
+        row.payload as CarrybeeWebhookBody,
+      );
+      await this.db
+        .update(courierWebhookEvents)
+        .set({
+          processedAt: new Date(),
+          attempts: row.attempts + 1,
+          lastError: null,
+          ...(orderId && { orderId }),
+        })
+        .where(eq(courierWebhookEvents.id, row.id));
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      await this.db
+        .update(courierWebhookEvents)
+        .set({ attempts: row.attempts + 1, lastError: message.slice(0, 500) })
+        .where(eq(courierWebhookEvents.id, row.id));
+      this.logger.error(
+        `CarryBee event ${row.event} (${row.consignmentId ?? '?'}) failed, attempt ${row.attempts + 1}: ${message}`,
+      );
+    }
+  }
+
+  /**
+   * Retry callbacks that haven't been processed yet. This is what makes the
+   * log a queue - and why a broker would be a third moving part solving a
+   * problem one table already solves at this volume.
+   *
+   * Rows past MAX_WEBHOOK_ATTEMPTS are left alone: something is wrong that
+   * retrying will not fix, and they stay in the table as the record of it.
+   */
+  private async sweepCourierWebhooks(): Promise<void> {
+    try {
+      const pending = await this.db.query.courierWebhookEvents.findMany({
+        where: and(
+          isNull(courierWebhookEvents.processedAt),
+          lt(courierWebhookEvents.attempts, MAX_WEBHOOK_ATTEMPTS),
+        ),
+        orderBy: [asc(courierWebhookEvents.receivedAt)],
+        limit: WEBHOOK_SWEEP_BATCH,
+      });
+      for (const row of pending) {
+        await this.processCourierEvent(row);
+      }
+    } catch (err) {
+      this.logger.error('CarryBee webhook sweep failed', err as Error);
+    }
+  }
+
+  /**
+   * Apply one CarryBee webhook event to the order behind its consignment.
+   * Returns the order id it moved, or null when there was nothing to move (a
+   * parcel booked outside the platform, an order since purged, or an event
+   * CarryBee has added since this was written - guessing at what a new one
+   * means for an order is worse than ignoring it).
+   */
+  async applyCourierEvent(body: CarrybeeWebhookBody): Promise<string | null> {
+    const consignmentId = body.consignment_id?.trim();
+    if (!consignmentId || !body.event) return null;
+    const rule = CARRYBEE_EVENTS[body.event];
+    if (!rule) return null;
     const order = await this.db.query.orders.findFirst({
       where: eq(orders.courierConsignmentId, consignmentId),
     });
-    if (!order) return false;
+    if (!order) return null;
     const at = body.timestamptz ? new Date(body.timestamptz) : new Date();
     await this.applyCourierEffect(order.id, {
       status: rule.status,
@@ -2464,7 +2593,7 @@ export class OrdersService {
       codFeeCents: takaFieldToCents(body.cod_fee),
       reason: [body.reason, body.remarks].filter(Boolean).join(' - ') || null,
     });
-    return true;
+    return order.id;
   }
 
   /**

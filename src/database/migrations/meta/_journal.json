@@ -449,6 +449,13 @@
       "when": 1791417600000,
       "tag": "0066_carrybee_sandbox_credentials",
       "breakpoints": true
+    },
+    {
+      "idx": 67,
+      "version": "7",
+      "when": 1791504000000,
+      "tag": "0067_courier_webhook_events",
+      "breakpoints": true
     }
   ]
 }

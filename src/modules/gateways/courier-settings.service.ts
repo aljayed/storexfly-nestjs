@@ -26,6 +26,8 @@ export interface CarrybeeEnvView {
   clientContext: string | null;
   storeId: string | null;
   hasSecret: boolean;
+  /** The webhook registered for this environment has a secret stored. */
+  hasWebhookSecret: boolean;
   configured: boolean;
 }
 
@@ -39,7 +41,6 @@ export interface CourierSettingsView {
     enabled: boolean;
     /** true = the sandbox pair and sandbox.carrybee.com are in use. */
     sandbox: boolean;
-    hasWebhookSecret: boolean;
     /** Whether the *live* environment's credentials are complete. */
     configured: boolean;
     environments: Record<CarrybeeEnv, CarrybeeEnvView>;
@@ -68,12 +69,13 @@ export interface CarrybeeEnvPatch {
   clientSecret?: string;
   clientContext?: string;
   storeId?: string;
+  /** Secret CarryBee echoes for the webhook registered on this environment. */
+  webhookSecret?: string;
 }
 
 export interface UpdateCarrybeePatch {
   enabled?: boolean;
   sandbox?: boolean;
-  webhookSecret?: string;
   /** Both may be written at once - the console shows both cards. */
   live?: CarrybeeEnvPatch;
   sandboxCreds?: CarrybeeEnvPatch;
@@ -243,10 +245,19 @@ export class CourierSettingsService {
     return this.pathaoComplete(row) ? this.toPathaoConfig(row!) : null;
   }
 
-  /** The secret CarryBee must echo back on its webhook, or null if unset. */
-  async carrybeeWebhookSecret(): Promise<string | null> {
+  /**
+   * Every secret a CarryBee callback may legitimately carry.
+   *
+   * The webhook is registered per environment, each with its own secret, and
+   * the callback itself says nothing about which environment sent it - so any
+   * configured one is accepted. Empty means nothing is configured, and the
+   * route then rejects everything rather than trusting the internet.
+   */
+  async carrybeeWebhookSecrets(): Promise<string[]> {
     const row = await this.row();
-    return row?.carrybeeWebhookSecret ?? null;
+    return [row?.carrybeeWebhookSecret, row?.carrybeeSandboxWebhookSecret]
+      .map((s) => s?.trim())
+      .filter((s): s is string => !!s);
   }
 
   /** Whether shops are confined to the platform courier for fulfilment. */
@@ -296,6 +307,7 @@ export class CourierSettingsService {
         clientContext: null,
         storeId: null,
         hasSecret: false,
+        hasWebhookSecret: false,
         configured: false,
       };
     }
@@ -305,6 +317,9 @@ export class CourierSettingsService {
       clientContext: c.clientContext,
       storeId: c.storeId,
       hasSecret: !!c.clientSecret,
+      hasWebhookSecret: !!(env === 'sandbox'
+        ? row.carrybeeSandboxWebhookSecret
+        : row.carrybeeWebhookSecret),
       configured: this.carrybeeComplete(row, env),
     };
   }
@@ -318,7 +333,6 @@ export class CourierSettingsService {
       carrybee: {
         enabled: row?.carrybeeEnabled ?? false,
         sandbox: row?.carrybeeSandbox ?? true,
-        hasWebhookSecret: !!row?.carrybeeWebhookSecret,
         configured: this.carrybeeComplete(row),
         environments: {
           live: this.carrybeeEnvView(row, 'live'),
@@ -353,9 +367,6 @@ export class CourierSettingsService {
   ): Promise<CourierSettingsView> {
     const merged = await this.patch({
       ...(patch.sandbox !== undefined && { carrybeeSandbox: patch.sandbox }),
-      ...(patch.webhookSecret !== undefined && {
-        carrybeeWebhookSecret: trimOrNull(patch.webhookSecret),
-      }),
       ...envColumns(patch.live, 'live'),
       ...envColumns(patch.sandboxCreds, 'sandbox'),
     });
@@ -532,6 +543,10 @@ function envColumns(
       [sb ? 'carrybeeSandboxStoreId' : 'carrybeeStoreId']: trimOrNull(
         patch.storeId,
       ),
+    }),
+    ...(patch.webhookSecret !== undefined && {
+      [sb ? 'carrybeeSandboxWebhookSecret' : 'carrybeeWebhookSecret']:
+        trimOrNull(patch.webhookSecret),
     }),
   };
 }

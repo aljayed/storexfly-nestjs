@@ -20,17 +20,24 @@ import { OrdersService } from './orders.service';
 /** The header CarryBee signs its callbacks with, and expects echoed back. */
 const CB_HEADER = 'x-cb-webhook-integration-header';
 
+/** The event CarryBee posts when verifying the endpoint on registration. */
+const INTEGRATION_EVENT = 'webhook.integration';
+
 /**
  * CarryBee delivery callbacks - the channel that actually moves an order past
  * 'HandedOver'. Public by necessity (CarryBee calls it unauthenticated) and
- * guarded by the shared secret the operator configures alongside the
- * credentials: without a stored secret nothing is accepted at all, so a
- * half-configured integration fails closed rather than trusting the internet.
+ * guarded by the secret registered with the webhook: with none stored nothing
+ * is accepted at all, so a half-configured integration fails closed rather
+ * than trusting the internet.
  *
- * CarryBee requires the endpoint to echo the secret back and to answer 202 on
- * the integration handshake, so both are done here. Every other outcome is
- * also a 202: a non-2xx makes CarryBee retry, and an event about a parcel we
- * have no order for will never succeed no matter how often it is redelivered.
+ * CarryBee's requirements for the registration handshake are answered here in
+ * full - 202, and the secret echoed back in the same header it arrived in.
+ *
+ * Everything else answers 202 too, but for a different reason than before:
+ * the callback is now written down before it is acted on, so a 202 means
+ * "recorded", not "understood". A processing bug no longer loses the event -
+ * the sweep retries it from the log - and a retry storm from CarryBee was
+ * never going to fix our side anyway.
  */
 @ApiExcludeController()
 @Public()
@@ -50,37 +57,29 @@ export class CourierWebhookController {
     @Body() body: CarrybeeWebhookBody,
     @Res({ passthrough: true }) res: Response,
   ): Promise<{ error: boolean; message: string }> {
-    const expected = await this.courierSettings.carrybeeWebhookSecret();
-    if (!expected || !matches(expected, presented)) {
+    // The webhook is registered per environment, each with its own secret,
+    // and the callback says nothing about which one sent it - so any
+    // configured secret is accepted, and the matched one is echoed.
+    const secrets = await this.courierSettings.carrybeeWebhookSecrets();
+    const matched = secrets.find((s) => matches(s, presented));
+    if (!matched) {
       this.logger.warn(
-        `Rejected a CarryBee webhook with a ${expected ? 'bad' : 'unconfigured'} secret`,
+        `Rejected a CarryBee webhook with a ${secrets.length ? 'bad' : 'unconfigured'} secret`,
       );
       throw new UnauthorizedException('Invalid webhook secret');
     }
     // CarryBee's integration check requires the secret echoed back verbatim.
     // Only ever sent to a caller that already proved it knows the value.
-    res.setHeader(CB_HEADER, expected);
-    // The handshake carries the header but no event - a 202 with the echo is
-    // the whole contract.
-    if (!body?.event) {
+    res.setHeader(CB_HEADER, matched);
+
+    // The registration handshake is an ordinary event by name, carrying
+    // nothing else. Answering it is the whole contract.
+    if (!body?.event || body.event === INTEGRATION_EVENT) {
       return { error: false, message: 'Webhook verified' };
     }
-    try {
-      const handled = await this.orders.applyCourierEvent(body);
-      if (!handled) {
-        this.logger.warn(
-          `CarryBee event ${body.event} for consignment ${body.consignment_id ?? '?'} matched no order`,
-        );
-      }
-    } catch (err) {
-      // Swallowed on purpose: a retry storm from CarryBee would not fix a bug
-      // on our side, and the event is recoverable from the seller's manual
-      // refresh, which reads the same state from the same API.
-      this.logger.error(
-        `Failed to apply CarryBee event ${body.event}`,
-        err as Error,
-      );
-    }
+    // Recorded first, acted on second: the log is what makes losing one
+    // impossible, and what the retry sweep works from.
+    await this.orders.recordCourierEvent(body);
     return { error: false, message: 'Accepted' };
   }
 }

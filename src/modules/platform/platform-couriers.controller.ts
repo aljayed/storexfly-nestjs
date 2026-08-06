@@ -62,6 +62,13 @@ export class CarrybeeEnvDto {
   @IsString()
   @MaxLength(64)
   storeId?: string;
+  @ApiPropertyOptional({
+    description: `${WRITE_ONLY}. Secret the webhook registered on this environment echoes`,
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  webhookSecret?: string;
 }
 
 export class UpdateCarrybeeSettingsDto {
@@ -88,13 +95,6 @@ export class UpdateCarrybeeSettingsDto {
   @ValidateNested()
   @Type(() => CarrybeeEnvDto)
   sandboxCreds?: CarrybeeEnvDto;
-  @ApiPropertyOptional({
-    description: `${WRITE_ONLY}. Secret CarryBee echoes on its webhook`,
-  })
-  @IsOptional()
-  @IsString()
-  @MaxLength(200)
-  webhookSecret?: string;
 }
 
 export class UpdatePlatformSteadfastDto {

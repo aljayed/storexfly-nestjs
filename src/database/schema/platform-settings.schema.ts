@@ -99,11 +99,13 @@ export const platformSettings = pgTable('platform_settings', {
   carrybeeSandboxClientSecret: text('carrybee_sandbox_client_secret'),
   carrybeeSandboxClientContext: text('carrybee_sandbox_client_context'),
   carrybeeSandboxStoreId: varchar('carrybee_sandbox_store_id', { length: 64 }),
-  // Shared secret CarryBee echoes in X-CB-Webhook-Integration-Header. The
-  // webhook route rejects anything that doesn't carry it. One value, not two:
-  // it is set on CarryBee's own Webhook Integration screen against whichever
-  // environment is pointed at our endpoint.
+  // Secret CarryBee sends in X-CB-Webhook-Integration-Header and expects
+  // echoed back. Its Webhook Integration screen registers a URL per
+  // environment ("Try Sandbox"), each with its own secret, so both are held.
+  // A callback carries no environment marker, so the route accepts either -
+  // it cannot tell them apart, and a consignment id only exists in one.
   carrybeeWebhookSecret: text('carrybee_webhook_secret'),
+  carrybeeSandboxWebhookSecret: text('carrybee_sandbox_webhook_secret'),
   // Steadfast (portal.packzy.com), kept as a fallback carrier.
   steadfastEnabled: boolean('steadfast_enabled').notNull().default(false),
   steadfastApiKey: text('steadfast_api_key'),
