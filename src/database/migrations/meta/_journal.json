@@ -442,6 +442,13 @@
       "when": 1791331200000,
       "tag": "0065_platform_couriers",
       "breakpoints": true
+    },
+    {
+      "idx": 66,
+      "version": "7",
+      "when": 1791417600000,
+      "tag": "0066_carrybee_sandbox_credentials",
+      "breakpoints": true
     }
   ]
 }

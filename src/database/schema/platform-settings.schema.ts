@@ -77,16 +77,32 @@ export const platformSettings = pgTable('platform_settings', {
   // parcel outside it. Secrets never leave the API in readable form.
   //
   // CarryBee (developers.carrybee.com) - the primary integration.
+  //
+  // CarryBee issues two independent credential triples, one per environment,
+  // and both stay valid forever - so both are stored rather than one set that
+  // an environment switch invalidates. `carrybeeSandbox` only chooses which
+  // pair is live; flipping it never silently points sandbox credentials at
+  // the production host, which would fail auth for every shop at once.
   carrybeeEnabled: boolean('carrybee_enabled').notNull().default(false),
+  // true = the sandbox credentials and sandbox.carrybee.com are in use.
   carrybeeSandbox: boolean('carrybee_sandbox').notNull().default(true),
+  // Production triple.
   carrybeeClientId: text('carrybee_client_id'),
   carrybeeClientSecret: text('carrybee_client_secret'),
   carrybeeClientContext: text('carrybee_client_context'),
   // The pickup store parcels are collected from, chosen from the account's
-  // store list. Required before a booking can go out.
+  // store list. Required before a booking can go out. Stores are registered
+  // per environment, so this is per environment too.
   carrybeeStoreId: varchar('carrybee_store_id', { length: 64 }),
+  // Sandbox triple, same shape.
+  carrybeeSandboxClientId: text('carrybee_sandbox_client_id'),
+  carrybeeSandboxClientSecret: text('carrybee_sandbox_client_secret'),
+  carrybeeSandboxClientContext: text('carrybee_sandbox_client_context'),
+  carrybeeSandboxStoreId: varchar('carrybee_sandbox_store_id', { length: 64 }),
   // Shared secret CarryBee echoes in X-CB-Webhook-Integration-Header. The
-  // webhook route rejects anything that doesn't carry it.
+  // webhook route rejects anything that doesn't carry it. One value, not two:
+  // it is set on CarryBee's own Webhook Integration screen against whichever
+  // environment is pointed at our endpoint.
   carrybeeWebhookSecret: text('carrybee_webhook_secret'),
   // Steadfast (portal.packzy.com), kept as a fallback carrier.
   steadfastEnabled: boolean('steadfast_enabled').notNull().default(false),

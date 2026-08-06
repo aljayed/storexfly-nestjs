@@ -18,27 +18,28 @@ import {
 import { Type } from 'class-transformer';
 import {
   IsBoolean,
+  IsIn,
   IsInt,
   IsOptional,
   IsString,
   MaxLength,
   Min,
   MinLength,
+  ValidateNested,
 } from 'class-validator';
 import { Public } from '../../common/decorators/public.decorator';
 import { PlatformJwtAuthGuard } from '../../common/guards/platform-jwt-auth.guard';
 import { CarrybeeService } from '../gateways/carrybee.service';
-import { CourierSettingsService } from '../gateways/courier-settings.service';
+import {
+  CourierSettingsService,
+  type CarrybeeEnv,
+} from '../gateways/courier-settings.service';
 import { PathaoService } from '../gateways/pathao.service';
 
 const WRITE_ONLY = 'Write-only; omit to keep the stored value';
 
-export class UpdateCarrybeeSettingsDto {
-  @ApiPropertyOptional() @IsOptional() @IsBoolean() enabled?: boolean;
-  @ApiPropertyOptional({ description: 'true = CarryBee sandbox environment' })
-  @IsOptional()
-  @IsBoolean()
-  sandbox?: boolean;
+/** One environment's credential triple, as CarryBee issues them. */
+export class CarrybeeEnvDto {
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()
@@ -49,18 +50,44 @@ export class UpdateCarrybeeSettingsDto {
   @IsString()
   @MaxLength(200)
   clientSecret?: string;
-  @ApiPropertyOptional({ description: WRITE_ONLY })
+  @ApiPropertyOptional()
   @IsOptional()
   @IsString()
   @MaxLength(200)
   clientContext?: string;
   @ApiPropertyOptional({
-    description: 'Pickup store parcels are collected from',
+    description: 'Pickup store parcels are collected from (per environment)',
   })
   @IsOptional()
   @IsString()
   @MaxLength(64)
   storeId?: string;
+}
+
+export class UpdateCarrybeeSettingsDto {
+  @ApiPropertyOptional() @IsOptional() @IsBoolean() enabled?: boolean;
+  @ApiPropertyOptional({
+    description: 'true = run on the sandbox credentials and sandbox host',
+  })
+  @IsOptional()
+  @IsBoolean()
+  sandbox?: boolean;
+  @ApiPropertyOptional({
+    type: CarrybeeEnvDto,
+    description: 'Production credentials',
+  })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => CarrybeeEnvDto)
+  live?: CarrybeeEnvDto;
+  @ApiPropertyOptional({
+    type: CarrybeeEnvDto,
+    description: 'Sandbox credentials',
+  })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => CarrybeeEnvDto)
+  sandboxCreds?: CarrybeeEnvDto;
   @ApiPropertyOptional({
     description: `${WRITE_ONLY}. Secret CarryBee echoes on its webhook`,
   })
@@ -142,11 +169,17 @@ export class CreateCarrybeeStoreDto {
   @ApiProperty() @Type(() => Number) @IsInt() @Min(1) areaId!: number;
 }
 
-class ZonesQuery {
+/** Which credential pair a lookup should run against - the console needs to
+ *  reach the environment that isn't live yet. Omitted = whichever is live. */
+class EnvQuery {
+  @IsOptional() @IsIn(['live', 'sandbox']) env?: CarrybeeEnv;
+}
+
+class ZonesQuery extends EnvQuery {
   @Type(() => Number) @IsInt() @Min(1) cityId!: number;
 }
 
-class AreasQuery {
+class AreasQuery extends EnvQuery {
   @Type(() => Number) @IsInt() @Min(1) cityId!: number;
   @Type(() => Number) @IsInt() @Min(1) zoneId!: number;
 }
@@ -215,23 +248,28 @@ export class PlatformCouriersController {
   // ── CarryBee account lookups ────────────────────────────────────
 
   @Post('carrybee/verify')
-  @ApiOperation({ summary: 'Platform: check the saved CarryBee credentials' })
-  async verifyCarrybee() {
-    await this.carrybee.verify(await this.requireCarrybee());
-    return { ok: true };
+  @ApiOperation({
+    summary: 'Platform: check one environment’s saved CarryBee credentials',
+  })
+  async verifyCarrybee(@Query() query: EnvQuery) {
+    await this.carrybee.verify(await this.requireCarrybee(query.env));
+    return { ok: true, env: query.env ?? 'live' };
   }
 
   @Get('carrybee/stores')
   @ApiOperation({ summary: 'Platform: CarryBee pickup stores (store picker)' })
-  async carrybeeStores() {
-    const config = await this.requireCarrybee();
+  async carrybeeStores(@Query() query: EnvQuery) {
+    const config = await this.requireCarrybee(query.env);
     return { stores: await this.carrybee.stores(config) };
   }
 
   @Post('carrybee/stores')
   @ApiOperation({ summary: 'Platform: register a CarryBee pickup store' })
-  async createCarrybeeStore(@Body() dto: CreateCarrybeeStoreDto) {
-    const config = await this.requireCarrybee();
+  async createCarrybeeStore(
+    @Query() query: EnvQuery,
+    @Body() dto: CreateCarrybeeStoreDto,
+  ) {
+    const config = await this.requireCarrybee(query.env);
     await this.carrybee.createStore(config, dto);
     // CarryBee returns no body on create, so hand back the refreshed list -
     // the console picks the new store out of it.
@@ -240,21 +278,22 @@ export class PlatformCouriersController {
 
   @Get('carrybee/cities')
   @ApiOperation({ summary: 'Platform: CarryBee city list' })
-  async carrybeeCities() {
-    return { places: await this.carrybee.cities(await this.requireCarrybee()) };
+  async carrybeeCities(@Query() query: EnvQuery) {
+    const config = await this.requireCarrybee(query.env);
+    return { places: await this.carrybee.cities(config) };
   }
 
   @Get('carrybee/zones')
   @ApiOperation({ summary: 'Platform: CarryBee zones of a city' })
   async carrybeeZones(@Query() query: ZonesQuery) {
-    const config = await this.requireCarrybee();
+    const config = await this.requireCarrybee(query.env);
     return { places: await this.carrybee.zones(config, query.cityId) };
   }
 
   @Get('carrybee/areas')
   @ApiOperation({ summary: 'Platform: CarryBee areas of a zone' })
   async carrybeeAreas(@Query() query: AreasQuery) {
-    const config = await this.requireCarrybee();
+    const config = await this.requireCarrybee(query.env);
     return {
       places: await this.carrybee.areas(config, query.cityId, query.zoneId),
     };
@@ -288,11 +327,11 @@ export class PlatformCouriersController {
     return { places: await this.pathao.areas(config, query.zoneId) };
   }
 
-  private async requireCarrybee() {
-    const config = await this.settings.carrybeeConfig();
+  private async requireCarrybee(env?: CarrybeeEnv) {
+    const config = await this.settings.carrybeeConfig(env);
     if (!config) {
       throw new BadRequestException(
-        'Save the CarryBee client ID, secret and context first.',
+        `Save the CarryBee ${env === 'sandbox' ? 'sandbox' : 'production'} client ID, secret and context first.`,
       );
     }
     return config;
