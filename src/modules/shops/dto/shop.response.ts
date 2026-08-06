@@ -10,6 +10,15 @@ export class ShopResponse {
   @ApiPropertyOptional() tagline?: string;
   @ApiPropertyOptional() supportEmail?: string;
   @ApiPropertyOptional() supportPhone?: string;
+  // Pickup address for the courier. Console-only - the storefront DTO shares
+  // this class, and where a seller warehouses stock is not a buyer's business,
+  // so these are filled in by fromRowForConsole alone.
+  @ApiPropertyOptional() pickupContactName?: string;
+  @ApiPropertyOptional() pickupPhone?: string;
+  @ApiPropertyOptional() pickupAddress?: string;
+  @ApiPropertyOptional() pickupCityId?: number;
+  @ApiPropertyOptional() pickupZoneId?: number;
+  @ApiPropertyOptional() pickupAreaId?: number;
   @ApiProperty() cat!: string;
   @ApiProperty({ example: 'BDT' }) currency!: string;
   @ApiProperty({ enum: ['en', 'bn'], example: 'en' }) language!: string;
@@ -77,6 +86,15 @@ export class ShopResponse {
 
   /** The console's view: everything public plus the seller-only settings. */
   static fromRowForConsole(row: ShopRow): ShopResponse {
-    return { ...ShopResponse.fromRow(row), botChatEnabled: row.botChatEnabled };
+    return {
+      ...ShopResponse.fromRow(row),
+      botChatEnabled: row.botChatEnabled,
+      pickupContactName: row.pickupContactName ?? undefined,
+      pickupPhone: row.pickupPhone ?? undefined,
+      pickupAddress: row.pickupAddress ?? undefined,
+      pickupCityId: row.pickupCityId ?? undefined,
+      pickupZoneId: row.pickupZoneId ?? undefined,
+      pickupAreaId: row.pickupAreaId ?? undefined,
+    };
   }
 }

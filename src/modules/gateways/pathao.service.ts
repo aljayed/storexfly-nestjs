@@ -10,8 +10,6 @@ export interface PathaoConfig {
   clientSecret: string;
   username: string;
   password: string;
-  /** Merchant store parcels are collected from; required to book. */
-  storeId: string | null;
   sandbox: boolean;
 }
 
@@ -144,6 +142,46 @@ export class PathaoService {
       }));
   }
 
+  /**
+   * Register a pickup store and return its id. Unlike CarryBee, Pathao
+   * answers with the store it created, so no list diffing is needed.
+   */
+  async createStore(
+    config: PathaoConfig,
+    input: {
+      name: string;
+      contactName: string;
+      contactNumber: string;
+      address: string;
+      cityId: number;
+      zoneId: number;
+      areaId: number;
+    },
+  ): Promise<string> {
+    const data = await this.request<{
+      data?: { store_id?: number | string };
+      message?: string;
+    }>(config, '/aladdin/api/v1/stores', {
+      method: 'POST',
+      body: {
+        name: input.name.slice(0, 100),
+        contact_name: input.contactName.slice(0, 100),
+        contact_number: toLocalPhone(input.contactNumber),
+        address: input.address.slice(0, 220),
+        city_id: input.cityId,
+        zone_id: input.zoneId,
+        area_id: input.areaId,
+      },
+    });
+    const id = data.data?.store_id;
+    if (id === undefined) {
+      throw new ServiceUnavailableException(
+        `Pathao did not return the created store: ${data.message ?? ''}`,
+      );
+    }
+    return String(id);
+  }
+
   async cities(config: PathaoConfig): Promise<PathaoPlace[]> {
     const data = await this.request<{
       data?: { data?: { city_id?: number; city_name?: string }[] };
@@ -188,6 +226,8 @@ export class PathaoService {
   async createOrder(
     config: PathaoConfig,
     input: {
+      /** The shop's own pickup store - see ShopCourierStoresService. */
+      storeId: string;
       invoice: string;
       recipientName: string;
       recipientPhone: string;
@@ -200,11 +240,6 @@ export class PathaoService {
       note?: string;
     },
   ): Promise<PathaoConsignment> {
-    if (!config.storeId) {
-      throw new BadRequestException(
-        'Pick the Pathao pickup store in the platform console before booking.',
-      );
-    }
     try {
       const data = await this.request<{
         data?: {
@@ -216,7 +251,7 @@ export class PathaoService {
       }>(config, '/aladdin/api/v1/orders', {
         method: 'POST',
         body: {
-          store_id: Number(config.storeId),
+          store_id: Number(input.storeId),
           merchant_order_id: input.invoice,
           recipient_name: input.recipientName.slice(0, 100),
           recipient_phone: toLocalPhone(input.recipientPhone),

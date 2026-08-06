@@ -456,6 +456,13 @@
       "when": 1791504000000,
       "tag": "0067_courier_webhook_events",
       "breakpoints": true
+    },
+    {
+      "idx": 68,
+      "version": "7",
+      "when": 1791590400000,
+      "tag": "0068_per_shop_pickup_stores",
+      "breakpoints": true
     }
   ]
 }

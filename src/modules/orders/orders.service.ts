@@ -61,6 +61,7 @@ import {
   type CourierEffect,
 } from '../gateways/carrybee-events';
 import { CourierSettingsService } from '../gateways/courier-settings.service';
+import { ShopCourierStoresService } from '../gateways/shop-courier-stores.service';
 import { PathaoService } from '../gateways/pathao.service';
 import { SteadfastService } from '../gateways/steadfast.service';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -218,6 +219,7 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
     private readonly steadfast: SteadfastService,
     private readonly pathao: PathaoService,
     private readonly courierSettings: CourierSettingsService,
+    private readonly courierStores: ShopCourierStoresService,
     private readonly config: ConfigService,
     private readonly messages: MessagesService,
     private readonly shopCoupons: ShopCouponsService,
@@ -2381,8 +2383,16 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
           'Pick the delivery city and zone to book with CarryBee.',
         );
       }
+      // Collected from this shop's own address, not a platform-wide one -
+      // registered with the courier on the first booking a shop makes.
+      const storeId = await this.courierStores.resolve(
+        shopId,
+        'carrybee',
+        active.config,
+      );
       const c = await this.carrybee.createOrder(active.config, {
         ...shipment,
+        storeId,
         merchantOrderId: shipment.invoice,
         cityId: place.cityId,
         zoneId: place.zoneId,
@@ -2413,8 +2423,14 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
           'Pick the delivery city and zone to book with Pathao.',
         );
       }
+      const storeId = await this.courierStores.resolve(
+        shopId,
+        'pathao',
+        active.config,
+      );
       const c = await this.pathao.createOrder(active.config, {
         ...shipment,
+        storeId,
         cityId: opts.cityId,
         zoneId: opts.zoneId,
         areaId: opts.areaId,

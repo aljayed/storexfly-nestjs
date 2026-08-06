@@ -57,20 +57,16 @@ export class CourierWebhookController {
     @Body() body: CarrybeeWebhookBody,
     @Res({ passthrough: true }) res: Response,
   ): Promise<{ error: boolean; message: string }> {
-    // The webhook is registered per environment, each with its own secret,
-    // and the callback says nothing about which one sent it - so any
-    // configured secret is accepted, and the matched one is echoed.
-    const secrets = await this.courierSettings.carrybeeWebhookSecrets();
-    const matched = secrets.find((s) => matches(s, presented));
-    if (!matched) {
+    const expected = await this.courierSettings.carrybeeWebhookSecret();
+    if (!expected || !matches(expected, presented)) {
       this.logger.warn(
-        `Rejected a CarryBee webhook with a ${secrets.length ? 'bad' : 'unconfigured'} secret`,
+        `Rejected a CarryBee webhook with a ${expected ? 'bad' : 'unconfigured'} secret`,
       );
       throw new UnauthorizedException('Invalid webhook secret');
     }
     // CarryBee's integration check requires the secret echoed back verbatim.
     // Only ever sent to a caller that already proved it knows the value.
-    res.setHeader(CB_HEADER, matched);
+    res.setHeader(CB_HEADER, expected);
 
     // The registration handshake is an ordinary event by name, carrying
     // nothing else. Answering it is the whole contract.

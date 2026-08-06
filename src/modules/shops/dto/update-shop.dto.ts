@@ -7,9 +7,11 @@ import {
   IsEmail,
   IsEnum,
   IsIn,
+  IsInt,
   IsOptional,
   IsString,
   MaxLength,
+  Min,
   MinLength,
   ValidateIf,
   ValidateNested,
@@ -90,6 +92,51 @@ export class UpdateShopDto {
   @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
   @MaxLength(24)
   supportPhone?: string;
+
+  // ── Where the courier collects this shop's parcels ──────────────
+  // Not buyer-facing. The city/zone/area are the courier's own numeric ids,
+  // because registering a pickup store with them takes nothing else.
+  @ApiPropertyOptional({ example: 'Rahim Uddin' })
+  @IsOptional()
+  @IsString()
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  @MaxLength(60)
+  pickupContactName?: string;
+
+  @ApiPropertyOptional({ example: '01712345678' })
+  @IsOptional()
+  @IsString()
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  @MaxLength(24)
+  pickupPhone?: string;
+
+  @ApiPropertyOptional({ example: 'House 5, Road 3, Banani' })
+  @IsOptional()
+  @IsString()
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  @MaxLength(200)
+  pickupAddress?: string;
+
+  @ApiPropertyOptional({ description: "Courier's city id" })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  pickupCityId?: number;
+
+  @ApiPropertyOptional({ description: "Courier's zone id" })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  pickupZoneId?: number;
+
+  @ApiPropertyOptional({ description: "Courier's area id" })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  pickupAreaId?: number;
 
   @ApiPropertyOptional({ enum: shopCategoryEnum.enumValues })
   @IsOptional()

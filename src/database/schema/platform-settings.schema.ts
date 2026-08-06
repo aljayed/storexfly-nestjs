@@ -78,46 +78,38 @@ export const platformSettings = pgTable('platform_settings', {
   //
   // CarryBee (developers.carrybee.com) - the primary integration.
   //
-  // CarryBee issues two independent credential triples, one per environment,
-  // and both stay valid forever - so both are stored rather than one set that
-  // an environment switch invalidates. `carrybeeSandbox` only chooses which
-  // pair is live; flipping it never silently points sandbox credentials at
-  // the production host, which would fail auth for every shop at once.
+  // One credential set, and `carrybeeProduction` says which environment it is
+  // for: the operator holds a single working account at a time, and carrying
+  // two half-filled ones only invites the wrong pair going live. Switching
+  // environments means pasting the other triple in, which is a one-off.
+  //
+  // No store id here on purpose. This is a marketplace - every shop ships
+  // from its own address, so the pickup store is per shop (see
+  // `shop_courier_stores`) and a platform-wide one would collect every
+  // parcel from a single door.
   carrybeeEnabled: boolean('carrybee_enabled').notNull().default(false),
-  // true = the sandbox credentials and sandbox.carrybee.com are in use.
-  carrybeeSandbox: boolean('carrybee_sandbox').notNull().default(true),
-  // Production triple.
+  // false = sandbox.carrybee.com. Default off so a fresh install cannot
+  // accidentally book real parcels before anything has been tested.
+  carrybeeProduction: boolean('carrybee_production').notNull().default(false),
   carrybeeClientId: text('carrybee_client_id'),
   carrybeeClientSecret: text('carrybee_client_secret'),
   carrybeeClientContext: text('carrybee_client_context'),
-  // The pickup store parcels are collected from, chosen from the account's
-  // store list. Required before a booking can go out. Stores are registered
-  // per environment, so this is per environment too.
-  carrybeeStoreId: varchar('carrybee_store_id', { length: 64 }),
-  // Sandbox triple, same shape.
-  carrybeeSandboxClientId: text('carrybee_sandbox_client_id'),
-  carrybeeSandboxClientSecret: text('carrybee_sandbox_client_secret'),
-  carrybeeSandboxClientContext: text('carrybee_sandbox_client_context'),
-  carrybeeSandboxStoreId: varchar('carrybee_sandbox_store_id', { length: 64 }),
   // Secret CarryBee sends in X-CB-Webhook-Integration-Header and expects
-  // echoed back. Its Webhook Integration screen registers a URL per
-  // environment ("Try Sandbox"), each with its own secret, so both are held.
-  // A callback carries no environment marker, so the route accepts either -
-  // it cannot tell them apart, and a consignment id only exists in one.
+  // echoed back, taken from its Webhook Integration screen.
   carrybeeWebhookSecret: text('carrybee_webhook_secret'),
-  carrybeeSandboxWebhookSecret: text('carrybee_sandbox_webhook_secret'),
-  // Steadfast (portal.packzy.com), kept as a fallback carrier.
+  // Steadfast (portal.packzy.com), kept as a fallback carrier. Routes on the
+  // written address, so it needs no pickup store at all.
   steadfastEnabled: boolean('steadfast_enabled').notNull().default(false),
   steadfastApiKey: text('steadfast_api_key'),
   steadfastSecretKey: text('steadfast_secret_key'),
-  // Pathao (api-hermes.pathao.com), kept as a fallback carrier.
+  // Pathao (api-hermes.pathao.com), kept as a fallback carrier. Its pickup
+  // store is per shop for the same reason CarryBee's is.
   pathaoEnabled: boolean('pathao_enabled').notNull().default(false),
-  pathaoSandbox: boolean('pathao_sandbox').notNull().default(false),
+  pathaoProduction: boolean('pathao_production').notNull().default(false),
   pathaoClientId: text('pathao_client_id'),
   pathaoClientSecret: text('pathao_client_secret'),
   pathaoUsername: text('pathao_username'),
   pathaoPassword: text('pathao_password'),
-  pathaoStoreId: varchar('pathao_store_id', { length: 40 }),
   // When on, a shop may only ship through the platform courier: the manual
   // Shipped/Delivered steps disappear and an order can't leave 'HandedOver'
   // without a consignment behind it. Off by default so enabling the feature

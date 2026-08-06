@@ -40,6 +40,7 @@ import {
 } from '../settlements/settlement-core';
 import { EmailOtpService } from '../auth/email-otp.service';
 import { BlockedWordsService } from '../blocked-words/blocked-words.service';
+import { ShopCourierStoresService } from '../gateways/shop-courier-stores.service';
 import { StorageService } from '../storage/storage.service';
 import { ProductResponse } from '../products/dto/product.response';
 import { SubscriptionsService } from '../subscriptions/subscriptions.service';
@@ -100,6 +101,7 @@ export class ShopsService {
     private readonly blockedWords: BlockedWordsService,
     private readonly storage: StorageService,
     private readonly emailOtp: EmailOtpService,
+    private readonly courierStores: ShopCourierStoresService,
   ) {}
 
   /** Live handle availability check for the onboarding wizard. */
@@ -416,6 +418,27 @@ export class ShopsService {
     if (dto.botChatEnabled !== undefined) {
       patch.botChatEnabled = dto.botChatEnabled;
     }
+    // Pickup address. Empty clears, same as the support contacts.
+    if (dto.pickupContactName !== undefined) {
+      patch.pickupContactName = dto.pickupContactName.trim() || null;
+    }
+    if (dto.pickupPhone !== undefined) {
+      patch.pickupPhone = dto.pickupPhone.trim() || null;
+    }
+    if (dto.pickupAddress !== undefined) {
+      patch.pickupAddress = dto.pickupAddress.trim() || null;
+    }
+    if (dto.pickupCityId !== undefined) patch.pickupCityId = dto.pickupCityId;
+    if (dto.pickupZoneId !== undefined) patch.pickupZoneId = dto.pickupZoneId;
+    if (dto.pickupAreaId !== undefined) patch.pickupAreaId = dto.pickupAreaId;
+    // A pickup store is registered with the courier from this address and
+    // cannot be re-addressed through their API, so a seller who moves needs a
+    // fresh one. Dropping the cached id makes the next booking register it.
+    const movedPickup =
+      dto.pickupAddress !== undefined ||
+      dto.pickupCityId !== undefined ||
+      dto.pickupZoneId !== undefined ||
+      dto.pickupAreaId !== undefined;
     if (dto.brandId) {
       const swatch = BRAND_SWATCHES[dto.brandId];
       patch.brandId = dto.brandId;
@@ -453,6 +476,9 @@ export class ShopsService {
       .set(patch)
       .where(eq(shops.id, id))
       .returning();
+    if (movedPickup) {
+      await this.courierStores.forget(id);
+    }
     // Both callers of applyUpdate are seller-side (owner PATCH and the
     // console PATCH), so the reply carries the seller-only settings. The
     // public storefront reads go through getByHandle, which does not.

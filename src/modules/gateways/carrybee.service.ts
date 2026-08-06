@@ -25,8 +25,6 @@ export interface CarrybeeConfig {
   clientId: string;
   clientSecret: string;
   clientContext: string;
-  /** Pickup store parcels are collected from; required to book. */
-  storeId: string | null;
   sandbox: boolean;
 }
 
@@ -234,8 +232,14 @@ export class CarrybeeService {
       }));
   }
 
-  /** Register a pickup store. CarryBee returns no body, so the caller
-   *  re-reads the store list to find the new id. */
+  /**
+   * Register a pickup store and return its id.
+   *
+   * CarryBee's create call answers with no body, so the id is found by
+   * diffing the store list either side of it. Matching on name would be
+   * wrong - two sellers may trade under the same name, and CarryBee does not
+   * make the name unique.
+   */
   async createStore(
     config: CarrybeeConfig,
     input: {
@@ -247,19 +251,27 @@ export class CarrybeeService {
       zoneId: number;
       areaId: number;
     },
-  ): Promise<void> {
+  ): Promise<string> {
+    const before = new Set((await this.stores(config)).map((s) => s.id));
     await this.request(config, '/api/v2/stores', {
       method: 'POST',
       body: {
         name: input.name.slice(0, 30),
         contact_person_name: input.contactPersonName.slice(0, 30),
         contact_person_number: toLocalPhone(input.contactPersonNumber),
-        address: input.address.slice(0, 100),
+        address: padStoreAddress(input.address),
         city_id: input.cityId,
         zone_id: input.zoneId,
         area_id: input.areaId,
       },
     });
+    const created = (await this.stores(config)).find((s) => !before.has(s.id));
+    if (!created) {
+      throw new ServiceUnavailableException(
+        'CarryBee accepted the pickup store but did not list it - try booking again in a moment.',
+      );
+    }
+    return created.id;
   }
 
   // ── Shipments ───────────────────────────────────────────────────
@@ -272,6 +284,8 @@ export class CarrybeeService {
   async createOrder(
     config: CarrybeeConfig,
     input: {
+      /** The shop's own pickup store - see ShopCourierStoresService. */
+      storeId: string;
       merchantOrderId: string;
       recipientName: string;
       recipientPhone: string;
@@ -286,11 +300,6 @@ export class CarrybeeService {
       description?: string;
     },
   ): Promise<CarrybeeConsignment> {
-    if (!config.storeId) {
-      throw new BadRequestException(
-        'Pick the CarryBee pickup store in the platform console before booking.',
-      );
-    }
     // CarryBee caps a collectable at ৳1,00,000. Silently sending less would
     // hand the seller a parcel that collects the wrong money, so refuse.
     const codTaka = Math.round(input.codAmountCents / 100);
@@ -312,7 +321,7 @@ export class CarrybeeService {
       }>(config, '/api/v2/orders', {
         method: 'POST',
         body: {
-          store_id: config.storeId,
+          store_id: input.storeId,
           merchant_order_id: input.merchantOrderId.slice(0, 49),
           delivery_type: DELIVERY_TYPE_NORMAL,
           product_type: PRODUCT_TYPE_PARCEL,
@@ -476,6 +485,12 @@ function clamp(value: number, min: number, max: number): number {
 function padAddress(raw: string): string {
   const trimmed = raw.trim().slice(0, 200);
   return trimmed.length >= 10 ? trimmed : `${trimmed} (address as given)`;
+}
+
+/** Store addresses are capped at 100, with the same 3-character floor. */
+function padStoreAddress(raw: string): string {
+  const trimmed = raw.trim().slice(0, 100);
+  return trimmed.length >= 3 ? trimmed : `${trimmed} (as given)`;
 }
 
 /** Statuses arrive as labels; store them lowercase-underscored so the UI

@@ -16,21 +16,6 @@ export type ActiveCourier =
   | { provider: 'steadfast'; config: SteadfastConfig }
   | { provider: 'pathao'; config: PathaoConfig };
 
-/** Which of CarryBee's two credential sets a call means. */
-export type CarrybeeEnv = 'live' | 'sandbox';
-
-/** One CarryBee environment, secrets reduced to whether they are stored. */
-export interface CarrybeeEnvView {
-  clientId: string | null;
-  /** Not a secret on CarryBee's own console either - it shows it in clear. */
-  clientContext: string | null;
-  storeId: string | null;
-  hasSecret: boolean;
-  /** The webhook registered for this environment has a secret stored. */
-  hasWebhookSecret: boolean;
-  configured: boolean;
-}
-
 /** What the operator console sees: everything except the secret values. */
 export interface CourierSettingsView {
   /** The provider bookings go through; null = no courier configured. */
@@ -39,11 +24,14 @@ export interface CourierSettingsView {
   courierRequired: boolean;
   carrybee: {
     enabled: boolean;
-    /** true = the sandbox pair and sandbox.carrybee.com are in use. */
-    sandbox: boolean;
-    /** Whether the *live* environment's credentials are complete. */
+    /** false = sandbox.carrybee.com. */
+    production: boolean;
+    clientId: string | null;
+    /** Not a secret on CarryBee's own console either - it shows it in clear. */
+    clientContext: string | null;
+    hasSecret: boolean;
+    hasWebhookSecret: boolean;
     configured: boolean;
-    environments: Record<CarrybeeEnv, CarrybeeEnvView>;
   };
   steadfast: {
     enabled: boolean;
@@ -53,32 +41,22 @@ export interface CourierSettingsView {
   };
   pathao: {
     enabled: boolean;
-    sandbox: boolean;
+    production: boolean;
     clientId: string | null;
     username: string | null;
-    storeId: string | null;
     hasSecret: boolean;
     hasPassword: boolean;
     configured: boolean;
   };
 }
 
-/** Credential fields for one environment; omitted secrets keep their value. */
-export interface CarrybeeEnvPatch {
+export interface UpdateCarrybeePatch {
+  enabled?: boolean;
+  production?: boolean;
   clientId?: string;
   clientSecret?: string;
   clientContext?: string;
-  storeId?: string;
-  /** Secret CarryBee echoes for the webhook registered on this environment. */
   webhookSecret?: string;
-}
-
-export interface UpdateCarrybeePatch {
-  enabled?: boolean;
-  sandbox?: boolean;
-  /** Both may be written at once - the console shows both cards. */
-  live?: CarrybeeEnvPatch;
-  sandboxCreds?: CarrybeeEnvPatch;
 }
 
 export interface UpdateSteadfastPatch {
@@ -89,12 +67,11 @@ export interface UpdateSteadfastPatch {
 
 export interface UpdatePathaoPatch {
   enabled?: boolean;
-  sandbox?: boolean;
+  production?: boolean;
   clientId?: string;
   clientSecret?: string;
   username?: string;
   password?: string;
-  storeId?: string;
 }
 
 /**
@@ -135,43 +112,12 @@ export class CourierSettingsService {
 
   // ── Completeness ────────────────────────────────────────────────
 
-  /** Which environment is live right now. */
-  private liveEnv(row?: PlatformSettingsRow): CarrybeeEnv {
-    return row?.carrybeeSandbox === false ? 'live' : 'sandbox';
-  }
-
-  /** The stored triple for one environment, secrets included. */
-  private carrybeeCreds(
-    row: PlatformSettingsRow,
-    env: CarrybeeEnv,
-  ): {
-    clientId: string | null;
-    clientSecret: string | null;
-    clientContext: string | null;
-    storeId: string | null;
-  } {
-    return env === 'sandbox'
-      ? {
-          clientId: row.carrybeeSandboxClientId,
-          clientSecret: row.carrybeeSandboxClientSecret,
-          clientContext: row.carrybeeSandboxClientContext,
-          storeId: row.carrybeeSandboxStoreId,
-        }
-      : {
-          clientId: row.carrybeeClientId,
-          clientSecret: row.carrybeeClientSecret,
-          clientContext: row.carrybeeClientContext,
-          storeId: row.carrybeeStoreId,
-        };
-  }
-
-  private carrybeeComplete(
-    row?: PlatformSettingsRow,
-    env?: CarrybeeEnv,
-  ): boolean {
-    if (!row) return false;
-    const c = this.carrybeeCreds(row, env ?? this.liveEnv(row));
-    return !!(c.clientId && c.clientSecret && c.clientContext);
+  private carrybeeComplete(row?: PlatformSettingsRow): boolean {
+    return !!(
+      row?.carrybeeClientId &&
+      row.carrybeeClientSecret &&
+      row.carrybeeClientContext
+    );
   }
 
   private steadfastComplete(row?: PlatformSettingsRow): boolean {
@@ -194,10 +140,7 @@ export class CourierSettingsService {
     const row = await this.row();
     if (!row) return null;
     if (row.carrybeeEnabled && this.carrybeeComplete(row)) {
-      return {
-        provider: 'carrybee',
-        config: this.toCarrybeeConfig(row, this.liveEnv(row)),
-      };
+      return { provider: 'carrybee', config: this.toCarrybeeConfig(row) };
     }
     if (row.steadfastEnabled && this.steadfastComplete(row)) {
       return {
@@ -220,17 +163,10 @@ export class CourierSettingsService {
    * platform over to CarryBee, and the console's store pickers need the
    * credentials before the provider can be enabled at all.
    *
-   * `env` overrides which CarryBee credential pair is used, so the console can
-   * load stores or test a connection for the environment that isn't live yet.
-   * Defaults to whichever one bookings currently run on.
    */
-  async carrybeeConfig(env?: CarrybeeEnv): Promise<CarrybeeConfig | null> {
+  async carrybeeConfig(): Promise<CarrybeeConfig | null> {
     const row = await this.row();
-    if (!row) return null;
-    const target = env ?? this.liveEnv(row);
-    return this.carrybeeComplete(row, target)
-      ? this.toCarrybeeConfig(row, target)
-      : null;
+    return this.carrybeeComplete(row) ? this.toCarrybeeConfig(row!) : null;
   }
 
   async steadfastConfig(): Promise<SteadfastConfig | null> {
@@ -245,19 +181,11 @@ export class CourierSettingsService {
     return this.pathaoComplete(row) ? this.toPathaoConfig(row!) : null;
   }
 
-  /**
-   * Every secret a CarryBee callback may legitimately carry.
-   *
-   * The webhook is registered per environment, each with its own secret, and
-   * the callback itself says nothing about which environment sent it - so any
-   * configured one is accepted. Empty means nothing is configured, and the
-   * route then rejects everything rather than trusting the internet.
-   */
-  async carrybeeWebhookSecrets(): Promise<string[]> {
+  /** The secret CarryBee must echo on its webhook, or null if unset - in
+   *  which case the route rejects everything rather than trusting callers. */
+  async carrybeeWebhookSecret(): Promise<string | null> {
     const row = await this.row();
-    return [row?.carrybeeWebhookSecret, row?.carrybeeSandboxWebhookSecret]
-      .map((s) => s?.trim())
-      .filter((s): s is string => !!s);
+    return row?.carrybeeWebhookSecret?.trim() || null;
   }
 
   /** Whether shops are confined to the platform courier for fulfilment. */
@@ -266,19 +194,12 @@ export class CourierSettingsService {
     return row?.courierRequired ?? false;
   }
 
-  private toCarrybeeConfig(
-    row: PlatformSettingsRow,
-    env: CarrybeeEnv,
-  ): CarrybeeConfig {
-    const c = this.carrybeeCreds(row, env);
+  private toCarrybeeConfig(row: PlatformSettingsRow): CarrybeeConfig {
     return {
-      clientId: c.clientId!,
-      clientSecret: c.clientSecret!,
-      clientContext: c.clientContext!,
-      storeId: c.storeId,
-      // The host follows the credentials, never the stored flag - otherwise
-      // a lookup for the non-live environment would hit the wrong base URL.
-      sandbox: env === 'sandbox',
+      clientId: row.carrybeeClientId!,
+      clientSecret: row.carrybeeClientSecret!,
+      clientContext: row.carrybeeClientContext!,
+      sandbox: !row.carrybeeProduction,
     };
   }
 
@@ -288,39 +209,7 @@ export class CourierSettingsService {
       clientSecret: row.pathaoClientSecret!,
       username: row.pathaoUsername!,
       password: row.pathaoPassword!,
-      storeId: row.pathaoStoreId,
-      sandbox: row.pathaoSandbox,
-    };
-  }
-
-  /** One environment's card. The secret is the only value held back - the
-   *  client id and context are readable on CarryBee's own console too, and
-   *  hiding them would leave an operator unable to tell which account is
-   *  stored. */
-  private carrybeeEnvView(
-    row: PlatformSettingsRow | undefined,
-    env: CarrybeeEnv,
-  ): CarrybeeEnvView {
-    if (!row) {
-      return {
-        clientId: null,
-        clientContext: null,
-        storeId: null,
-        hasSecret: false,
-        hasWebhookSecret: false,
-        configured: false,
-      };
-    }
-    const c = this.carrybeeCreds(row, env);
-    return {
-      clientId: c.clientId,
-      clientContext: c.clientContext,
-      storeId: c.storeId,
-      hasSecret: !!c.clientSecret,
-      hasWebhookSecret: !!(env === 'sandbox'
-        ? row.carrybeeSandboxWebhookSecret
-        : row.carrybeeWebhookSecret),
-      configured: this.carrybeeComplete(row, env),
+      sandbox: !row.pathaoProduction,
     };
   }
 
@@ -332,12 +221,14 @@ export class CourierSettingsService {
       courierRequired: row?.courierRequired ?? false,
       carrybee: {
         enabled: row?.carrybeeEnabled ?? false,
-        sandbox: row?.carrybeeSandbox ?? true,
+        production: row?.carrybeeProduction ?? false,
+        clientId: row?.carrybeeClientId ?? null,
+        // Readable on CarryBee's own console too, so hiding it would only
+        // leave an operator unable to tell which account is stored.
+        clientContext: row?.carrybeeClientContext ?? null,
+        hasSecret: !!row?.carrybeeClientSecret,
+        hasWebhookSecret: !!row?.carrybeeWebhookSecret,
         configured: this.carrybeeComplete(row),
-        environments: {
-          live: this.carrybeeEnvView(row, 'live'),
-          sandbox: this.carrybeeEnvView(row, 'sandbox'),
-        },
       },
       steadfast: {
         enabled: row?.steadfastEnabled ?? false,
@@ -347,10 +238,9 @@ export class CourierSettingsService {
       },
       pathao: {
         enabled: row?.pathaoEnabled ?? false,
-        sandbox: row?.pathaoSandbox ?? false,
+        production: row?.pathaoProduction ?? false,
         clientId: row?.pathaoClientId ?? null,
         username: row?.pathaoUsername ?? null,
-        storeId: row?.pathaoStoreId ?? null,
         hasSecret: !!row?.pathaoClientSecret,
         hasPassword: !!row?.pathaoPassword,
         configured: this.pathaoComplete(row),
@@ -360,25 +250,34 @@ export class CourierSettingsService {
 
   // ── Writes ──────────────────────────────────────────────────────
 
-  /** Patch CarryBee; omitted secret fields keep their stored values. Either
-   *  environment's credentials can be written, whichever one is live. */
+  /** Patch CarryBee; omitted secret fields keep their stored values. */
   async updateCarrybee(
     patch: UpdateCarrybeePatch,
   ): Promise<CourierSettingsView> {
     const merged = await this.patch({
-      ...(patch.sandbox !== undefined && { carrybeeSandbox: patch.sandbox }),
-      ...envColumns(patch.live, 'live'),
-      ...envColumns(patch.sandboxCreds, 'sandbox'),
+      ...(patch.production !== undefined && {
+        carrybeeProduction: patch.production,
+      }),
+      ...(patch.clientId !== undefined && {
+        carrybeeClientId: trimOrNull(patch.clientId),
+      }),
+      ...(patch.clientSecret !== undefined && {
+        carrybeeClientSecret: trimOrNull(patch.clientSecret),
+      }),
+      ...(patch.clientContext !== undefined && {
+        carrybeeClientContext: trimOrNull(patch.clientContext),
+      }),
+      ...(patch.webhookSecret !== undefined && {
+        carrybeeWebhookSecret: trimOrNull(patch.webhookSecret),
+      }),
     });
-    // Enabling checks the environment that will actually be used, so a shop
-    // is never handed a courier whose live half was never filled in.
-    const env = this.liveEnv(merged);
+    // No pickup store to check for: each shop registers its own on first
+    // booking, from its own address.
     await this.setEnabled(
       'carrybee',
       patch.enabled,
-      this.carrybeeComplete(merged, env) &&
-        !!this.carrybeeCreds(merged, env).storeId,
-      `Add the CarryBee ${env === 'sandbox' ? 'sandbox' : 'production'} client ID, secret and context, and pick a pickup store, before enabling it.`,
+      this.carrybeeComplete(merged),
+      'Add the CarryBee client ID, secret and context before enabling it.',
     );
     return this.view();
   }
@@ -407,7 +306,9 @@ export class CourierSettingsService {
   /** Patch Pathao; omitted secret fields keep their stored values. */
   async updatePathao(patch: UpdatePathaoPatch): Promise<CourierSettingsView> {
     const merged = await this.patch({
-      ...(patch.sandbox !== undefined && { pathaoSandbox: patch.sandbox }),
+      ...(patch.production !== undefined && {
+        pathaoProduction: patch.production,
+      }),
       ...(patch.clientId !== undefined && {
         pathaoClientId: trimOrNull(patch.clientId),
       }),
@@ -420,15 +321,12 @@ export class CourierSettingsService {
       ...(patch.password !== undefined && {
         pathaoPassword: trimOrNull(patch.password),
       }),
-      ...(patch.storeId !== undefined && {
-        pathaoStoreId: trimOrNull(patch.storeId),
-      }),
     });
     await this.setEnabled(
       'pathao',
       patch.enabled,
-      this.pathaoComplete(merged) && !!merged.pathaoStoreId,
-      'Add the Pathao credentials and pick a store before enabling it.',
+      this.pathaoComplete(merged),
+      'Add the Pathao credentials before enabling it.',
     );
     return this.view();
   }
@@ -515,38 +413,4 @@ function enabledColumn(
 
 function trimOrNull(raw: string): string | null {
   return raw.trim() || null;
-}
-
-/** Map one environment's patch onto its own four columns. */
-function envColumns(
-  patch: CarrybeeEnvPatch | undefined,
-  env: CarrybeeEnv,
-): Partial<PlatformSettingsRow> {
-  if (!patch) return {};
-  const sb = env === 'sandbox';
-  return {
-    ...(patch.clientId !== undefined && {
-      [sb ? 'carrybeeSandboxClientId' : 'carrybeeClientId']: trimOrNull(
-        patch.clientId,
-      ),
-    }),
-    ...(patch.clientSecret !== undefined && {
-      [sb ? 'carrybeeSandboxClientSecret' : 'carrybeeClientSecret']: trimOrNull(
-        patch.clientSecret,
-      ),
-    }),
-    ...(patch.clientContext !== undefined && {
-      [sb ? 'carrybeeSandboxClientContext' : 'carrybeeClientContext']:
-        trimOrNull(patch.clientContext),
-    }),
-    ...(patch.storeId !== undefined && {
-      [sb ? 'carrybeeSandboxStoreId' : 'carrybeeStoreId']: trimOrNull(
-        patch.storeId,
-      ),
-    }),
-    ...(patch.webhookSecret !== undefined && {
-      [sb ? 'carrybeeSandboxWebhookSecret' : 'carrybeeWebhookSecret']:
-        trimOrNull(patch.webhookSecret),
-    }),
-  };
 }

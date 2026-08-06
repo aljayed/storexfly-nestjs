@@ -1,6 +1,7 @@
 import { relations } from 'drizzle-orm';
 import {
   boolean,
+  integer,
   jsonb,
   pgTable,
   text,
@@ -51,6 +52,20 @@ export const shops = pgTable(
     // Buyer-facing support contacts shown on the storefront. Optional.
     supportEmail: varchar('support_email', { length: 320 }),
     supportPhone: varchar('support_phone', { length: 24 }),
+    // ── Where the courier collects this shop's parcels ─────────────
+    // This is a marketplace: every shop ships from its own address, so the
+    // pickup point belongs to the shop and never to the platform. It is what
+    // the courier's per-shop pickup store is registered from (see
+    // `shop_courier_stores`), which is why the city/zone/area are the
+    // courier's own numeric ids and not free text.
+    //
+    // Never shown to buyers - it is a warehouse door, not a shopfront.
+    pickupContactName: varchar('pickup_contact_name', { length: 60 }),
+    pickupPhone: varchar('pickup_phone', { length: 24 }),
+    pickupAddress: varchar('pickup_address', { length: 200 }),
+    pickupCityId: integer('pickup_city_id'),
+    pickupZoneId: integer('pickup_zone_id'),
+    pickupAreaId: integer('pickup_area_id'),
     // Storefront hero banner images, stored inline as data URLs (same approach
     // as product images). Ordered; the storefront rotates through them.
     bannerImages: text('banner_images').array(),
