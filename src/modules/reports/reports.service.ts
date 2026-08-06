@@ -49,8 +49,9 @@ const STAGE_RANK: Record<OrderStatus, number> = {
   New: 0,
   Confirmed: 1,
   Packed: 2,
-  Shipped: 3,
-  Delivered: 4,
+  HandedOver: 3,
+  Shipped: 4,
+  Delivered: 5,
   Cancelled: -1,
 };
 
@@ -59,8 +60,9 @@ const FUNNEL_STAGES: { stage: OrderStatus; rank: number }[] = [
   { stage: 'New', rank: 0 },
   { stage: 'Confirmed', rank: 1 },
   { stage: 'Packed', rank: 2 },
-  { stage: 'Shipped', rank: 3 },
-  { stage: 'Delivered', rank: 4 },
+  { stage: 'HandedOver', rank: 3 },
+  { stage: 'Shipped', rank: 4 },
+  { stage: 'Delivered', rank: 5 },
 ];
 
 /**
@@ -72,9 +74,18 @@ const STAGE_TARGET_DAYS: Record<string, number> = {
   New: 1,
   Confirmed: 2,
   Packed: 2,
+  // A parcel the seller says they handed over but the courier hasn't picked
+  // up is the one worth chasing soonest - nobody is holding it.
+  HandedOver: 1,
   Shipped: 7,
 };
-const OPEN_STATUSES: OrderStatus[] = ['New', 'Confirmed', 'Packed', 'Shipped'];
+const OPEN_STATUSES: OrderStatus[] = [
+  'New',
+  'Confirmed',
+  'Packed',
+  'HandedOver',
+  'Shipped',
+];
 
 /** Products carrying this share of revenue are the ones worth protecting. */
 const PARETO_TARGET = 0.8;

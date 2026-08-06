@@ -9,11 +9,23 @@ import {
 } from 'drizzle-orm/pg-core';
 
 /**
+ * Couriers the platform can book parcels with. Stored on orders as
+ * `courier_provider`, so the strings are part of the data - append, don't
+ * rename.
+ */
+export const COURIER_PROVIDERS = ['carrybee', 'steadfast', 'pathao'] as const;
+export type CourierProvider = (typeof COURIER_PROVIDERS)[number];
+
+/**
  * Platform-wide settings - a single global row managed from the platform-admin
  * console. Holds the brand: either the text wordmark (the rounded "happy" font
  * logotype) or, when set, an uploaded image logo that takes precedence. Every
  * surface - the public storefront included - reads it, so an operator can
  * rebrand without a code change.
+ *
+ * Also holds the platform's own gateway and courier merchant credentials: one
+ * bKash account and one courier account serve every shop, which is what keeps
+ * the money and the parcel trail inside the platform.
  *
  * Singleton: the app seeds one row at boot and always reads/updates the first.
  */
@@ -54,12 +66,45 @@ export const platformSettings = pgTable('platform_settings', {
   bkashAppSecret: text('bkash_app_secret'),
   bkashUsername: text('bkash_username'),
   bkashPassword: text('bkash_password'),
-  // ── Steadfast courier credentials (LEGACY, no longer read) ──────
-  // Couriers moved to per-shop credentials in `shop_couriers`; these
-  // columns only preserve what the operator had entered before that.
+  // ── Couriers (platform-held merchant accounts) ──────────────────
+  // Every parcel on the platform is booked on the operator's own courier
+  // account, never a seller's: the courier is the one party in the flow a
+  // shop cannot edit, so its consignment - not the seller's word - is what
+  // moves an order to Shipped/Delivered and what the sales meter trusts.
+  //
+  // At most one provider is `enabled` at a time (enabling one clears the
+  // others); `courierRequired` then decides whether a shop may still ship a
+  // parcel outside it. Secrets never leave the API in readable form.
+  //
+  // CarryBee (developers.carrybee.com) - the primary integration.
+  carrybeeEnabled: boolean('carrybee_enabled').notNull().default(false),
+  carrybeeSandbox: boolean('carrybee_sandbox').notNull().default(true),
+  carrybeeClientId: text('carrybee_client_id'),
+  carrybeeClientSecret: text('carrybee_client_secret'),
+  carrybeeClientContext: text('carrybee_client_context'),
+  // The pickup store parcels are collected from, chosen from the account's
+  // store list. Required before a booking can go out.
+  carrybeeStoreId: varchar('carrybee_store_id', { length: 64 }),
+  // Shared secret CarryBee echoes in X-CB-Webhook-Integration-Header. The
+  // webhook route rejects anything that doesn't carry it.
+  carrybeeWebhookSecret: text('carrybee_webhook_secret'),
+  // Steadfast (portal.packzy.com), kept as a fallback carrier.
   steadfastEnabled: boolean('steadfast_enabled').notNull().default(false),
   steadfastApiKey: text('steadfast_api_key'),
   steadfastSecretKey: text('steadfast_secret_key'),
+  // Pathao (api-hermes.pathao.com), kept as a fallback carrier.
+  pathaoEnabled: boolean('pathao_enabled').notNull().default(false),
+  pathaoSandbox: boolean('pathao_sandbox').notNull().default(false),
+  pathaoClientId: text('pathao_client_id'),
+  pathaoClientSecret: text('pathao_client_secret'),
+  pathaoUsername: text('pathao_username'),
+  pathaoPassword: text('pathao_password'),
+  pathaoStoreId: varchar('pathao_store_id', { length: 40 }),
+  // When on, a shop may only ship through the platform courier: the manual
+  // Shipped/Delivered steps disappear and an order can't leave 'HandedOver'
+  // without a consignment behind it. Off by default so enabling the feature
+  // never strands shops that are mid-fulfilment.
+  courierRequired: boolean('courier_required').notNull().default(false),
   updatedAt: timestamp('updated_at', { withTimezone: true })
     .notNull()
     .defaultNow()

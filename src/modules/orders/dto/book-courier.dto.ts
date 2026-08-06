@@ -3,26 +3,32 @@ import { Type } from 'class-transformer';
 import { IsInt, IsOptional, Min } from 'class-validator';
 
 /**
- * Booking options. Steadfast needs nothing extra; Pathao requires the
- * recipient's city and zone as Pathao's own numeric IDs (area optional),
- * picked by the seller in the booking modal.
+ * Booking options, as the active courier's own place ids.
+ *
+ * Steadfast needs nothing extra - it routes on the written address. Pathao
+ * requires city and zone. CarryBee accepts them too but usually derives them
+ * from the address itself, so the booking modal only asks when that fails.
  */
 export class BookCourierDto {
-  @ApiPropertyOptional({ description: 'Pathao city id (required for Pathao)' })
+  @ApiPropertyOptional({
+    description: 'Courier city id (required for Pathao; optional for CarryBee)',
+  })
   @IsOptional()
   @Type(() => Number)
   @IsInt()
   @Min(1)
   cityId?: number;
 
-  @ApiPropertyOptional({ description: 'Pathao zone id (required for Pathao)' })
+  @ApiPropertyOptional({
+    description: 'Courier zone id (required for Pathao; optional for CarryBee)',
+  })
   @IsOptional()
   @Type(() => Number)
   @IsInt()
   @Min(1)
   zoneId?: number;
 
-  @ApiPropertyOptional({ description: 'Pathao area id (optional)' })
+  @ApiPropertyOptional({ description: 'Courier area id (optional)' })
   @IsOptional()
   @Type(() => Number)
   @IsInt()

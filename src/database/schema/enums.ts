@@ -102,9 +102,17 @@ export const listingTypeEnum = pgEnum('listing_type', ['sale', 'showcase']);
 // Fulfilment pipeline. Buyers land on 'New' (awaiting the seller's confirmation
 // call); the seller confirms - 'Confirmed' - before the order is packed and sent
 // out. 'Cancelled' is a terminal state for orders the customer never confirmed.
-// Enum values are append-only in Postgres, so 'Confirmed'/'Cancelled' sit at the
-// end here - the logical order (New → Confirmed → Packed → Shipped → Delivered)
-// is enforced by STATUS_FLOW in the orders service and the UI, not by this list.
+//
+// 'HandedOver' is the hinge: it is the last step the seller drives by hand. Up
+// to and including it the shop owns the order; past it the courier does, and
+// 'Shipped'/'Delivered' (and a doorstep cancellation) only ever arrive from the
+// courier's webhook or a status refresh. That is what stops a shop from
+// steering an order around the billing meter by hand.
+//
+// Enum values are append-only in Postgres, so 'Confirmed'/'Cancelled' and the
+// later 'HandedOver' sit at the end here - the logical order
+// (New → Confirmed → Packed → HandedOver → Shipped → Delivered) is enforced by
+// STATUS_FLOW in the orders service and the UI, not by this list.
 export const orderStatusEnum = pgEnum('order_status', [
   'New',
   'Packed',
@@ -112,6 +120,7 @@ export const orderStatusEnum = pgEnum('order_status', [
   'Delivered',
   'Confirmed',
   'Cancelled',
+  'HandedOver',
 ]);
 
 // 'Paid' = money confirmed received (gateway-verified or seller-confirmed).

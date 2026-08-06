@@ -4,7 +4,7 @@ import { BlockedWordsModule } from '../blocked-words/blocked-words.module';
 import { GatewaysModule } from '../gateways/gateways.module';
 import { MailModule } from '../mail/mail.module';
 import { SubscriptionsModule } from '../subscriptions/subscriptions.module';
-import { ShopCouriersController } from './shop-couriers.controller';
+import { ShopCourierController } from './shop-courier.controller';
 import { ShopsController } from './shops.controller';
 import { ShopsService } from './shops.service';
 
@@ -19,7 +19,7 @@ import { ShopsService } from './shops.service';
     GatewaysModule,
     MailModule,
   ],
-  controllers: [ShopsController, ShopCouriersController],
+  controllers: [ShopsController, ShopCourierController],
   providers: [ShopsService, EmailOtpService],
   exports: [ShopsService],
 })

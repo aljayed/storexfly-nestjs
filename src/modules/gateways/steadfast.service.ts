@@ -3,10 +3,13 @@ import {
   Logger,
   ServiceUnavailableException,
 } from '@nestjs/common';
-import type { ShopSteadfastConfig } from './shop-courier-settings.service';
-
 const STEADFAST_BASE = 'https://portal.packzy.com/api/v1';
 const REQUEST_TIMEOUT_MS = 30_000;
+
+export interface SteadfastConfig {
+  apiKey: string;
+  secretKey: string;
+}
 
 export interface SteadfastConsignment {
   consignmentId: string;
@@ -15,15 +18,16 @@ export interface SteadfastConsignment {
 }
 
 /**
- * Steadfast Courier client (portal.packzy.com API). Credentials are per-shop,
- * set by the seller in the console (see ShopCourierSettingsService).
+ * Steadfast Courier client (portal.packzy.com API). Credentials are the
+ * platform's own, held on `platform_settings` and managed from the operator
+ * console - never a seller's (see CourierSettingsService).
  */
 @Injectable()
 export class SteadfastService {
   private readonly logger = new Logger(SteadfastService.name);
 
   private async request<T>(
-    config: ShopSteadfastConfig,
+    config: SteadfastConfig,
     path: string,
     init?: { method?: string; body?: unknown },
   ): Promise<T> {
@@ -49,7 +53,7 @@ export class SteadfastService {
    * buyer on delivery (0 for prepaid orders).
    */
   async createConsignment(
-    config: ShopSteadfastConfig,
+    config: SteadfastConfig,
     input: {
       invoice: string;
       recipientName: string;
@@ -100,7 +104,7 @@ export class SteadfastService {
 
   /** Current delivery_status for a consignment ('pending', 'delivered', …). */
   async status(
-    config: ShopSteadfastConfig,
+    config: SteadfastConfig,
     consignmentId: string,
   ): Promise<string | null> {
     try {

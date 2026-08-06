@@ -12,6 +12,7 @@ import { PlatformBillingController } from './platform-billing.controller';
 import { PlatformBlockedWordsController } from './platform-blocked-words.controller';
 import { PlatformBrandingController } from './platform-branding.controller';
 import { PlatformCouponsController } from './platform-coupons.controller';
+import { PlatformCouriersController } from './platform-couriers.controller';
 import { PlatformGatewaysController } from './platform-gateways.controller';
 import { PlatformOverviewController } from './platform-overview.controller';
 import { PlatformOverviewService } from './platform-overview.service';
@@ -39,6 +40,7 @@ import { PlatformReferralsController } from './platform-referrals.controller';
     PlatformReferralsController,
     PlatformBrandingController,
     PlatformGatewaysController,
+    PlatformCouriersController,
     PlatformOverviewController,
     PlatformBlockedWordsController,
   ],

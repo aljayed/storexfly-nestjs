@@ -67,13 +67,30 @@ export const orders = pgTable(
     couponCode: varchar('coupon_code', { length: 40 }),
     discountCents: integer('discount_cents').notNull().default(0),
     // ── Courier consignment (set when the seller books) ────────────
-    // Which provider booked it ('steadfast' | 'pathao'); null on legacy
-    // rows booked before per-shop couriers, which were all Steadfast.
+    // Which provider booked it ('carrybee' | 'steadfast' | 'pathao'); null on
+    // legacy rows booked before the provider was recorded, which were all
+    // Steadfast. Bookings run on the platform's own courier account.
     courierProvider: varchar('courier_provider', { length: 20 }),
-    courierConsignmentId: varchar('courier_consignment_id', { length: 40 }),
-    courierTrackingCode: varchar('courier_tracking_code', { length: 40 }),
+    courierConsignmentId: varchar('courier_consignment_id', { length: 64 }),
+    courierTrackingCode: varchar('courier_tracking_code', { length: 64 }),
     // Raw delivery status from the provider ('pending', 'delivered', …).
     courierStatus: varchar('courier_status', { length: 40 }),
+    // When the provider stamped that status. Webhooks can arrive out of
+    // order, so an event older than what's stored is dropped rather than
+    // rolling the order backwards.
+    courierStatusAt: timestamp('courier_status_at', { withTimezone: true }),
+    // What the courier quoted and what it actually collected at the door.
+    // `courierCollectedCents` is the figure a COD settlement should trust -
+    // a partial delivery collects less than the order total.
+    courierDeliveryFeeCents: integer('courier_delivery_fee_cents'),
+    courierCodFeeCents: integer('courier_cod_fee_cents'),
+    courierCollectedCents: integer('courier_collected_cents'),
+    // Why the parcel came back, straight from the courier ('customer refused',
+    // …). Set on a return/failed delivery so the seller sees the reason.
+    courierFailureReason: varchar('courier_failure_reason', { length: 255 }),
+    // When the seller physically handed the parcel over - the moment the
+    // order stops being theirs to advance.
+    handedOverAt: timestamp('handed_over_at', { withTimezone: true }),
     placedAt: timestamp('placed_at', { withTimezone: true })
       .notNull()
       .defaultNow(),

@@ -5,6 +5,7 @@ import { GatewaysModule } from '../gateways/gateways.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { SettlementsModule } from '../settlements/settlements.module';
 import { ShopCouponsModule } from '../shop-coupons/shop-coupons.module';
+import { CourierWebhookController } from './courier-webhook.controller';
 import { OrdersController } from './orders.controller';
 import { OrdersService } from './orders.service';
 import { PaymentsController } from './payments.controller';
@@ -19,7 +20,7 @@ import { PaymentsService } from './payments.service';
     ChatModule,
     ShopCouponsModule,
   ],
-  controllers: [OrdersController, PaymentsController],
+  controllers: [OrdersController, PaymentsController, CourierWebhookController],
   providers: [OrdersService, PaymentsService],
   exports: [OrdersService],
 })

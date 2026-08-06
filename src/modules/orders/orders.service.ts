@@ -46,8 +46,15 @@ import {
 import type { OrderStatus, SalesChannel } from '../../database/schema/enums';
 import { CustomersService } from '../customers/customers.service';
 import { BkashService } from '../gateways/bkash.service';
+import { CarrybeeService } from '../gateways/carrybee.service';
+import {
+  CARRYBEE_EVENTS,
+  CARRYBEE_STATUS_EFFECTS,
+  type CarrybeeWebhookBody,
+  type CourierEffect,
+} from '../gateways/carrybee-events';
+import { CourierSettingsService } from '../gateways/courier-settings.service';
 import { PathaoService } from '../gateways/pathao.service';
-import { ShopCourierSettingsService } from '../gateways/shop-courier-settings.service';
 import { SteadfastService } from '../gateways/steadfast.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { MessagesService } from '../chat/messages.service';
@@ -64,15 +71,35 @@ import { CheckoutResultResponse } from './dto/checkout-result.response';
 import { OrderListResponse } from './dto/order-list.response';
 import { OrderResponse } from './dto/order.response';
 
-/** Allowed forward transitions for the order pipeline. */
+/**
+ * Allowed forward transitions for the order pipeline.
+ *
+ * 'HandedOver' is where the shop's authority ends. Everything up to it is the
+ * seller's to drive by hand; past it only the courier can move the order (see
+ * SELLER_ADVANCEABLE and `applyCourierEffect`), because a shop that can mark
+ * its own orders shipped, delivered or cancelled can steer them around the
+ * sales meter it is billed on.
+ */
 const STATUS_FLOW: Record<OrderStatus, OrderStatus | null> = {
   New: 'Confirmed',
   Confirmed: 'Packed',
-  Packed: 'Shipped',
+  Packed: 'HandedOver',
+  HandedOver: 'Shipped',
   Shipped: 'Delivered',
   Delivered: null,
   Cancelled: null,
 };
+
+/**
+ * The steps a seller may take by hand. 'Shipped' and 'Delivered' are missing
+ * on purpose - those arrive from the courier's webhook, or from a status
+ * refresh against the courier's API, and from nowhere else.
+ */
+const SELLER_ADVANCEABLE: readonly OrderStatus[] = [
+  'New',
+  'Confirmed',
+  'Packed',
+];
 
 /** Statuses from which an order may still be cancelled (before it's packed). */
 const CANCELLABLE: readonly OrderStatus[] = ['New', 'Confirmed'];
@@ -80,13 +107,13 @@ const CANCELLABLE: readonly OrderStatus[] = ['New', 'Confirmed'];
 /** Statuses a buyer may self-cancel from - only before the seller confirms. */
 const BUYER_CANCELLABLE: readonly OrderStatus[] = ['New'];
 
-/** Statuses from which the seller may hand the parcel to the courier. */
+/** Statuses from which the seller may book the parcel with the courier. */
 const COURIER_BOOKABLE: readonly OrderStatus[] = ['Confirmed', 'Packed'];
 
 /**
  * Statuses at which the seller may still propose an amount change: before the
- * parcel ships. Past shipping the total is locked (a courier COD amount is
- * fixed at booking and money has effectively started moving).
+ * parcel leaves their hands. Past handover the total is locked (a courier COD
+ * amount is fixed at booking and money has effectively started moving).
  */
 const AMOUNT_ADJUSTABLE: readonly OrderStatus[] = [
   'New',
@@ -98,6 +125,7 @@ const AMOUNT_ADJUSTABLE: readonly OrderStatus[] = [
 const STATUS_NOTIFICATION: Partial<Record<OrderStatus, string>> = {
   Confirmed: 'has been confirmed by the seller',
   Packed: 'has been packed and is getting ready to ship',
+  HandedOver: 'has been handed to the courier',
   Shipped: 'is on its way',
   Delivered: 'has been delivered - enjoy!',
 };
@@ -165,9 +193,10 @@ export class OrdersService {
     private readonly paymentMethods: PaymentMethodsService,
     private readonly notifications: NotificationsService,
     private readonly bkash: BkashService,
+    private readonly carrybee: CarrybeeService,
     private readonly steadfast: SteadfastService,
     private readonly pathao: PathaoService,
-    private readonly courierSettings: ShopCourierSettingsService,
+    private readonly courierSettings: CourierSettingsService,
     private readonly config: ConfigService,
     private readonly messages: MessagesService,
     private readonly shopCoupons: ShopCouponsService,
@@ -1396,9 +1425,13 @@ export class OrdersService {
   }
 
   /**
-   * Advance the pipeline New→Confirmed→Packed→Shipped→Delivered (one step at
-   * a time). Delivering a COD order also collects its cash: pay flips to
-   * 'Paid' at the doorstep.
+   * Advance the pipeline one step, New→Confirmed→Packed→HandedOver.
+   *
+   * That is as far as a seller can take an order. 'Shipped' and 'Delivered'
+   * belong to the courier - it is the one party here a shop cannot edit - and
+   * arrive through `applyCourierEvent` or `refreshCourier`. Delivering a COD
+   * order also collects its cash, so letting a seller declare a delivery would
+   * let them declare the money too.
    */
   async updateStatus(
     shopId: string,
@@ -1412,13 +1445,27 @@ export class OrdersService {
         `Cannot move an order from ${order.status} to ${next}`,
       );
     }
+    if (!(await this.sellerMayAdvance(order))) {
+      throw new ForbiddenException(
+        `This parcel is with ${this.courierLabel(order.courierProvider)} now - it moves to ${next} when the courier reports it, not from here.`,
+      );
+    }
+    if (next === 'HandedOver') {
+      await this.assertHandoverAllowed(order);
+    }
+    // Only reachable on a manually-delivered order (no consignment, couriers
+    // not mandatory) - a courier-booked one never gets this far by hand.
     const codCollected =
       next === 'Delivered' &&
       order.pay === 'Due' &&
       (await this.isCodOrder(order));
     const [row] = await this.db
       .update(orders)
-      .set({ status: next, ...(codCollected && { pay: 'Paid' as const }) })
+      .set({
+        status: next,
+        ...(next === 'HandedOver' && { handedOverAt: new Date() }),
+        ...(codCollected && { pay: 'Paid' as const }),
+      })
       .where(eq(orders.id, order.id))
       .returning();
     const copy = STATUS_NOTIFICATION[next];
@@ -2181,14 +2228,60 @@ export class OrdersService {
     return row ?? null;
   }
 
-  // ── Courier (Steadfast / Pathao, per-shop) ─────────────────────
+  // ── Courier (platform account: CarryBee / Steadfast / Pathao) ──
+  //
+  // Every parcel is booked on the operator's own courier credentials. That is
+  // deliberate: the courier is the one party in the chain a shop cannot edit,
+  // so its consignment - not the seller's word - decides when an order ships,
+  // is delivered, or comes back.
+
+  /** Display name for a provider code, for messages the seller reads. */
+  private courierLabel(provider: string | null): string {
+    return provider === 'carrybee'
+      ? 'CarryBee'
+      : provider === 'pathao'
+        ? 'Pathao'
+        : provider === 'steadfast'
+          ? 'Steadfast'
+          : 'the courier';
+  }
 
   /**
-   * Book a parcel for a confirmed/packed order through the courier the shop
-   * has enabled (none enabled = the seller delivers manually). The courier
-   * collects the order total in cash when the money is still due (COD),
-   * nothing when it was prepaid. Pathao additionally needs the recipient's
-   * city/zone as Pathao IDs, picked by the seller in the booking modal.
+   * Whether the seller may still advance this order by hand.
+   *
+   * Up to 'HandedOver' they always may. Past it the courier owns the order -
+   * unless no courier is behind it at all and the platform doesn't insist on
+   * one, in which case the seller is the only party who can move it and
+   * manual fulfilment stays open to them.
+   */
+  private async sellerMayAdvance(order: OrderRow): Promise<boolean> {
+    if (SELLER_ADVANCEABLE.includes(order.status)) return true;
+    if (order.courierConsignmentId) return false;
+    return !(await this.courierSettings.courierRequired());
+  }
+
+  /**
+   * Handover is the seller declaring the parcel has physically left. When the
+   * platform requires its courier, that declaration has to be backed by a
+   * consignment - otherwise "handed over" is just a word, and the order could
+   * walk to Delivered with nothing verifiable behind it.
+   */
+  private async assertHandoverAllowed(order: OrderRow): Promise<void> {
+    if (order.courierConsignmentId) return;
+    if (!(await this.courierSettings.courierRequired())) return;
+    throw new BadRequestException(
+      'Book the parcel with the courier before marking it handed over.',
+    );
+  }
+
+  /**
+   * Book a parcel for a confirmed/packed order on the platform's courier
+   * account. The courier collects the order total in cash when the money is
+   * still due (COD), nothing when it was prepaid.
+   *
+   * CarryBee and Pathao need the recipient's city/zone as their own numeric
+   * ids; CarryBee can usually derive them from the written address, and the
+   * booking modal supplies them when it can't.
    */
   async bookCourier(
     shopId: string,
@@ -2219,10 +2312,10 @@ export class OrdersService {
     if (!address) {
       throw new BadRequestException('This order has no delivery address.');
     }
-    const active = await this.courierSettings.activeCourier(shopId);
+    const active = await this.courierSettings.activeCourier();
     if (!active) {
       throw new BadRequestException(
-        'No courier is enabled for this shop - enable Steadfast or Pathao in Settings, or deliver manually.',
+        'No courier is set up on the platform yet - the operator configures it in the platform console.',
       );
     }
     const shipment = {
@@ -2237,13 +2330,46 @@ export class OrdersService {
       consignmentId: string;
       trackingCode: string | null;
       status: string;
+      deliveryFeeCents: number | null;
+      codFeeCents: number | null;
     };
-    if (active.provider === 'steadfast') {
+    if (active.provider === 'carrybee') {
+      // The seller's picks win; otherwise let CarryBee read the address it
+      // was given, and only ask when it can't make sense of it.
+      const place =
+        opts?.cityId && opts.zoneId
+          ? { cityId: opts.cityId, zoneId: opts.zoneId }
+          : await this.carrybee.resolveAddress(active.config, address);
+      if (!place) {
+        throw new BadRequestException(
+          'Pick the delivery city and zone to book with CarryBee.',
+        );
+      }
+      const c = await this.carrybee.createOrder(active.config, {
+        ...shipment,
+        merchantOrderId: shipment.invoice,
+        cityId: place.cityId,
+        zoneId: place.zoneId,
+        areaId: opts?.areaId,
+        itemQuantity: order.qty,
+        description: `Order ${order.reference}`,
+      });
+      // CarryBee has no separate tracking code - the consignment ID is it.
+      booked = {
+        consignmentId: c.consignmentId,
+        trackingCode: c.consignmentId,
+        status: 'created',
+        deliveryFeeCents: c.deliveryFeeCents,
+        codFeeCents: c.codFeeCents,
+      };
+    } else if (active.provider === 'steadfast') {
       const c = await this.steadfast.createConsignment(active.config, shipment);
       booked = {
         consignmentId: c.consignmentId,
         trackingCode: c.trackingCode,
         status: c.status,
+        deliveryFeeCents: null,
+        codFeeCents: null,
       };
     } else {
       if (!opts?.cityId || !opts.zoneId) {
@@ -2258,11 +2384,13 @@ export class OrdersService {
         areaId: opts.areaId,
         itemQuantity: order.qty,
       });
-      // Pathao has no separate tracking code - the consignment ID is it.
+      // Pathao has no separate tracking code either.
       booked = {
         consignmentId: c.consignmentId,
         trackingCode: c.consignmentId,
         status: c.status,
+        deliveryFeeCents: c.deliveryFeeCents,
+        codFeeCents: null,
       };
     }
     const [row] = await this.db
@@ -2272,6 +2400,9 @@ export class OrdersService {
         courierConsignmentId: booked.consignmentId,
         courierTrackingCode: booked.trackingCode,
         courierStatus: booked.status,
+        courierStatusAt: new Date(),
+        courierDeliveryFeeCents: booked.deliveryFeeCents,
+        courierCodFeeCents: booked.codFeeCents,
       })
       .where(eq(orders.id, order.id))
       .returning();
@@ -2282,42 +2413,21 @@ export class OrdersService {
   }
 
   /**
-   * Refresh the consignment's delivery status from its provider. A delivered
-   * parcel completes the order (and collects COD cash); everything else just
-   * updates the badge the seller sees.
+   * Pull the consignment's current state from its provider. This is the
+   * reconciliation path for the webhook - a missed or late delivery event
+   * lands here instead - so it funnels into exactly the same effects.
    */
   async refreshCourier(shopId: string, id: string): Promise<OrderResponse> {
     const order = await this.requireOwned(shopId, id);
     if (!order.courierConsignmentId) {
       throw new NotFoundException('No courier is booked for this order.');
     }
-    const status = await this.courierStatus(shopId, order);
+    const observed = await this.readCourierState(order);
     let row = order;
-    if (status && status !== order.courierStatus) {
-      const delivered =
-        status === 'delivered' &&
-        order.status !== 'Delivered' &&
-        order.status !== 'Cancelled';
-      const codCollected =
-        delivered && order.pay === 'Due' && (await this.isCodOrder(order));
-      [row] = await this.db
-        .update(orders)
-        .set({
-          courierStatus: status,
-          ...(delivered && { status: 'Delivered' as const }),
-          ...(codCollected && { pay: 'Paid' as const }),
-        })
-        .where(eq(orders.id, order.id))
-        .returning();
-      if (delivered) {
-        await this.notifications.orderEvent(
-          this.db,
-          row,
-          'order_status',
-          `Order ${row.reference} delivered`,
-          'Your order has been delivered - enjoy!',
-        );
-      }
+    if (observed) {
+      row =
+        (await this.applyCourierEffect(order.id, observed)) ??
+        (await this.requireOwned(shopId, id));
     }
     const items = await this.db.query.orderItems.findMany({
       where: eq(orderItems.orderId, order.id),
@@ -2325,28 +2435,209 @@ export class OrdersService {
     return OrderResponse.fromRow(row, items);
   }
 
-  /** Ask the provider that booked this consignment for its current status.
-   *  Legacy rows booked before per-shop couriers were all Steadfast. */
-  private async courierStatus(
-    shopId: string,
-    order: OrderRow,
-  ): Promise<string | null> {
-    if (order.courierProvider === 'pathao') {
-      const config = await this.courierSettings.pathaoConfig(shopId);
-      if (!config) {
-        throw new BadRequestException(
-          'Pathao credentials were removed - add them back in Settings to track this parcel.',
+  /**
+   * Apply one CarryBee webhook event to the order behind its consignment.
+   * Returns false when no such order exists (a parcel booked outside the
+   * platform, or one whose order was purged), which the webhook route treats
+   * as an accepted no-op rather than an error - CarryBee retries otherwise.
+   */
+  async applyCourierEvent(body: CarrybeeWebhookBody): Promise<boolean> {
+    const consignmentId = body.consignment_id?.trim();
+    if (!consignmentId || !body.event) return false;
+    const rule = CARRYBEE_EVENTS[body.event];
+    if (!rule) {
+      // An event CarryBee added since this was written: record nothing rather
+      // than guess at what it means for the order.
+      return false;
+    }
+    const order = await this.db.query.orders.findFirst({
+      where: eq(orders.courierConsignmentId, consignmentId),
+    });
+    if (!order) return false;
+    const at = body.timestamptz ? new Date(body.timestamptz) : new Date();
+    await this.applyCourierEffect(order.id, {
+      status: rule.status,
+      effect: rule.effect,
+      at: Number.isNaN(at.getTime()) ? new Date() : at,
+      collectedCents: takaFieldToCents(body.collected_amount),
+      deliveryFeeCents: takaFieldToCents(body.delivery_fee),
+      codFeeCents: takaFieldToCents(body.cod_fee),
+      reason: [body.reason, body.remarks].filter(Boolean).join(' - ') || null,
+    });
+    return true;
+  }
+
+  /**
+   * The single place a courier observation changes an order.
+   *
+   * Runs in a transaction and re-reads the order under it, so a webhook and a
+   * manual refresh landing together can't both act on the same stale row.
+   * Returns the updated row, or null when the observation was ignored.
+   */
+  private async applyCourierEffect(
+    orderId: string,
+    observed: {
+      status: string;
+      effect: CourierEffect;
+      at: Date;
+      collectedCents?: number | null;
+      deliveryFeeCents?: number | null;
+      codFeeCents?: number | null;
+      reason?: string | null;
+    },
+  ): Promise<OrderRow | null> {
+    return this.db.transaction(async (tx) => {
+      const order = await tx.query.orders.findFirst({
+        where: eq(orders.id, orderId),
+      });
+      if (!order) return null;
+      // Webhooks can arrive out of order and a refresh can race one. An
+      // observation older than what's stored would roll the order backwards,
+      // so it's dropped - the newer state is already the truth.
+      if (order.courierStatusAt && order.courierStatusAt > observed.at) {
+        return null;
+      }
+      const nothingNew =
+        order.courierStatus === observed.status &&
+        observed.effect !== 'delivered' &&
+        observed.effect !== 'returned';
+      if (nothingNew) return null;
+
+      const courierPatch = {
+        courierStatus: observed.status,
+        courierStatusAt: observed.at,
+        ...(observed.collectedCents != null && {
+          courierCollectedCents: observed.collectedCents,
+        }),
+        ...(observed.deliveryFeeCents != null && {
+          courierDeliveryFeeCents: observed.deliveryFeeCents,
+        }),
+        ...(observed.codFeeCents != null && {
+          courierCodFeeCents: observed.codFeeCents,
+        }),
+        ...(observed.reason != null && {
+          courierFailureReason: observed.reason.slice(0, 255),
+        }),
+      };
+      // Terminal orders keep their badge updated but never move again.
+      const terminal =
+        order.status === 'Cancelled' || order.status === 'Delivered';
+
+      if (observed.effect === 'returned' && !terminal) {
+        // The parcel is physically back: restock it, release the coupon and
+        // unwind the customer's totals, exactly as a seller-side cancel does.
+        // A returned order is not a sale, and the sales meter agrees.
+        await tx
+          .update(orders)
+          .set(courierPatch)
+          .where(eq(orders.id, order.id));
+        const row = await this.cancelTx(tx, { ...order, ...courierPatch });
+        await this.notifications.orderEvent(
+          tx,
+          row,
+          'order_cancelled',
+          `Order ${row.reference} returned`,
+          'This order came back to the seller and has been cancelled.',
+        );
+        return row;
+      }
+
+      let nextStatus: OrderStatus | null = null;
+      if (!terminal) {
+        if (observed.effect === 'delivered') nextStatus = 'Delivered';
+        else if (observed.effect === 'shipped' && order.status !== 'Shipped') {
+          nextStatus = 'Shipped';
+        }
+      }
+      // Delivery collects the cash on a COD order - which is precisely why a
+      // seller can't declare one.
+      const codCollected =
+        nextStatus === 'Delivered' &&
+        order.pay === 'Due' &&
+        (await this.isCodOrder(order));
+
+      const [row] = await tx
+        .update(orders)
+        .set({
+          ...courierPatch,
+          ...(nextStatus && { status: nextStatus }),
+          ...(nextStatus === 'Shipped' &&
+            !order.handedOverAt && { handedOverAt: observed.at }),
+          ...(codCollected && { pay: 'Paid' as const }),
+        })
+        .where(eq(orders.id, order.id))
+        .returning();
+
+      const copy = nextStatus ? STATUS_NOTIFICATION[nextStatus] : null;
+      if (copy) {
+        await this.notifications.orderEvent(
+          tx,
+          row,
+          'order_status',
+          `Order ${row.reference} ${nextStatus!.toLowerCase()}`,
+          `Your order ${copy}.`,
         );
       }
-      return this.pathao.status(config, order.courierConsignmentId!);
+      return row;
+    });
+  }
+
+  /**
+   * Ask the provider that booked this consignment where it is now, in the
+   * shape `applyCourierEffect` consumes. Legacy rows booked before the
+   * provider was recorded were all Steadfast.
+   */
+  private async readCourierState(order: OrderRow): Promise<{
+    status: string;
+    effect: CourierEffect;
+    at: Date;
+    collectedCents?: number | null;
+    deliveryFeeCents?: number | null;
+    codFeeCents?: number | null;
+    reason?: string | null;
+  } | null> {
+    const consignmentId = order.courierConsignmentId!;
+    if (order.courierProvider === 'carrybee') {
+      const config = await this.courierSettings.carrybeeConfig();
+      if (!config) {
+        throw new BadRequestException(
+          'CarryBee credentials are missing - the operator needs to restore them in the platform console to track this parcel.',
+        );
+      }
+      const details = await this.carrybee.details(config, consignmentId);
+      if (!details?.status) return null;
+      return {
+        status: details.status,
+        effect: CARRYBEE_STATUS_EFFECTS[details.status] ?? 'none',
+        at: details.updatedAt ?? new Date(),
+        collectedCents: details.collectedCents,
+        deliveryFeeCents: details.deliveryFeeCents,
+        codFeeCents: details.codFeeCents,
+        reason: details.reason,
+      };
     }
-    const config = await this.courierSettings.steadfastConfig(shopId);
+    if (order.courierProvider === 'pathao') {
+      const config = await this.courierSettings.pathaoConfig();
+      if (!config) {
+        throw new BadRequestException(
+          'Pathao credentials are missing - the operator needs to restore them in the platform console to track this parcel.',
+        );
+      }
+      const status = await this.pathao.status(config, consignmentId);
+      return status
+        ? { status, effect: legacyEffect(status), at: new Date() }
+        : null;
+    }
+    const config = await this.courierSettings.steadfastConfig();
     if (!config) {
       throw new BadRequestException(
-        'Steadfast credentials are missing - add them in Settings to track this parcel.',
+        'Steadfast credentials are missing - the operator needs to restore them in the platform console to track this parcel.',
       );
     }
-    return this.steadfast.status(config, order.courierConsignmentId!);
+    const status = await this.steadfast.status(config, consignmentId);
+    return status
+      ? { status, effect: legacyEffect(status), at: new Date() }
+      : null;
   }
 
   private async isCodOrder(order: OrderRow): Promise<boolean> {
@@ -2381,4 +2672,29 @@ export class OrdersService {
       .where(eq(orders.shopId, shopId));
     return `#${1001 + value}`;
   }
+}
+
+/**
+ * Money on a CarryBee webhook arrives in Taka, as either a number or a string.
+ * An absent field means "unchanged", not zero, so it stays null.
+ */
+function takaFieldToCents(
+  raw: number | string | undefined | null,
+): number | null {
+  if (raw === undefined || raw === null || raw === '') return null;
+  const value = typeof raw === 'number' ? raw : Number(raw);
+  return Number.isFinite(value) ? Math.round(value * 100) : null;
+}
+
+/**
+ * Effect of a raw Steadfast/Pathao status string. Both report a flat status
+ * rather than a lifecycle, so only the terminal ones mean anything - which is
+ * all the pre-CarryBee code ever acted on.
+ */
+function legacyEffect(status: string): CourierEffect {
+  if (status === 'delivered' || status === 'partial_delivered') {
+    return 'delivered';
+  }
+  if (status === 'cancelled' || status === 'returned') return 'returned';
+  return 'none';
 }

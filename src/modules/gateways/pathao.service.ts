@@ -4,7 +4,16 @@ import {
   Logger,
   ServiceUnavailableException,
 } from '@nestjs/common';
-import type { ShopPathaoConfig } from './shop-courier-settings.service';
+
+export interface PathaoConfig {
+  clientId: string;
+  clientSecret: string;
+  username: string;
+  password: string;
+  /** Merchant store parcels are collected from; required to book. */
+  storeId: string | null;
+  sandbox: boolean;
+}
 
 const PATHAO_BASE = 'https://api-hermes.pathao.com';
 const PATHAO_SANDBOX_BASE = 'https://courier-api-sandbox.pathao.com';
@@ -35,20 +44,21 @@ interface CachedToken {
 }
 
 /**
- * Pathao Courier merchant client (api-hermes.pathao.com). Credentials are
- * per-shop (see ShopCourierSettingsService); an issued access token is cached
- * per credential set until shortly before it expires.
+ * Pathao Courier merchant client (api-hermes.pathao.com). Credentials are the
+ * platform's own, held on `platform_settings` and managed from the operator
+ * console - never a seller's (see CourierSettingsService); an issued access
+ * token is cached per credential set until shortly before it expires.
  */
 @Injectable()
 export class PathaoService {
   private readonly logger = new Logger(PathaoService.name);
   private readonly tokens = new Map<string, CachedToken>();
 
-  private base(config: ShopPathaoConfig): string {
+  private base(config: PathaoConfig): string {
     return config.sandbox ? PATHAO_SANDBOX_BASE : PATHAO_BASE;
   }
 
-  private async token(config: ShopPathaoConfig): Promise<string> {
+  private async token(config: PathaoConfig): Promise<string> {
     const key = `${config.sandbox ? 's' : 'p'}:${config.clientId}:${config.username}`;
     const cached = this.tokens.get(key);
     if (cached && cached.expiresAt > Date.now()) return cached.token;
@@ -88,7 +98,7 @@ export class PathaoService {
   }
 
   private async request<T>(
-    config: ShopPathaoConfig,
+    config: PathaoConfig,
     path: string,
     init?: { method?: string; body?: unknown },
   ): Promise<T> {
@@ -115,7 +125,7 @@ export class PathaoService {
   }
 
   /** Merchant stores registered on the Pathao account (settings picker). */
-  async stores(config: ShopPathaoConfig): Promise<PathaoStore[]> {
+  async stores(config: PathaoConfig): Promise<PathaoStore[]> {
     const data = await this.request<{
       data?: {
         data?: {
@@ -134,7 +144,7 @@ export class PathaoService {
       }));
   }
 
-  async cities(config: ShopPathaoConfig): Promise<PathaoPlace[]> {
+  async cities(config: PathaoConfig): Promise<PathaoPlace[]> {
     const data = await this.request<{
       data?: { data?: { city_id?: number; city_name?: string }[] };
     }>(config, '/aladdin/api/v1/city-list');
@@ -146,10 +156,7 @@ export class PathaoService {
       }));
   }
 
-  async zones(
-    config: ShopPathaoConfig,
-    cityId: number,
-  ): Promise<PathaoPlace[]> {
+  async zones(config: PathaoConfig, cityId: number): Promise<PathaoPlace[]> {
     const data = await this.request<{
       data?: { data?: { zone_id?: number; zone_name?: string }[] };
     }>(config, `/aladdin/api/v1/cities/${cityId}/zone-list`);
@@ -161,10 +168,7 @@ export class PathaoService {
       }));
   }
 
-  async areas(
-    config: ShopPathaoConfig,
-    zoneId: number,
-  ): Promise<PathaoPlace[]> {
+  async areas(config: PathaoConfig, zoneId: number): Promise<PathaoPlace[]> {
     const data = await this.request<{
       data?: { data?: { area_id?: number; area_name?: string }[] };
     }>(config, `/aladdin/api/v1/zones/${zoneId}/area-list`);
@@ -182,7 +186,7 @@ export class PathaoService {
    * city and zone as its own numeric IDs, picked by the seller at booking.
    */
   async createOrder(
-    config: ShopPathaoConfig,
+    config: PathaoConfig,
     input: {
       invoice: string;
       recipientName: string;
@@ -198,7 +202,7 @@ export class PathaoService {
   ): Promise<PathaoConsignment> {
     if (!config.storeId) {
       throw new BadRequestException(
-        'Pick your Pathao store in Settings before booking.',
+        'Pick the Pathao pickup store in the platform console before booking.',
       );
     }
     try {
@@ -253,7 +257,7 @@ export class PathaoService {
 
   /** Current order_status for a consignment, normalized to lowercase. */
   async status(
-    config: ShopPathaoConfig,
+    config: PathaoConfig,
     consignmentId: string,
   ): Promise<string | null> {
     try {

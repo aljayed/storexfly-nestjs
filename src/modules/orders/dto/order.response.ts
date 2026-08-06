@@ -102,7 +102,7 @@ export class OrderResponse {
   })
   discount!: number;
   @ApiPropertyOptional({
-    enum: ['steadfast', 'pathao'],
+    enum: ['carrybee', 'steadfast', 'pathao'],
     description: 'Courier that booked the parcel (absent = none yet)',
   })
   courierProvider?: string;
@@ -111,9 +111,29 @@ export class OrderResponse {
   @ApiPropertyOptional({ description: 'Courier tracking code' })
   courierTrackingCode?: string;
   @ApiPropertyOptional({
-    description: "Courier delivery status ('pending', 'delivered', …)",
+    description: "Courier delivery status ('picked', 'delivered', …)",
   })
   courierStatus?: string;
+  @ApiPropertyOptional({
+    description: 'When the courier last reported that status (ISO)',
+  })
+  courierStatusAt?: string;
+  @ApiPropertyOptional({
+    description:
+      'What the courier actually collected at the door - below the total on a partial delivery',
+  })
+  courierCollected?: number;
+  @ApiPropertyOptional({ description: 'Courier delivery charge' })
+  courierDeliveryFee?: number;
+  @ApiPropertyOptional({
+    description:
+      'Why the parcel failed or came back, as the courier reported it',
+  })
+  courierFailureReason?: string;
+  @ApiPropertyOptional({
+    description: 'When the seller handed the parcel over (ISO)',
+  })
+  handedOverAt?: string;
   @ApiProperty({
     type: [OrderAdjustmentResponse],
     description:
@@ -157,6 +177,17 @@ export class OrderResponse {
       courierConsignmentId: row.courierConsignmentId ?? undefined,
       courierTrackingCode: row.courierTrackingCode ?? undefined,
       courierStatus: row.courierStatus ?? undefined,
+      courierStatusAt: row.courierStatusAt?.toISOString(),
+      courierCollected:
+        row.courierCollectedCents != null
+          ? centsToDollars(row.courierCollectedCents)
+          : undefined,
+      courierDeliveryFee:
+        row.courierDeliveryFeeCents != null
+          ? centsToDollars(row.courierDeliveryFeeCents)
+          : undefined,
+      courierFailureReason: row.courierFailureReason ?? undefined,
+      handedOverAt: row.handedOverAt?.toISOString(),
       adjustments: [...adjustments]
         .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
         .map(OrderAdjustmentResponse.fromRow),

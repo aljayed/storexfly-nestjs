@@ -44,8 +44,8 @@ export class UpdateBkashSettingsDto {
 
 /**
  * Operator console: bKash merchant credentials. Secrets are write-only -
- * reads only reveal whether one is stored. (Couriers moved to per-shop
- * settings; see ShopCouriersController.)
+ * reads only reveal whether one is stored. (Couriers have their own screen -
+ * see PlatformCouriersController.)
  */
 @ApiTags('platform-admin')
 @Public()

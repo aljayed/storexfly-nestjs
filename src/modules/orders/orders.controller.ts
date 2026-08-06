@@ -81,7 +81,10 @@ export class OrdersController {
   @RequirePerm('orders.manage')
   @ApiBearerAuth()
   @Patch('shops/:shopId/orders/:id/status')
-  @ApiOperation({ summary: 'Admin: advance order status' })
+  @ApiOperation({
+    summary:
+      'Admin: advance order status (seller-drivable up to HandedOver; Shipped/Delivered come from the courier)',
+  })
   updateStatus(
     @Param('shopId') shopId: string,
     @Param('id') id: string,
@@ -161,7 +164,7 @@ export class OrdersController {
     return this.orders.withdrawAmountAdjustment(shopId, id, adjustmentId);
   }
 
-  // ── Courier (whichever provider the shop enabled) ────────────
+  // ── Courier (the platform's own account) ─────────────────────
   @Public()
   @UseGuards(AdminJwtAuthGuard, ShopScopeGuard, RolesGuard)
   @RequirePerm('orders.manage')
@@ -170,7 +173,7 @@ export class OrdersController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary:
-      "Admin: book a parcel with the shop's courier (COD amount auto-set; Pathao needs cityId/zoneId)",
+      'Admin: book a parcel on the platform courier (COD amount auto-set; Pathao needs cityId/zoneId)',
   })
   bookCourier(
     @Param('shopId') shopId: string,

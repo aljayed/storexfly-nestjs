@@ -10,19 +10,16 @@ import {
 } from 'drizzle-orm/pg-core';
 import { shops } from './shops.schema';
 
-export const COURIER_PROVIDERS = ['steadfast', 'pathao'] as const;
-export type CourierProvider = (typeof COURIER_PROVIDERS)[number];
-
 /**
- * Per-shop courier credentials, one row per (shop, provider). Sellers manage
- * these from the console Settings page; secrets are write-only through the
- * API. At most one provider is `enabled` per shop - enabling one disables the
- * other - and a shop with no enabled row delivers manually.
+ * Per-shop courier credentials - LEGACY, no longer read by anything.
  *
- * Column usage by provider:
- *  - steadfast: apiKey + secretKey
- *  - pathao:    clientId + clientSecret + username + password (+ storeId,
- *               required to book; sandbox switches the API base URL)
+ * Couriers moved to a single platform-held merchant account (see the
+ * `carrybee_*` / `steadfast_*` / `pathao_*` columns on `platform_settings`):
+ * a shop booking parcels on its own courier account could keep the whole
+ * fulfilment - and so the sales the platform bills on - off the books.
+ *
+ * The table is kept rather than dropped so an operator can still read what a
+ * seller had entered; nothing writes to it and no booking path consults it.
  */
 export const shopCouriers = pgTable(
   'shop_couriers',
@@ -31,9 +28,7 @@ export const shopCouriers = pgTable(
     shopId: uuid('shop_id')
       .notNull()
       .references(() => shops.id, { onDelete: 'cascade' }),
-    provider: varchar('provider', { length: 20 })
-      .$type<CourierProvider>()
-      .notNull(),
+    provider: varchar('provider', { length: 20 }).notNull(),
     enabled: boolean('enabled').notNull().default(false),
     // Steadfast
     apiKey: text('api_key'),

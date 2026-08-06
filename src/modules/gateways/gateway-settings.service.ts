@@ -32,8 +32,8 @@ export interface GatewaySettingsView {
 /**
  * bKash merchant credentials, stored on the platform-settings singleton and
  * managed from the platform-admin console. Secrets are write-only through
- * the API: reads expose only whether one is set. (Couriers are per-shop -
- * see ShopCourierSettingsService.)
+ * the API: reads expose only whether one is set. (Couriers have their own
+ * platform-held credentials - see CourierSettingsService.)
  */
 @Injectable()
 export class GatewaySettingsService {
