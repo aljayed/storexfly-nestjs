@@ -58,11 +58,25 @@ export class CourierWebhookController {
     @Res({ passthrough: true }) res: Response,
   ): Promise<{ error: boolean; message: string }> {
     const expected = await this.courierSettings.carrybeeWebhookSecret();
-    if (!expected || !matches(expected, presented)) {
+    // Both cases are a 401 - the caller has not proved anything either way -
+    // but they need very different fixes, and CarryBee's own form reports only
+    // the status code. Saying which is which in the body is what turns "your
+    // endpoint returned 401" into something actionable without shell access.
+    if (!expected) {
       this.logger.warn(
-        `Rejected a CarryBee webhook with a ${expected ? 'bad' : 'unconfigured'} secret`,
+        'Rejected a CarryBee webhook: no webhook secret is configured yet',
       );
-      throw new UnauthorizedException('Invalid webhook secret');
+      throw new UnauthorizedException(
+        'No CarryBee webhook secret is configured on this platform yet. Save it in the operator console (Couriers → CarryBee → Webhook secret) before registering the webhook.',
+      );
+    }
+    if (!matches(expected, presented)) {
+      this.logger.warn(
+        `Rejected a CarryBee webhook: secret ${presented ? 'did not match' : 'header absent'}`,
+      );
+      throw new UnauthorizedException(
+        'The webhook secret does not match the one stored on this platform.',
+      );
     }
     // CarryBee's integration check requires the secret echoed back verbatim.
     // Only ever sent to a caller that already proved it knows the value.
