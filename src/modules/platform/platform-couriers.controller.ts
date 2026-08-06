@@ -161,6 +161,19 @@ export class PlatformCouriersController {
    * seller's first booking - and there is no store to check any more, since
    * each shop registers its own pickup point when it first ships.
    */
+  /**
+   * Open the short window in which CarryBee's registration ping is answered.
+   * Their check sends no secret header, so this is the operator saying "the
+   * next unauthenticated handshake is mine" - see CourierWebhookController.
+   */
+  @Post('carrybee/allow-registration')
+  @ApiOperation({
+    summary: 'Platform: allow CarryBee to verify the webhook for a few minutes',
+  })
+  allowRegistration() {
+    return this.settings.openCarrybeeRegistration();
+  }
+
   @Post('carrybee/verify')
   @ApiOperation({ summary: 'Platform: check the saved CarryBee credentials' })
   async verifyCarrybee() {

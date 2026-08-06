@@ -11,6 +11,9 @@ import type { CarrybeeConfig } from './carrybee.service';
 import type { PathaoConfig } from './pathao.service';
 import type { SteadfastConfig } from './steadfast.service';
 
+/** How long the CarryBee registration window stays open once opened. */
+const CARRYBEE_REGISTRATION_WINDOW_MS = 15 * 60 * 1000;
+
 export type ActiveCourier =
   | { provider: 'carrybee'; config: CarrybeeConfig }
   | { provider: 'steadfast'; config: SteadfastConfig }
@@ -31,6 +34,8 @@ export interface CourierSettingsView {
     clientContext: string | null;
     hasSecret: boolean;
     hasWebhookSecret: boolean;
+    /** ISO time the registration window shuts, or null when it is shut. */
+    registrationOpenUntil: string | null;
     configured: boolean;
   };
   steadfast: {
@@ -188,6 +193,39 @@ export class CourierSettingsService {
     return row?.carrybeeWebhookSecret?.trim() || null;
   }
 
+  /**
+   * Whether the operator is currently expecting CarryBee's registration ping.
+   *
+   * Their verification POST arrives with no secret header, so answering it
+   * means handing the secret to a caller that has proved nothing. That is only
+   * acceptable while someone is deliberately standing at the console pressing
+   * "Add Webhook", which is what this window represents.
+   */
+  async carrybeeRegistrationOpen(): Promise<boolean> {
+    const row = await this.row();
+    const until = row?.carrybeeWebhookRegistrationUntil;
+    return !!until && until.getTime() > Date.now();
+  }
+
+  /** Open that window. Short by design - it is measured against one button
+   *  press on CarryBee's site, not a working session. */
+  async openCarrybeeRegistration(): Promise<{ until: string }> {
+    if (!(await this.carrybeeWebhookSecret())) {
+      throw new BadRequestException(
+        'Save the CarryBee webhook secret first - there is nothing for the registration check to answer with.',
+      );
+    }
+    const until = new Date(Date.now() + CARRYBEE_REGISTRATION_WINDOW_MS);
+    await this.patch({ carrybeeWebhookRegistrationUntil: until });
+    return { until: until.toISOString() };
+  }
+
+  /** Shut it early - called the moment a registration ping is answered, so
+   *  the door is open for one handshake rather than the whole window. */
+  async closeCarrybeeRegistration(): Promise<void> {
+    await this.patch({ carrybeeWebhookRegistrationUntil: null });
+  }
+
   /** Whether shops are confined to the platform courier for fulfilment. */
   async courierRequired(): Promise<boolean> {
     const row = await this.row();
@@ -228,6 +266,11 @@ export class CourierSettingsService {
         clientContext: row?.carrybeeClientContext ?? null,
         hasSecret: !!row?.carrybeeClientSecret,
         hasWebhookSecret: !!row?.carrybeeWebhookSecret,
+        registrationOpenUntil:
+          row?.carrybeeWebhookRegistrationUntil &&
+          row.carrybeeWebhookRegistrationUntil.getTime() > Date.now()
+            ? row.carrybeeWebhookRegistrationUntil.toISOString()
+            : null,
         configured: this.carrybeeComplete(row),
       },
       steadfast: {

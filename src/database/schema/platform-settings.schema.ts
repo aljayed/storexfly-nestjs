@@ -97,6 +97,18 @@ export const platformSettings = pgTable('platform_settings', {
   // Secret CarryBee sends in X-CB-Webhook-Integration-Header and expects
   // echoed back, taken from its Webhook Integration screen.
   carrybeeWebhookSecret: text('carrybee_webhook_secret'),
+  // CarryBee's *registration* POST does not carry the header, whatever their
+  // docs say - it only checks that our reply has it. So proving ourselves at
+  // registration means answering an unauthenticated caller with the secret,
+  // which is a door that must not stand open: anyone who did that could then
+  // forge delivery events and mark orders paid.
+  //
+  // The operator opens it deliberately for a few minutes while they press
+  // "Add Webhook", and it shuts itself. Null or past = shut.
+  carrybeeWebhookRegistrationUntil: timestamp(
+    'carrybee_webhook_registration_until',
+    { withTimezone: true },
+  ),
   // Steadfast (portal.packzy.com), kept as a fallback carrier. Routes on the
   // written address, so it needs no pickup store at all.
   steadfastEnabled: boolean('steadfast_enabled').notNull().default(false),
