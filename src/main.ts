@@ -21,6 +21,7 @@ async function bootstrap(): Promise<void> {
 
   const apiPrefix = config.get<string>('app.apiPrefix', 'api');
   const port = config.get<number>('app.port', 3000);
+  const bindHost = config.get<string>('app.bindHost');
   const corsOrigins = config.get<string[]>('app.corsOrigins', [
     'http://localhost:5173',
   ]);
@@ -64,8 +65,10 @@ async function bootstrap(): Promise<void> {
     });
   }
 
-  await app.listen(port);
-  logger.log(`Hoomri API listening on http://localhost:${port}/${apiPrefix}`);
+  await (bindHost ? app.listen(port, bindHost) : app.listen(port));
+  logger.log(
+    `Hoomri API listening on http://${bindHost ?? 'localhost'}:${port}/${apiPrefix}`,
+  );
   if (!isProduction) {
     logger.log(`OpenAPI docs at http://localhost:${port}/${apiPrefix}/docs`);
   }

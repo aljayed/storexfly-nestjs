@@ -14,6 +14,7 @@ export const appConfig = registerAs('app', () => {
   return {
     env: process.env.NODE_ENV ?? 'development',
     port: parseInt(process.env.PORT ?? '3000', 10),
+    bindHost: process.env.STOREXFLY_BIND_HOST,
     apiPrefix: process.env.API_PREFIX ?? 'api',
     corsOrigins,
     // Public origin of the Vue app - used to build links emailed to users
