@@ -24,6 +24,13 @@ export class ShopCouponResponse {
   /** Name of the scoped product/combo, for the list UI. */
   @ApiPropertyOptional({ example: 'Cotton Panjabi' }) targetName?: string;
 
+  /**
+   * Slug of the scoped product, so the console can build the shareable link
+   * that lands a buyer on that product with the code already applied. Combos
+   * have no page of their own, so they never carry one.
+   */
+  @ApiPropertyOptional({ example: 'cotton-panjabi' }) targetSlug?: string;
+
   @ApiProperty() active!: boolean;
   @ApiPropertyOptional() startsAt?: string;
   @ApiPropertyOptional() expiresAt?: string;
@@ -41,7 +48,10 @@ export class ShopCouponResponse {
 
   @ApiProperty() createdAt!: string;
 
-  static from(row: ShopCouponRow, targetName?: string): ShopCouponResponse {
+  static from(
+    row: ShopCouponRow,
+    target?: { name?: string; slug?: string },
+  ): ShopCouponResponse {
     const now = Date.now();
     const state: ShopCouponResponse['state'] = !row.active
       ? 'paused'
@@ -70,7 +80,8 @@ export class ShopCouponResponse {
       scope: row.scope,
       productId: row.productId ?? undefined,
       comboId: row.comboId ?? undefined,
-      targetName,
+      targetName: target?.name,
+      targetSlug: target?.slug,
       active: row.active,
       startsAt: row.startsAt?.toISOString(),
       expiresAt: row.expiresAt?.toISOString(),
@@ -111,4 +122,68 @@ export class CouponQuoteResponse {
 
   @ApiPropertyOptional({ example: 'Eid sale - 25% off everything' })
   description?: string;
+}
+
+/**
+ * A coupon resolved from a shared link (`?coupon=EID25`), before there is any
+ * cart to price it against.
+ *
+ * It carries the *terms* of the offer, not a discount: it lets the storefront
+ * auto-apply the code and quote the price a buyer will actually pay on the
+ * product cards and the product page, where no checkout has been started yet.
+ * Every number is still re-derived server-side by `/checkout/coupon` and again
+ * at checkout - this is display, never the charge.
+ *
+ * Only a coupon that would be accepted right now is returned; a paused,
+ * expired, scheduled or used-up code answers `valid: false` so a stale link
+ * quietly falls back to the normal price instead of promising a discount.
+ */
+export class PublicCouponResponse {
+  @ApiProperty({ example: true }) valid!: boolean;
+  @ApiProperty({ example: 'EID25' }) code!: string;
+  @ApiPropertyOptional() description?: string;
+
+  @ApiPropertyOptional({ example: 'percent' })
+  discountType?: 'percent' | 'fixed';
+
+  @ApiPropertyOptional({
+    example: 25,
+    description: 'Percentage (1-100) or, for a fixed coupon, the ৳ amount off.',
+  })
+  value?: number;
+
+  @ApiPropertyOptional({ example: 500 }) maxDiscount?: number;
+  @ApiPropertyOptional({ example: 1000 }) minOrder?: number;
+  @ApiPropertyOptional({ example: 'product' })
+  scope?: 'all' | 'product' | 'combo';
+
+  @ApiPropertyOptional() productId?: string;
+  @ApiPropertyOptional({ example: 'cotton-panjabi' }) productSlug?: string;
+  @ApiPropertyOptional() comboId?: string;
+
+  /** Why a dead link carries no offer: not_found | inactive | scheduled | expired | exhausted. */
+  @ApiPropertyOptional({ example: 'expired' }) reason?: string;
+
+  static from(
+    row: ShopCouponRow,
+    productSlug?: string,
+  ): PublicCouponResponse {
+    return {
+      valid: true,
+      code: row.code,
+      description: row.description ?? undefined,
+      discountType: row.discountType,
+      value:
+        row.discountType === 'percent' ? row.value : centsToDollars(row.value),
+      maxDiscount:
+        row.maxDiscountCents === null
+          ? undefined
+          : centsToDollars(row.maxDiscountCents),
+      minOrder: centsToDollars(row.minOrderCents),
+      scope: row.scope,
+      productId: row.productId ?? undefined,
+      productSlug,
+      comboId: row.comboId ?? undefined,
+    };
+  }
 }

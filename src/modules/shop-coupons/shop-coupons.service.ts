@@ -19,6 +19,7 @@ import {
 } from '../../database/schema';
 import {
   CouponQuoteResponse,
+  PublicCouponResponse,
   ShopCouponResponse,
 } from './dto/shop-coupon.response';
 import type {
@@ -89,7 +90,10 @@ export class ShopCouponsService {
       with: { product: true, combo: true },
     });
     return rows.map((r) =>
-      ShopCouponResponse.from(r, r.product?.name ?? r.combo?.name ?? undefined),
+      ShopCouponResponse.from(r, {
+        name: r.product?.name ?? r.combo?.name ?? undefined,
+        slug: r.product?.slug ?? undefined,
+      }),
     );
   }
 
@@ -120,7 +124,7 @@ export class ShopCouponsService {
         value: values.value as number,
       })
       .returning();
-    return ShopCouponResponse.from(row, await this.targetName(row));
+    return ShopCouponResponse.from(row, await this.target(row));
   }
 
   async update(
@@ -152,7 +156,7 @@ export class ShopCouponsService {
       .set(values)
       .where(and(eq(shopCoupons.id, id), eq(shopCoupons.shopId, shopId)))
       .returning();
-    return ShopCouponResponse.from(row, await this.targetName(row));
+    return ShopCouponResponse.from(row, await this.target(row));
   }
 
   async remove(shopId: string, id: string): Promise<{ ok: true }> {
@@ -171,20 +175,23 @@ export class ShopCouponsService {
     return row;
   }
 
-  private async targetName(row: ShopCouponRow): Promise<string | undefined> {
+  /** Name (and, for a product, slug) of whatever the coupon is scoped to. */
+  private async target(
+    row: ShopCouponRow,
+  ): Promise<{ name?: string; slug?: string }> {
     if (row.productId) {
       const p = await this.db.query.products.findFirst({
         where: eq(products.id, row.productId),
       });
-      return p?.name;
+      return { name: p?.name, slug: p?.slug };
     }
     if (row.comboId) {
       const c = await this.db.query.combos.findFirst({
         where: eq(combos.id, row.comboId),
       });
-      return c?.name;
+      return { name: c?.name };
     }
-    return undefined;
+    return {};
   }
 
   /**
@@ -307,6 +314,58 @@ export class ShopCouponsService {
     }
 
     return values;
+  }
+
+  // ── Storefront ───────────────────────────────────────────────────
+
+  /**
+   * Resolve a code carried by a shared link (`?coupon=EID25`) into the terms
+   * of the offer, before there is a cart to price.
+   *
+   * This is what lets a seller advertise a discounted price: the storefront
+   * auto-applies the code and quotes the reduced price on the product page and
+   * the cards. Nothing here is a charge - `evaluate` re-derives the discount
+   * against the real cart at quote time and again inside checkout.
+   *
+   * Only a code that would be accepted right now comes back valid, so a link
+   * shared after the sale ended shows the ordinary price rather than a promise
+   * the checkout would refuse. The per-buyer cap isn't checked (no phone is
+   * known yet); checkout still enforces it.
+   */
+  async resolvePublic(
+    shopId: string,
+    rawCode: string,
+  ): Promise<PublicCouponResponse> {
+    const code = (rawCode ?? '').trim().toUpperCase();
+    const dead = (reason: string): PublicCouponResponse => ({
+      valid: false,
+      code,
+      reason,
+    });
+    if (!code) return dead('not_found');
+
+    const coupon = await this.db.query.shopCoupons.findFirst({
+      where: and(eq(shopCoupons.shopId, shopId), eq(shopCoupons.code, code)),
+    });
+    if (!coupon) return dead('not_found');
+    if (!coupon.active) return dead('inactive');
+
+    const now = Date.now();
+    if (coupon.startsAt && coupon.startsAt.getTime() > now) {
+      return dead('scheduled');
+    }
+    if (coupon.expiresAt && coupon.expiresAt.getTime() <= now) {
+      return dead('expired');
+    }
+    if (
+      coupon.maxRedemptions !== null &&
+      coupon.redemptions >= coupon.maxRedemptions
+    ) {
+      return dead('exhausted');
+    }
+
+    const { slug } = await this.target(coupon);
+    return PublicCouponResponse.from(coupon, slug);
   }
 
   // ── Checkout ─────────────────────────────────────────────────────
