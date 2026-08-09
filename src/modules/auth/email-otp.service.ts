@@ -7,6 +7,21 @@ interface PendingEntry {
   expiresAt: number;
   attempts: number;
   payload: unknown;
+  /** When the code was last put in the post - drives the resend cooldown. */
+  lastSentAt: number;
+  /** Sends in the current hour, and when that hour started. */
+  sends: number;
+  windowStart: number;
+}
+
+/**
+ * What `start` did. `sent: false` means a live code is already in the
+ * recipient's inbox and they should wait `retryAfterSeconds` before asking for
+ * another - not that anything failed.
+ */
+export interface OtpDispatch {
+  sent: boolean;
+  retryAfterSeconds: number;
 }
 
 /**
@@ -28,6 +43,11 @@ export class EmailOtpService {
   private readonly store = new Map<string, PendingEntry>();
   private readonly ttlMs = 10 * 60 * 1000;
   private readonly maxAttempts = 5;
+  /** Quiet period between two emails to the same address in one flow. */
+  private readonly resendCooldownMs = 60 * 1000;
+  /** Ceiling per address per hour, so a form cannot be used to mail-bomb. */
+  private readonly maxSendsPerHour = 5;
+  private readonly sendWindowMs = 60 * 60 * 1000;
 
   constructor(private readonly mail: MailService) {}
 
@@ -36,14 +56,46 @@ export class EmailOtpService {
     email: string,
     payload: T,
     mail?: { subject?: string; heading?: string; intro?: string },
-  ): Promise<void> {
-    const code = String(randomInt(0, 1_000_000)).padStart(6, '0');
+  ): Promise<OtpDispatch> {
     const key = this.key(scope, email);
+    const now = Date.now();
+    const live = this.store.get(key);
+
+    if (live && now < live.expiresAt) {
+      // Still within the quiet period: the code they already have is good.
+      const waited = now - live.lastSentAt;
+      if (waited < this.resendCooldownMs) {
+        return {
+          sent: false,
+          retryAfterSeconds: Math.ceil((this.resendCooldownMs - waited) / 1000),
+        };
+      }
+      // Hourly ceiling, so repeated "resend" taps cannot mail-bomb an address
+      // that may not even belong to the person asking.
+      const inWindow = now - live.windowStart < this.sendWindowMs;
+      if (inWindow && live.sends >= this.maxSendsPerHour) {
+        return {
+          sent: false,
+          retryAfterSeconds: Math.ceil(
+            (this.sendWindowMs - (now - live.windowStart)) / 1000,
+          ),
+        };
+      }
+    }
+
+    // Resending keeps the code the recipient may already be reading; only a
+    // fresh request after expiry mints a new one.
+    const reuse = live && now < live.expiresAt;
+    const code = reuse ? live.code : String(randomInt(0, 1_000_000)).padStart(6, '0');
+    const windowOpen = reuse && now - live.windowStart < this.sendWindowMs;
     this.store.set(key, {
       code,
-      expiresAt: Date.now() + this.ttlMs,
-      attempts: 0,
+      expiresAt: reuse ? live.expiresAt : now + this.ttlMs,
+      attempts: reuse ? live.attempts : 0,
       payload,
+      lastSentAt: now,
+      sends: windowOpen ? live.sends + 1 : 1,
+      windowStart: windowOpen ? live.windowStart : now,
     });
 
     if (process.env.NODE_ENV !== 'production') {
@@ -58,6 +110,7 @@ export class EmailOtpService {
       text: textBody(code, intro),
       html: htmlBody(code, heading, intro),
     });
+    return { sent: true, retryAfterSeconds: this.resendCooldownMs / 1000 };
   }
 
   /** Returns the stored payload if the code matches and is unexpired; consumes the entry on success. */

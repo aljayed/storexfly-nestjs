@@ -1,5 +1,6 @@
 import {
   ConflictException,
+  Logger,
   ForbiddenException,
   Inject,
   Injectable,
@@ -67,6 +68,7 @@ function normalizePhone(raw: string | null | undefined): string {
  */
 @Injectable()
 export class BuyerService {
+  private readonly logger = new Logger(BuyerService.name);
   constructor(
     @Inject(DRIZZLE) private readonly db: DrizzleDB,
     private readonly tokens: TokenService,
@@ -147,15 +149,30 @@ export class BuyerService {
         ? this.emailOtp.verify<true>(SIGNUP_OTP_SCOPE, email, dto.emailCode)
         : null;
       if (!proved) {
-        // Issue (or re-issue) the code and tell the client to collect it.
-        await this.emailOtp.start(SIGNUP_OTP_SCOPE, email, true, {
-          heading: 'Confirm your email',
-          intro: 'Use this code to finish creating your Hoomri account:',
-        });
+        // Issue (or re-issue) the code and tell the client to collect it. A
+        // mail outage must not turn this into a 500: the code is stored either
+        // way, and the caller still needs to be told what to do next.
+        let retryAfterSeconds = 60;
+        try {
+          ({ retryAfterSeconds } = await this.emailOtp.start(
+            SIGNUP_OTP_SCOPE,
+            email,
+            true,
+            {
+              heading: 'Confirm your email',
+              intro: 'Use this code to finish creating your Hoomri account:',
+            },
+          ));
+        } catch (err) {
+          this.logger.error(
+            `Signup verification email to ${email} failed: ${String(err)}`,
+          );
+        }
         throw new ForbiddenException({
           code: 'EMAIL_VERIFICATION_REQUIRED',
           message:
             'Please confirm the code we emailed you to finish creating this account.',
+          retryAfterSeconds,
         });
       }
     }
@@ -266,7 +283,9 @@ export class BuyerService {
    * checkout (never OTP-verified), whose guest orders can only be
    * repriced-with-approval once the email is confirmed.
    */
-  async startEmailVerification(accountId: string): Promise<{ ok: true }> {
+  async startEmailVerification(
+    accountId: string,
+  ): Promise<{ ok: true; retryAfterSeconds: number }> {
     const account = await this.findById(accountId);
     if (!account) throw new UnauthorizedException('Account no longer exists');
     if (!account.email) {
@@ -275,7 +294,9 @@ export class BuyerService {
     if (account.emailVerified) {
       throw new ConflictException('Your email is already verified.');
     }
-    await this.emailOtp.start<{ accountId: string }>(
+    // `retryAfterSeconds` is how long before another email will actually be
+    // sent, so the screen can count down instead of pretending each tap worked.
+    const { retryAfterSeconds } = await this.emailOtp.start<{ accountId: string }>(
       EMAIL_VERIFY_OTP_SCOPE,
       account.email,
       { accountId: account.id },
@@ -285,7 +306,7 @@ export class BuyerService {
         intro: 'Enter this code to verify your Hoomri account email:',
       },
     );
-    return { ok: true };
+    return { ok: true, retryAfterSeconds };
   }
 
   /** Step 2: check the code and mark the account's email verified. */
