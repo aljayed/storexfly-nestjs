@@ -28,6 +28,7 @@ import {
 import { centsToDollars, dollarsToCents } from '../../common/utils/money.util';
 import {
   DELIVERY_LINE_NAME,
+  orderLineKind,
   productLines,
 } from '../../common/utils/order-line.util';
 import {
@@ -78,6 +79,7 @@ import {
 import type { CouponQuoteResponse } from '../shop-coupons/dto/shop-coupon.response';
 import type { ShopCouponRow } from '../../database/schema';
 import type { CheckoutDto, CouponQuoteDto } from './dto/checkout.dto';
+import { BuyerOrderDetailResponse } from './dto/buyer-order-detail.response';
 import { CheckoutResultResponse } from './dto/checkout-result.response';
 import { OrderListResponse } from './dto/order-list.response';
 import { OrderResponse } from './dto/order.response';
@@ -2188,6 +2190,97 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
       });
       return OrderResponse.fromRow(row, items);
     });
+  }
+
+  /**
+   * One of the buyer's own orders in full - what the profile's order drawer
+   * renders. The list payload stays deliberately thin (no product media across
+   * every order the account ever placed), so the whole picture is fetched one
+   * order at a time, when it is actually opened.
+   *
+   * Ownership is the same order-email ↔ account match the list is built on,
+   * and a foreign order is reported exactly like a missing one so references
+   * can't be probed.
+   */
+  async orderDetailForBuyer(
+    buyerEmail: string,
+    shopId: string,
+    reference: string,
+  ): Promise<BuyerOrderDetailResponse> {
+    const order = await this.db.query.orders.findFirst({
+      where: and(eq(orders.shopId, shopId), eq(orders.reference, reference)),
+      with: {
+        shop: { columns: { name: true, handle: true } },
+        adjustments: true,
+        items: {
+          with: {
+            product: {
+              columns: { slug: true, images: true, emoji: true, tone: true },
+            },
+          },
+        },
+      },
+    });
+    if (!order || order.email.toLowerCase() !== buyerEmail.toLowerCase()) {
+      throw new NotFoundException('Order not found');
+    }
+    const methods = await this.paymentMethods.byCode();
+    const method = order.paymentMethod
+      ? methods.get(order.paymentMethod)
+      : undefined;
+
+    const items = order.items.map((l) => ({
+      name: l.name,
+      qty: l.qty,
+      variant: l.variant ?? undefined,
+      unitPrice: centsToDollars(l.unitPriceCents),
+      lineTotal: centsToDollars(l.unitPriceCents * l.qty),
+      kind: orderLineKind(l),
+      imageUrl: l.product?.images?.[0],
+      emoji: l.product?.emoji,
+      tone: l.product?.tone,
+      slug: l.product?.slug,
+    }));
+    const bought = items.filter((l) => l.kind === 'product');
+
+    return {
+      reference: order.reference,
+      shopId: order.shopId,
+      shopName: order.shop?.name ?? 'Shop',
+      shopHandle: order.shop?.handle ?? '',
+      status: order.status,
+      pay: order.pay,
+      placedAt: order.placedAt.toISOString(),
+      paymentMethod: order.paymentMethod ?? undefined,
+      paymentLabel: method?.title,
+      items,
+      qty: bought.reduce((n, l) => n + l.qty, 0),
+      itemsSubtotal: bought.reduce((s, l) => s + l.lineTotal, 0),
+      delivery: centsToDollars(order.deliveryCents),
+      discount: centsToDollars(order.discountCents),
+      couponCode: order.couponCode ?? undefined,
+      total: centsToDollars(order.totalCents),
+      address: order.address ?? undefined,
+      courierProvider:
+        order.courierProvider ??
+        (order.courierConsignmentId ? 'steadfast' : undefined),
+      courierTrackingCode: order.courierTrackingCode ?? undefined,
+      courierStatus: order.courierStatus ?? undefined,
+      courierStatusAt: order.courierStatusAt?.toISOString(),
+      adjustments: [...order.adjustments]
+        .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
+        .map((a) => ({
+          id: a.id,
+          previousTotal: centsToDollars(a.previousTotalCents),
+          newTotal: centsToDollars(a.newTotalCents),
+          reason: a.reason,
+          status: a.status,
+          createdAt: a.createdAt.toISOString(),
+          resolvedAt: a.resolvedAt?.toISOString(),
+        })),
+      canCancel:
+        BUYER_CANCELLABLE.includes(order.status) && order.pay !== 'Paid',
+    };
   }
 
   /**

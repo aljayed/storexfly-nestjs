@@ -2,9 +2,11 @@ import {
   Body,
   Controller,
   ForbiddenException,
+  Get,
   HttpCode,
   HttpStatus,
   Post,
+  Query,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
@@ -12,6 +14,7 @@ import { StorefrontSession } from '../../common/decorators/storefront-session.de
 import type { AccountPrincipal } from '../../common/types/principal';
 import { OrdersService } from '../orders/orders.service';
 import { BuyerService } from './buyer.service';
+import { BuyerOrderDetailQueryDto } from './dto/buyer-order-detail.query.dto';
 import { CancelOrderDto } from './dto/cancel-order.dto';
 import { ClaimOrderDto } from './dto/claim-order.dto';
 import { RespondAdjustmentDto } from './dto/respond-adjustment.dto';
@@ -34,6 +37,23 @@ export class BuyerOrdersController {
       throw new ForbiddenException('Add an email to your account first.');
     }
     return user.email;
+  }
+
+  /** Query string, not a path segment: an order reference starts with '#',
+   *  which no proxy is guaranteed to hand through inside a path. */
+  @Get('detail')
+  @ApiOperation({
+    summary: 'Account: one own order in full (lines, totals, amount history)',
+  })
+  detail(
+    @CurrentUser() user: AccountPrincipal,
+    @Query() query: BuyerOrderDetailQueryDto,
+  ) {
+    return this.orders.orderDetailForBuyer(
+      this.requireEmail(user),
+      query.shopId,
+      query.reference,
+    );
   }
 
   @Post('claim')
