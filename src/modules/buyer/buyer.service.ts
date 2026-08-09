@@ -21,6 +21,7 @@ import {
 import { centsToDollars } from '../../common/utils/money.util';
 import { productLines } from '../../common/utils/order-line.util';
 import { BlockedWordsService } from '../blocked-words/blocked-words.service';
+import { RiskService } from '../risk/risk.service';
 import {
   checkHandleShape,
   normalizeHandle,
@@ -45,6 +46,8 @@ import type {
 // hashes to the one `users` table, so they must not disagree on strength.
 const BCRYPT_ROUNDS = 12;
 const EMAIL_VERIFY_OTP_SCOPE = 'buyer-email-verify';
+/** Codes issued when a second account is opened from one address. */
+const SIGNUP_OTP_SCOPE = 'buyer-signup-verify';
 
 /** Reduce any BD phone format to the bare 10-digit national number, so numbers
  *  captured as "+8801712…", "01712…" or "1712…" all compare equal. */
@@ -69,6 +72,7 @@ export class BuyerService {
     private readonly tokens: TokenService,
     private readonly emailOtp: EmailOtpService,
     private readonly blockedWords: BlockedWordsService,
+    private readonly risk: RiskService,
     private readonly sessionScope: SessionScopeService,
   ) {}
 
@@ -123,9 +127,39 @@ export class BuyerService {
    * the scope of the session it mints - nothing is verified, so `issue()`
    * hands back a `storefront` token that cannot touch the seller-side API.
    */
-  async register(dto: BuyerRegisterDto): Promise<BuyerAuthResponse> {
+  async register(
+    dto: BuyerRegisterDto,
+    ip?: string | null,
+  ): Promise<BuyerAuthResponse> {
     const phone = dto.phone ? normalizePhone(dto.phone) : null;
     await this.assertAvailable(dto.name, dto.email, phone);
+
+    /**
+     * The first account from an address in 12 hours is created on the spot,
+     * as it always was - a shopper mid-purchase is never sent to their inbox.
+     * The next one has to answer a code first, so a script cannot mint
+     * accounts faster than it can read email.
+     */
+    const email = dto.email.trim().toLowerCase();
+    const { requireEmailVerification } = await this.risk.assessSignup(ip);
+    if (requireEmailVerification) {
+      const proved = dto.emailCode
+        ? this.emailOtp.verify<true>(SIGNUP_OTP_SCOPE, email, dto.emailCode)
+        : null;
+      if (!proved) {
+        // Issue (or re-issue) the code and tell the client to collect it.
+        await this.emailOtp.start(SIGNUP_OTP_SCOPE, email, true, {
+          heading: 'Confirm your email',
+          intro: 'Use this code to finish creating your Hoomri account:',
+        });
+        throw new ForbiddenException({
+          code: 'EMAIL_VERIFICATION_REQUIRED',
+          message:
+            'Please confirm the code we emailed you to finish creating this account.',
+        });
+      }
+    }
+
     const passwordHash = await bcrypt.hash(dto.password, BCRYPT_ROUNDS);
     const [row] = await this.db
       .insert(users)
@@ -142,6 +176,7 @@ export class BuyerService {
         geo: dto.geo ?? null,
       })
       .returning();
+    void this.risk.record('signup', { ip, email, phone }).catch(() => undefined);
     return this.issue(row);
   }
 

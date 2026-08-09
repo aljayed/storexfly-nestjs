@@ -49,6 +49,7 @@ import { PlatformJwtStrategy } from './strategies/platform-jwt.strategy';
     AdminUsersService,
     TokenService,
     EmailOtpService,
+    OtpService,
     SessionScopeService,
   ],
 })

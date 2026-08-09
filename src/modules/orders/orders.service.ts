@@ -56,6 +56,9 @@ import {
 } from '../../database/schema';
 import type { OrderStatus, SalesChannel } from '../../database/schema/enums';
 import { CustomersService } from '../customers/customers.service';
+import type { CheckoutCaller } from '../risk/checkout-caller';
+import { PhoneProofService } from '../risk/phone-proof.service';
+import { RiskService, type CheckoutRisk } from '../risk/risk.service';
 import { BkashService } from '../gateways/bkash.service';
 import { CarrybeeService } from '../gateways/carrybee.service';
 import {
@@ -219,6 +222,8 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
   constructor(
     @Inject(DRIZZLE) private readonly db: DrizzleDB,
     private readonly customers: CustomersService,
+    private readonly risk: RiskService,
+    private readonly phoneProof: PhoneProofService,
     private readonly paymentMethods: PaymentMethodsService,
     private readonly notifications: NotificationsService,
     private readonly bkash: BkashService,
@@ -259,7 +264,57 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
    * 'Pending' and returns a `paymentUrl` to the bKash hosted checkout - the
    * order only becomes 'Paid' when bKash confirms the money.
    */
-  async checkout(dto: CheckoutDto): Promise<CheckoutResultResponse> {
+  /**
+   * What this checkout will be asked for, before the buyer picks how to pay.
+   * Advisory only - `checkout` re-runs the same assessment and enforces it.
+   */
+  async preflight(
+    dto: { shopId: string; phone?: string; email?: string },
+    caller: CheckoutCaller,
+  ): Promise<CheckoutRisk> {
+    return this.risk.assessCheckout({
+      phone: dto.phone,
+      email: dto.email,
+      ip: caller.ip,
+      device: caller.device,
+      accountId: caller.accountId,
+    });
+  }
+
+  async checkout(
+    dto: CheckoutDto,
+    caller: CheckoutCaller = { ip: null, device: null, accountId: null },
+  ): Promise<CheckoutResultResponse> {
+    /**
+     * Anti-abuse gates, before any of the pricing work. Each one escalates
+     * what the buyer has to do rather than refusing outright, and the codes
+     * are what the storefront switches on to open the right prompt.
+     */
+    const subject = {
+      phone: dto.contact.phone,
+      email: dto.contact.email,
+      ip: caller.ip,
+      device: caller.device,
+      accountId: caller.accountId,
+    };
+    const risk = await this.risk.assessCheckout(subject);
+
+    if (risk.requireLogin) {
+      throw new ForbiddenException({
+        code: 'SIGN_IN_REQUIRED',
+        message:
+          'Please sign in to confirm this order - another order was just placed from this device.',
+      });
+    }
+    if (
+      risk.requirePhoneVerification &&
+      !(await this.phoneProof.holds(dto.phoneProof, dto.contact.phone))
+    ) {
+      throw new ForbiddenException({
+        code: 'PHONE_VERIFICATION_REQUIRED',
+        message: 'Please confirm your phone number to place this order.',
+      });
+    }
     // The catalog is platform-managed: the code must be live right now, so a
     // method removed by an operator disappears from checkout immediately.
     const method = await this.paymentMethods.findEnabledByCode(
@@ -274,6 +329,17 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
       throw new BadRequestException(
         'bKash payments are temporarily unavailable - please pick another method.',
       );
+    }
+    // Cash on delivery costs a fake buyer nothing, which is exactly why a
+    // repeat order cannot use it - asking for the money is what makes the
+    // pattern stop. Only COD is withheld: a manual mobile-banking transfer is
+    // still the buyer sending money before the parcel moves.
+    if (risk.requirePrepayment && method.kind === 'cod') {
+      throw new ForbiddenException({
+        code: 'PREPAYMENT_REQUIRED',
+        message:
+          'Cash on delivery is not available for this order - please pay online to confirm it.',
+      });
     }
     // Exactly one of the three order shapes: a single product, a combo, or a
     // cart of products (all from this one shop).
@@ -468,6 +534,11 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
       }
       return order;
     });
+
+    // The order stands, so it counts against the next one from this buyer.
+    // Recorded after the commit and never allowed to fail the checkout: a
+    // ledger write is not worth losing a placed order over.
+    void this.risk.record('order', subject).catch(() => undefined);
 
     // Hosted-gateway leg runs after the commit (never hold a DB transaction
     // across an external HTTP call). If bKash cannot open a payment the

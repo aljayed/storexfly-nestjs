@@ -14,9 +14,6 @@ import {
 /** How long a signup or an order keeps counting against the next one. */
 export const RISK_WINDOW_HOURS = 12;
 
-/** Share of the order total that must be paid up front when COD is withheld. */
-export const ADVANCE_PERCENT = 10;
-
 /**
  * What a checkout has to satisfy before it is allowed through. Every field is
  * false for the ordinary case - the first order from a person in 12 hours, and
@@ -27,10 +24,12 @@ export interface CheckoutRisk {
   requireLogin: boolean;
   /** Same phone or email ordering again inside the window: prove the number. */
   requirePhoneVerification: boolean;
-  /** COD is withheld; the order needs money up front to be confirmed. */
-  requireAdvance: boolean;
-  /** Minimum up-front amount when `requireAdvance` - 10% of the total. */
-  advanceCents: number;
+  /**
+   * Cash on delivery is withheld: this order has to be paid through a
+   * gateway. Fake orders cost the sender nothing precisely because COD costs
+   * nothing up front, so asking for the money is what makes them stop.
+   */
+  requirePrepayment: boolean;
   /** Why, for the message the buyer sees and for support to read back. */
   reason?: 'repeat_contact' | 'guest_repeat';
 }
@@ -97,26 +96,45 @@ export class RiskService {
 
   /**
    * A buyer who has already taken delivery is a real customer, not a spam
-   * signal, and is exempt from all of it.
+   * signal, and is exempt from all of it - they can order as often as they
+   * like.
+   *
+   * Recognised by contact details as well as by session, because a regular
+   * who checks out as a guest is still a regular. Delivery is the bar on
+   * purpose: placing an order proves nothing, but having taken one means a
+   * courier found a real person at a real address.
    */
-  private async isTrusted(accountId: string | null | undefined): Promise<boolean> {
-    if (!accountId) return false;
-    // Orders carry no account id - history is matched on the email, the same
-    // link the profile screen and verified-purchase reviews use.
-    const account = await this.db.query.users.findFirst({
-      where: eq(users.id, accountId),
-      columns: { email: true },
-    });
-    if (!account?.email) return false;
+  private async isTrusted(subject: CheckoutSubject): Promise<boolean> {
+    const emails = new Set<string>();
+    const phone = normalizePhone(subject.phone);
+    if (subject.email) emails.add(subject.email.trim().toLowerCase());
+    if (subject.accountId) {
+      const account = await this.db.query.users.findFirst({
+        where: eq(users.id, subject.accountId),
+        columns: { email: true, phone: true },
+      });
+      if (account?.email) emails.add(account.email.toLowerCase());
+    }
+    if (!emails.size && !phone) return false;
+
+    // Orders carry no account id - history is matched on the contact details,
+    // the same link the profile screen and verified-purchase reviews use.
+    const matches = [
+      emails.size
+        ? sql`lower(${orders.email}) in (${sql.join(
+            [...emails].map((e) => sql`${e}`),
+            sql`, `,
+          )})`
+        : undefined,
+      phone
+        ? sql`regexp_replace(coalesce(${orders.phone}, ''), '\\D', '', 'g') like ${'%' + phone}`
+        : undefined,
+    ].filter(Boolean);
+
     const [row] = await this.db
       .select({ n: sql<number>`count(*)::int` })
       .from(orders)
-      .where(
-        and(
-          sql`lower(${orders.email}) = ${account.email.toLowerCase()}`,
-          eq(orders.status, 'Delivered'),
-        ),
-      );
+      .where(and(eq(orders.status, 'Delivered'), or(...matches)));
     return (row?.n ?? 0) > 0;
   }
 
@@ -147,10 +165,9 @@ export class RiskService {
     const none: CheckoutRisk = {
       requireLogin: false,
       requirePhoneVerification: false,
-      requireAdvance: false,
-      advanceCents: 0,
+      requirePrepayment: false,
     };
-    if (await this.isTrusted(subject.accountId)) return none;
+    if (await this.isTrusted(subject)) return none;
 
     const phoneHash = this.hash(normalizePhone(subject.phone));
     const emailHash = this.hash(subject.email);
@@ -184,8 +201,7 @@ export class RiskService {
       return {
         requireLogin: false,
         requirePhoneVerification: true,
-        requireAdvance: true,
-        advanceCents: this.advanceFor(subject.totalCents ?? 0),
+        requirePrepayment: true,
         reason: 'repeat_contact',
       };
     }
@@ -193,12 +209,6 @@ export class RiskService {
       return { ...none, requireLogin: true, reason: 'guest_repeat' };
     }
     return none;
-  }
-
-  /** 10% of the total, rounded up to the taka. */
-  advanceFor(totalCents: number): number {
-    if (totalCents <= 0) return 0;
-    return Math.ceil((totalCents * ADVANCE_PERCENT) / 100 / 100) * 100;
   }
 
   /** Record an attempt so the next one can see it. */

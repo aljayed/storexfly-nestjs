@@ -1,13 +1,17 @@
 import { Global, Module } from '@nestjs/common';
+import { JwtModule } from '@nestjs/jwt';
+import { AuthModule } from '../auth/auth.module';
+import { PhoneProofService } from './phone-proof.service';
 import { RiskService } from './risk.service';
 
 /**
- * Global because both account creation and checkout consult it, and neither
- * should reach across into the other's module to do so.
+ * Global because account creation and checkout both consult it, and neither
+ * should reach into the other's module to do so.
  */
 @Global()
 @Module({
-  providers: [RiskService],
-  exports: [RiskService],
+  imports: [JwtModule.register({}), AuthModule],
+  providers: [RiskService, PhoneProofService],
+  exports: [RiskService, PhoneProofService],
 })
 export class RiskModule {}

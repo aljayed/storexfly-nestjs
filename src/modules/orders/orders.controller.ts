@@ -8,9 +8,13 @@ import {
   Patch,
   Post,
   Query,
+  Req,
   UseGuards,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { JwtService } from '@nestjs/jwt';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import type { Request } from 'express';
 import { Throttle } from '@nestjs/throttler';
 import { Public } from '../../common/decorators/public.decorator';
 import { RequirePerm } from '../../common/decorators/roles.decorator';
@@ -18,7 +22,15 @@ import { RolesGuard } from '../../common/guards/roles.guard';
 import { AdminJwtAuthGuard } from '../../common/guards/admin-jwt-auth.guard';
 import { ShopScopeGuard } from '../../common/guards/shop-scope.guard';
 import { BookCourierDto } from './dto/book-courier.dto';
-import { CheckoutDto, CouponQuoteDto } from './dto/checkout.dto';
+import { callerFrom } from '../risk/checkout-caller';
+import { PhoneProofService } from '../risk/phone-proof.service';
+import {
+  CheckoutDto,
+  CheckoutPhoneConfirmDto,
+  CheckoutPhoneStartDto,
+  CheckoutPreflightDto,
+  CouponQuoteDto,
+} from './dto/checkout.dto';
 import { OrderQueryDto } from './dto/order-query.dto';
 import { RequestAdjustmentDto } from './dto/request-adjustment.dto';
 import { UpdateOrderStatusDto } from './dto/update-order-status.dto';
@@ -27,7 +39,12 @@ import { OrdersService } from './orders.service';
 @ApiTags('orders')
 @Controller()
 export class OrdersController {
-  constructor(private readonly orders: OrdersService) {}
+  constructor(
+    private readonly orders: OrdersService,
+    private readonly jwt: JwtService,
+    private readonly phoneProof: PhoneProofService,
+    private readonly config: ConfigService,
+  ) {}
 
   // ── Public buyer checkout ────────────────────────────────────
   @Public()
@@ -35,8 +52,70 @@ export class OrdersController {
   @Post('checkout')
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({ summary: 'Place an order (inline product-page checkout)' })
-  checkout(@Body() dto: CheckoutDto) {
-    return this.orders.checkout(dto);
+  checkout(@Body() dto: CheckoutDto, @Req() req: Request) {
+    return this.orders.checkout(dto, callerFrom(req, this.accountOf(req)));
+  }
+
+  /**
+   * What this checkout will be asked for before it can go through - whether
+   * cash on delivery is available, and whether the buyer has to sign in or
+   * confirm their number first.
+   *
+   * The storefront calls this while the buyer is still filling the form, so
+   * COD can be withheld before it is picked rather than refused after. The
+   * answer is advisory: checkout re-runs the same checks and is what actually
+   * enforces them.
+   */
+  @Public()
+  @Throttle({ default: { limit: 30, ttl: 60_000 } })
+  @Post('checkout/preflight')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'What this checkout must satisfy before it is placed' })
+  preflight(@Body() dto: CheckoutPreflightDto, @Req() req: Request) {
+    return this.orders.preflight(dto, callerFrom(req, this.accountOf(req)));
+  }
+
+  /**
+   * Checkout is public, so a signed-in buyer is not resolved by a guard.
+   * Read the bearer token when one is there and ignore it when it does not
+   * verify: being signed in only ever relaxes the checks below, so a bad
+   * token costs the caller nothing but the benefit of the doubt.
+   */
+  private accountOf(req: Request): string | null {
+    const header = req.headers.authorization;
+    if (!header?.startsWith('Bearer ')) return null;
+    try {
+      const claims = this.jwt.verify<{ sub?: string; typ?: string }>(
+        header.slice(7),
+        { secret: this.config.getOrThrow<string>('jwt.secret') },
+      );
+      return claims.typ === 'seller' && claims.sub ? claims.sub : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Phone verification for a checkout. A guest has no account to mark as
+   * verified, so confirming the code hands back a short-lived proof that
+   * `POST /checkout` accepts in its place.
+   */
+  @Public()
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
+  @Post('checkout/phone/start')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Text a verification code for a checkout' })
+  startPhone(@Body() dto: CheckoutPhoneStartDto) {
+    return this.phoneProof.start(dto.phone);
+  }
+
+  @Public()
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  @Post('checkout/phone/confirm')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Exchange the code for a checkout phone proof' })
+  confirmPhone(@Body() dto: CheckoutPhoneConfirmDto) {
+    return this.phoneProof.confirm(dto.phone, dto.code);
   }
 
   /**

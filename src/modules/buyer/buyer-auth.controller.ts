@@ -1,4 +1,5 @@
-import { Body, Controller, Get, Post } from '@nestjs/common';
+import { Body, Controller, Get, Post, Req } from '@nestjs/common';
+import type { Request } from 'express';
 import { Throttle } from '@nestjs/throttler';
 import {
   ApiBearerAuth,
@@ -36,8 +37,8 @@ export class BuyerAuthController {
   @Post('register')
   @ApiOperation({ summary: 'Buyer: create an account (no verification code)' })
   @ApiOkResponse({ type: BuyerAuthResponse })
-  register(@Body() dto: BuyerRegisterDto) {
-    return this.buyers.register(dto);
+  register(@Body() dto: BuyerRegisterDto, @Req() req: Request) {
+    return this.buyers.register(dto, req.ip);
   }
 
   @Public()

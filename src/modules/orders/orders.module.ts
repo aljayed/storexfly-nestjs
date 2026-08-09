@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { JwtModule } from '@nestjs/jwt';
 import { ChatModule } from '../chat/chat.module';
 import { CustomersModule } from '../customers/customers.module';
 import { GatewaysModule } from '../gateways/gateways.module';
@@ -13,6 +14,7 @@ import { PaymentsService } from './payments.service';
 
 @Module({
   imports: [
+    JwtModule.register({}),
     CustomersModule,
     SettlementsModule,
     GatewaysModule,

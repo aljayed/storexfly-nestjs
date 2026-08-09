@@ -107,6 +107,17 @@ export class CheckoutDto {
   @IsString()
   shopId!: string;
 
+  /**
+   * Proof that the buyer answered an SMS code for `contact.phone`, from
+   * /checkout/phone/confirm. Only asked for when the anti-abuse checks say so;
+   * ignored otherwise.
+   */
+  @ApiPropertyOptional({ description: 'Short-lived phone verification proof' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(1000)
+  phoneProof?: string;
+
   @ApiPropertyOptional({
     description:
       'The product being ordered. Exactly one of productId/comboId/items.',
@@ -264,4 +275,42 @@ export class CouponQuoteDto {
   @IsString()
   @MaxLength(240)
   area?: string;
+}
+
+/**
+ * POST /checkout/preflight - the cart as it stands, so the storefront can ask
+ * what will be required before the buyer commits to a payment method.
+ */
+export class CheckoutPreflightDto {
+  @ApiProperty()
+  @IsString()
+  shopId!: string;
+
+  @ApiPropertyOptional({ example: '+8801712345678' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(24)
+  phone?: string;
+
+  @ApiPropertyOptional({ example: 'arif@gmail.com' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(320)
+  email?: string;
+}
+
+/** POST /checkout/phone/start */
+export class CheckoutPhoneStartDto {
+  @ApiProperty({ example: '+8801712345678' })
+  @IsString()
+  @Matches(/^\+?[0-9\s-]{6,20}$/, { message: 'Enter a valid phone number' })
+  phone!: string;
+}
+
+/** POST /checkout/phone/confirm */
+export class CheckoutPhoneConfirmDto extends CheckoutPhoneStartDto {
+  @ApiProperty({ example: '123456' })
+  @IsString()
+  @MaxLength(8)
+  code!: string;
 }
