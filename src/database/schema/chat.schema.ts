@@ -33,6 +33,24 @@ export const chatSenderRoleEnum = pgEnum('chat_sender_role', [
   'seller',
 ]);
 
+/**
+ * What a conversation participant *is*. A thread is a pair of these, which is
+ * what lets chat carry more than the original buyer↔shop case:
+ *
+ *   account ↔ shop      the classic thread - a buyer messaging a storefront
+ *   account ↔ account   two people, neither acting as a shop
+ *   support ↔ shop      Hoomri Support messaging a seller's console
+ *   support ↔ account   Hoomri Support messaging any account
+ *
+ * `support` is the platform's own desk (contact@hoomri.com). It is a kind
+ * rather than a row: there is exactly one of it, so it carries no id.
+ */
+export const chatPartyKindEnum = pgEnum('chat_party_kind', [
+  'account',
+  'shop',
+  'support',
+]);
+
 export const chatMessageTypeEnum = pgEnum('chat_message_type', [
   'text',
   'product',
@@ -193,6 +211,20 @@ export const chatConversations = pgTable(
   'chat_conversations',
   {
     id: uuid('id').primaryKey().defaultRandom(),
+    /**
+     * The two participants, normalised into one sorted key
+     * (`account:<uuid>|shop:<uuid>`, `support:|account:<uuid>`, …) so a thread
+     * can be looked up by its pair regardless of who opened it. The parties
+     * themselves live in {@link chatParticipants}; this is the unique handle.
+     */
+    pairKey: varchar('pair_key', { length: 160 }),
+    /**
+     * Buyer↔shop threads, and the reason those two keep their foreign keys:
+     * they are what cascade-deletes a thread when the account or the shop goes
+     * away. They stay NOT NULL until the readers below move onto
+     * {@link chatParticipants}; the migration that relaxes them is the same one
+     * that teaches every query to read a party pair instead.
+     */
     buyerId: uuid('buyer_id')
       .notNull()
       .references(() => users.id, { onDelete: 'cascade' }),
@@ -224,6 +256,48 @@ export const chatConversations = pgTable(
     ),
     index('chat_conversations_shop_idx').on(table.shopId),
     index('chat_conversations_buyer_idx').on(table.buyerId),
+  ],
+);
+
+/**
+ * The two sides of a thread, one row each ('a' and 'b').
+ *
+ * Polymorphic participants normally cost referential integrity - a single
+ * `party_id` column can't point at two tables. Keeping one nullable FK per
+ * kind, with a CHECK that exactly the right one is set, buys the integrity
+ * back: deleting an account or a shop still cascades its threads away.
+ *
+ * Unread lives here rather than on the conversation because "unread for whom"
+ * is a property of a participant, and account↔account threads have no
+ * buyer/seller side to hang it off.
+ */
+export const chatParticipants = pgTable(
+  'chat_participants',
+  {
+    conversationId: uuid('conversation_id')
+      .notNull()
+      .references(() => chatConversations.id, { onDelete: 'cascade' }),
+    /** 'a' or 'b' - which slot of the pair. Ordering matches `pair_key`. */
+    side: varchar('side', { length: 1 }).notNull(),
+    kind: chatPartyKindEnum('kind').notNull(),
+    accountId: uuid('account_id').references(() => users.id, {
+      onDelete: 'cascade',
+    }),
+    shopId: uuid('shop_id').references(() => shops.id, { onDelete: 'cascade' }),
+    unread: integer('unread').notNull().default(0),
+    /** Cleared when this side opens the thread; drives read receipts. */
+    lastReadAt: timestamp('last_read_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('chat_participants_conversation_side_idx').on(
+      table.conversationId,
+      table.side,
+    ),
+    index('chat_participants_account_idx').on(table.accountId),
+    index('chat_participants_shop_idx').on(table.shopId),
   ],
 );
 
@@ -385,6 +459,25 @@ export const chatConversationsRelations = relations(
       references: [shops.id],
     }),
     messages: many(chatMessages),
+    participants: many(chatParticipants),
+  }),
+);
+
+export const chatParticipantsRelations = relations(
+  chatParticipants,
+  ({ one }) => ({
+    conversation: one(chatConversations, {
+      fields: [chatParticipants.conversationId],
+      references: [chatConversations.id],
+    }),
+    account: one(users, {
+      fields: [chatParticipants.accountId],
+      references: [users.id],
+    }),
+    shop: one(shops, {
+      fields: [chatParticipants.shopId],
+      references: [shops.id],
+    }),
   }),
 );
 
@@ -401,8 +494,11 @@ export type ChatMessageType = (typeof chatMessageTypeEnum.enumValues)[number];
 export type ChatMessageStatus =
   (typeof chatMessageStatusEnum.enumValues)[number];
 
+export type ChatPartyKind = (typeof chatPartyKindEnum.enumValues)[number];
 export type ChatConversationRow = typeof chatConversations.$inferSelect;
 export type NewChatConversationRow = typeof chatConversations.$inferInsert;
+export type ChatParticipantRow = typeof chatParticipants.$inferSelect;
+export type NewChatParticipantRow = typeof chatParticipants.$inferInsert;
 export type ChatMessageRow = typeof chatMessages.$inferSelect;
 export type NewChatMessageRow = typeof chatMessages.$inferInsert;
 export type ChatQuickReplyRow = typeof chatQuickReplies.$inferSelect;

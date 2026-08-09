@@ -484,6 +484,20 @@
       "when": 1791849600000,
       "tag": "0071_variant_combinations",
       "breakpoints": true
+    },
+    {
+      "idx": 72,
+      "version": "7",
+      "when": 1791936000000,
+      "tag": "0072_chat_participants",
+      "breakpoints": true
+    },
+    {
+      "idx": 73,
+      "version": "7",
+      "when": 1792022400000,
+      "tag": "0073_user_handles",
+      "breakpoints": true
     }
   ]
 }
