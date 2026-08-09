@@ -1,4 +1,8 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  ServiceUnavailableException,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { OtpService } from '../auth/otp.service';
@@ -30,6 +34,7 @@ export function normalizePhone(raw: string | null | undefined): string {
 @Injectable()
 export class PhoneProofService {
   private readonly secret: string;
+  private readonly isProduction = process.env.NODE_ENV === 'production';
 
   constructor(
     private readonly otp: OtpService,
@@ -39,12 +44,30 @@ export class PhoneProofService {
     this.secret = config.getOrThrow<string>('jwt.secret');
   }
 
-  /** Text a code to the number (or hand it back while SMS is a stub). */
+  /**
+   * Text a code to the number.
+   *
+   * While the SMS gateway is a stub the code comes back in the response so the
+   * flow can be exercised - but never in production, where this endpoint is
+   * public and handing out the code would make the whole check ornamental.
+   */
   async start(phone: string): Promise<{ ok: true; devCode?: string }> {
     const normalized = normalizePhone(phone);
     if (!normalized) throw new BadRequestException('Enter a valid phone number');
+    if (!this.canDeliver) {
+      throw new ServiceUnavailableException(
+        'Phone verification is unavailable right now.',
+      );
+    }
     const code = await this.otp.issue(normalized, SCOPE);
-    return this.otp.smsEnabled ? { ok: true } : { ok: true, devCode: code };
+    return this.otp.smsEnabled || this.isProduction
+      ? { ok: true }
+      : { ok: true, devCode: code };
+  }
+
+  /** True when a code can actually reach the recipient. */
+  get canDeliver(): boolean {
+    return this.otp.smsEnabled || !this.isProduction;
   }
 
   /** Exchange a correct code for the proof checkout will accept. */

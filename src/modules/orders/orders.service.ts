@@ -272,13 +272,17 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
     dto: { shopId: string; phone?: string; email?: string },
     caller: CheckoutCaller,
   ): Promise<CheckoutRisk> {
-    return this.risk.assessCheckout({
+    const risk = await this.risk.assessCheckout({
       phone: dto.phone,
       email: dto.email,
       ip: caller.ip,
       device: caller.device,
       accountId: caller.accountId,
     });
+    // Do not advertise a step the buyer could not complete.
+    return this.phoneProof.canDeliver
+      ? risk
+      : { ...risk, requirePhoneVerification: false };
   }
 
   async checkout(
@@ -306,8 +310,12 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
           'Please sign in to confirm this order - another order was just placed from this device.',
       });
     }
+    // Only ask for a code that can actually be delivered. With no SMS gateway
+    // configured this step would be a wall with no door - the order still has
+    // to be prepaid, which is the part that discourages a fake one anyway.
     if (
       risk.requirePhoneVerification &&
+      this.phoneProof.canDeliver &&
       !(await this.phoneProof.holds(dto.phoneProof, dto.contact.phone))
     ) {
       throw new ForbiddenException({
