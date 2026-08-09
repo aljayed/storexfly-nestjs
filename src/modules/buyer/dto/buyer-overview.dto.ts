@@ -101,6 +101,8 @@ export interface BuyerProfile {
   lastPayMethod: string | null;
   /** True once the buyer has confirmed ownership of their email via OTP. */
   emailVerified: boolean;
+  /** Public username ("@rafiq"), null until the account claims one. */
+  handle: string | null;
 }
 
 /** A seller's still-pending order-amount change awaiting the buyer's decision. */

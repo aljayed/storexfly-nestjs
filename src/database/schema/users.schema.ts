@@ -52,6 +52,16 @@ export const users = pgTable(
     via: authMethodEnum('via').notNull().default('email'),
     googleId: varchar('google_id', { length: 64 }),
     isAdmin: boolean('is_admin').notNull().default(false),
+    /**
+     * Public username, claimed from the profile page - "@rafiq" rather than an
+     * email address. It is what other people can find an account by, which is
+     * the point: an address book of emails should never be searchable, but a
+     * handle is only discoverable because its owner chose to publish it.
+     *
+     * Null until claimed, stored lowercase, and only settable once the email
+     * is verified (see BuyerService.setHandle).
+     */
+    handle: varchar('handle', { length: 24 }),
     emailVerified: boolean('email_verified').notNull().default(false),
     // True once the account proves the phone number by OTP
     // (/auth/verify/phone/*). Required, together with `emailVerified`, before
@@ -78,6 +88,7 @@ export const users = pgTable(
     uniqueIndex('users_email_unique_idx').on(table.email),
     uniqueIndex('users_google_id_unique_idx').on(table.googleId),
     index('users_phone_idx').on(table.phone),
+    uniqueIndex('users_handle_unique_idx').on(table.handle),
   ],
 );
 

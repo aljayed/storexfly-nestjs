@@ -106,6 +106,7 @@ export class BuyerAuthResponse {
         geo: row.geo,
         lastPayMethod: row.lastPayMethod,
         emailVerified: row.emailVerified,
+        handle: row.handle,
       },
     };
   }

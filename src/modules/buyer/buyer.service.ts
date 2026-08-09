@@ -13,6 +13,7 @@ import type { DrizzleDB } from '../../database/drizzle.types';
 import {
   orders,
   reviews,
+  shops,
   users,
   type NewUserRow,
   type UserRow,
@@ -20,6 +21,11 @@ import {
 import { centsToDollars } from '../../common/utils/money.util';
 import { productLines } from '../../common/utils/order-line.util';
 import { BlockedWordsService } from '../blocked-words/blocked-words.service';
+import {
+  checkHandleShape,
+  normalizeHandle,
+  type HandleRejection,
+} from './handle.util';
 import { EmailOtpService } from '../auth/email-otp.service';
 import { SessionScopeService } from '../auth/session-scope.service';
 import { TokenService } from '../auth/token.service';
@@ -209,6 +215,7 @@ export class BuyerService {
       geo: row.geo,
       lastPayMethod: row.lastPayMethod,
       emailVerified: row.emailVerified,
+      handle: row.handle,
     };
   }
 
@@ -297,6 +304,80 @@ export class BuyerService {
   }
 
   /**
+   * Is this username free and allowed? Drives the live check under the field,
+   * so it deliberately answers only about the name asked for - it is not a
+   * directory, and never returns who holds a taken one.
+   */
+  async checkHandle(
+    accountId: string,
+    raw: string,
+  ): Promise<{ handle: string; available: boolean; reason?: HandleRejection }> {
+    const handle = normalizeHandle(raw);
+    const shape = checkHandleShape(handle);
+    if (shape) return { handle, available: false, reason: shape };
+
+    const taken = await this.handleTaken(handle, accountId);
+    return taken
+      ? { handle, available: false, reason: 'taken' }
+      : { handle, available: true };
+  }
+
+  /**
+   * Claim (or change) the account's username. Gated on a verified email so a
+   * name can always be traced back to a reachable account - that is what stops
+   * handle-squatting with throwaway signups.
+   */
+  async setHandle(accountId: string, raw: string): Promise<BuyerProfile> {
+    const account = await this.findById(accountId);
+    if (!account) throw new UnauthorizedException('Account no longer exists');
+    if (!account.emailVerified) {
+      throw new ForbiddenException('Verify your email before setting a username');
+    }
+
+    const handle = normalizeHandle(raw);
+    const shape = checkHandleShape(handle);
+    if (shape) throw new ConflictException(shape);
+    // A name someone else already publishes as is off limits, and so is one
+    // the blocked-word list would reject anywhere else on the platform.
+    if (await this.handleTaken(handle, accountId)) {
+      throw new ConflictException('taken');
+    }
+    await this.blockedWords.assertClean(handle);
+
+    const [row] = await this.db
+      .update(users)
+      .set({ handle })
+      .where(eq(users.id, accountId))
+      .returning();
+    if (!row) throw new UnauthorizedException('Account no longer exists');
+    return this.me(row);
+  }
+
+  /**
+   * Taken by another account, or by a shop this account does not own - a
+   * storefront's handle is a public identity on the same platform, so letting
+   * a stranger claim it as a username would be an impersonation vector.
+   */
+  private async handleTaken(
+    handle: string,
+    accountId: string,
+  ): Promise<boolean> {
+    const [byAccount, byShop] = await Promise.all([
+      this.db.query.users.findFirst({
+        where: eq(users.handle, handle),
+        columns: { id: true },
+      }),
+      this.db.query.shops.findFirst({
+        where: eq(shops.handle, handle),
+        columns: { ownerId: true },
+      }),
+    ]);
+    if (byAccount && byAccount.id !== accountId) return true;
+    if (byShop && byShop.ownerId !== accountId) return true;
+    return false;
+  }
+
+  /**
    * Everything the account's storefront profile screen needs in one round-trip:
    * account info, headline stats, the orders placed with this email (matched
    * case-insensitively, the same link used to verify purchases) and reviews.
@@ -346,6 +427,7 @@ export class BuyerService {
         geo: account.geo,
         lastPayMethod: account.lastPayMethod,
         emailVerified: account.emailVerified,
+        handle: account.handle,
         memberSince: account.createdAt.toISOString(),
       },
       stats: {
