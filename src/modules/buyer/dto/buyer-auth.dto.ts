@@ -92,6 +92,8 @@ export class BuyerAuthResponse {
   @ApiProperty() token!: string;
   @ApiProperty() buyer!: BuyerProfile;
 
+  /** `handle` here is the account's own username; the shop-derived one comes
+   *  from BuyerService.me(), which can reach the database. */
   static of(row: UserRow, token: string): BuyerAuthResponse {
     return {
       token,
@@ -107,6 +109,7 @@ export class BuyerAuthResponse {
         lastPayMethod: row.lastPayMethod,
         emailVerified: row.emailVerified,
         handle: row.handle,
+        handleFromShop: false,
       },
     };
   }

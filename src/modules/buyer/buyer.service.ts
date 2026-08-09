@@ -203,7 +203,12 @@ export class BuyerService {
     return this.issue(row);
   }
 
-  me(row: UserRow): BuyerProfile {
+  /**
+   * Public profile shape. Async because the handle can come from the account's
+   * shop - see {@link publicHandle}.
+   */
+  async me(row: UserRow): Promise<BuyerProfile> {
+    const { handle, fromShop } = await this.publicHandle(row);
     return {
       id: row.id,
       name: row.name,
@@ -215,7 +220,8 @@ export class BuyerService {
       geo: row.geo,
       lastPayMethod: row.lastPayMethod,
       emailVerified: row.emailVerified,
-      handle: row.handle,
+      handle,
+      handleFromShop: fromShop,
     };
   }
 
@@ -323,6 +329,24 @@ export class BuyerService {
   }
 
   /**
+   * The name this account is publicly known by. A shop owner is known by
+   * their storefront: one identity per person, whichever side of the platform
+   * they are standing on, and it does not change because they also buy from
+   * other shops. Only accounts without a shop carry a username of their own.
+   */
+  private async publicHandle(
+    account: UserRow,
+  ): Promise<{ handle: string | null; fromShop: boolean }> {
+    const shop = await this.db.query.shops.findFirst({
+      where: eq(shops.ownerId, account.id),
+      columns: { handle: true },
+    });
+    return shop
+      ? { handle: shop.handle, fromShop: true }
+      : { handle: account.handle, fromShop: false };
+  }
+
+  /**
    * Claim (or change) the account's username. Gated on a verified email so a
    * name can always be traced back to a reachable account - that is what stops
    * handle-squatting with throwaway signups.
@@ -332,6 +356,10 @@ export class BuyerService {
     if (!account) throw new UnauthorizedException('Account no longer exists');
     if (!account.emailVerified) {
       throw new ForbiddenException('Verify your email before setting a username');
+    }
+    // A seller already has a public name - the one over their shop.
+    if ((await this.publicHandle(account)).fromShop) {
+      throw new ConflictException('shop_handle');
     }
 
     const handle = normalizeHandle(raw);
@@ -417,17 +445,7 @@ export class BuyerService {
 
     return {
       buyer: {
-        id: account.id,
-        name: account.name,
-        email: account.email ?? '',
-        phone: account.phone,
-        address: account.addressLine,
-        city: account.addressCity,
-        pincode: account.addressPincode,
-        geo: account.geo,
-        lastPayMethod: account.lastPayMethod,
-        emailVerified: account.emailVerified,
-        handle: account.handle,
+        ...(await this.me(account)),
         memberSince: account.createdAt.toISOString(),
       },
       stats: {

@@ -103,6 +103,9 @@ export interface BuyerProfile {
   emailVerified: boolean;
   /** Public username ("@rafiq"), null until the account claims one. */
   handle: string | null;
+  /** True when the handle is the account's shop handle rather than a username
+   *  it picked: a seller is known by their storefront on both sides. */
+  handleFromShop: boolean;
 }
 
 /** A seller's still-pending order-amount change awaiting the buyer's decision. */
