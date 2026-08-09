@@ -290,7 +290,7 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
       // Lock the shop row: all concurrent checkouts for this shop queue here,
       // which makes the "#NNNN" reference and stock math race-free.
       const [shop] = await tx
-        .select({ live: shops.live, plan: shops.plan })
+        .select({ live: shops.live, plan: shops.plan, ownerId: shops.ownerId })
         .from(shops)
         .where(eq(shops.id, dto.shopId))
         .for('update');
@@ -298,6 +298,8 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
       if (!shop?.live) {
         throw new ForbiddenException('This shop is currently offline.');
       }
+
+      await this.assertNotOwnShop(tx, shop.ownerId, dto.contact);
 
       // Free tier: a shop may take 10 orders as a trial; the order that fills
       // the last slot still goes through, then the shop is deactivated until
@@ -906,6 +908,43 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
       this.config.get<string>('app.apiUrl') ?? 'http://localhost:3000';
     const prefix = this.config.get<string>('app.apiPrefix') ?? 'api';
     return `${apiUrl.replace(/\/$/, '')}/${prefix}/payments/bkash/callback`;
+  }
+
+  /**
+   * A seller cannot buy from their own shop.
+   *
+   * Checkout is public - most orders arrive with no session at all - so the
+   * buyer is identified the only way a guest ever is: the contact details on
+   * the order. Matching either the owner's email or their phone is enough,
+   * because both are unique per account and both are what the seller would
+   * naturally type into their own storefront.
+   *
+   * This is a self-dealing guard, not a security boundary: a seller who wants
+   * to place an order against themselves can use another address. What it
+   * stops is the accidental case, and the obvious inflation of a shop's own
+   * order count and review eligibility.
+   */
+  private async assertNotOwnShop(
+    tx: OrdersTx,
+    ownerId: string,
+    contact: { email?: string; phone: string },
+  ): Promise<void> {
+    const [owner] = await tx
+      .select({ email: users.email, phone: users.phone })
+      .from(users)
+      .where(eq(users.id, ownerId));
+    if (!owner) return;
+
+    const email = contact.email?.trim().toLowerCase();
+    const phone = normalizePhone(contact.phone);
+    const sameEmail = !!email && !!owner.email && owner.email.toLowerCase() === email;
+    const samePhone = !!phone && normalizePhone(owner.phone) === phone;
+
+    if (sameEmail || samePhone) {
+      throw new ForbiddenException(
+        'You cannot place an order in your own shop.',
+      );
+    }
   }
 
   /** Lifetime orders (everything not cancelled) - the free-tier cap metric. */
