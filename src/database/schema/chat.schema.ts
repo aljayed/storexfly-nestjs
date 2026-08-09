@@ -91,11 +91,31 @@ export interface ChatOrderSnapshotValue {
   status: string;
 }
 
+/** One ordered line shown on an adjustment card, so the buyer can see what
+ *  the amount they are approving is actually for. Money in major units. */
+export interface ChatAdjustmentItemValue {
+  name: string;
+  qty: number;
+  /** What was picked at purchase time ("Size: L · Pack of 3"), when any. */
+  variant?: string;
+  /** Unit price × qty. */
+  lineTotal: number;
+  imageUrl?: string;
+  emoji?: string;
+  tone?: string;
+  /** Product page slug - absent once the product is deleted. */
+  slug?: string;
+}
+
 /**
  * A shop-initiated order-amount change embedded in an 'adjustment' card. A
  * `decrease` is auto-applied (status 'approved') and purely informational; an
  * `increase` starts 'pending' and the buyer approves/declines from the card.
  * Totals are decimal (major units). Kept as a snapshot like the other cards.
+ *
+ * Everything below `status` is order context the card renders to explain what
+ * is being changed. All of it is optional: cards posted before the card grew
+ * those fields simply render the amounts, as they always did.
  */
 export interface ChatAdjustmentSnapshotValue {
   adjustmentId: string;
@@ -106,6 +126,23 @@ export interface ChatAdjustmentSnapshotValue {
   currency: string;
   direction: 'increase' | 'decrease';
   status: 'pending' | 'approved' | 'rejected' | 'withdrawn';
+  /** The first few product lines of the order (never the shipping/discount
+      rows), plus the count of what was left out. */
+  items?: ChatAdjustmentItemValue[];
+  /** Product lines beyond the ones in `items`. */
+  moreItems?: number;
+  /** Units ordered across every product line. */
+  itemCount?: number;
+  /** Shipping charge, already inside both totals (0 = free delivery). */
+  delivery?: number;
+  /** ISO date the order was placed. */
+  placedAt?: string;
+  /** Fulfilment status when the change was proposed ('New', 'Packed', …). */
+  orderStatus?: string;
+  /** Payment-method code and its catalogue title at the time ('cod' /
+      'Cash on Delivery') - the buyer still owes this money. */
+  paymentMethod?: string;
+  paymentLabel?: string;
 }
 
 /**

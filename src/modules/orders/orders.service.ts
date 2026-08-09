@@ -26,7 +26,10 @@ import {
   sql,
 } from 'drizzle-orm';
 import { centsToDollars, dollarsToCents } from '../../common/utils/money.util';
-import { DELIVERY_LINE_NAME } from '../../common/utils/order-line.util';
+import {
+  DELIVERY_LINE_NAME,
+  productLines,
+} from '../../common/utils/order-line.util';
 import {
   CREDIT_EXHAUSTED_MESSAGE,
   FREE_ORDER_CAP,
@@ -1758,7 +1761,18 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
     return match?.id ?? null;
   }
 
-  /** Post the order-amount change card into the (buyer, shop) chat thread. */
+  /** How many ordered lines the chat card shows before it says "+N more". */
+  private static readonly ADJUST_CARD_LINES = 3;
+
+  /**
+   * Post the order-amount change card into the (buyer, shop) chat thread.
+   *
+   * The card carries a snapshot of the order it changes - the first few lines
+   * with their photos, what shipping costs, when it was placed, how it is
+   * being paid - so the buyer can tell what they are approving without leaving
+   * the thread. Snapshotted, like every other card: a later catalogue edit
+   * must not rewrite what the shop asked them to agree to.
+   */
   private async postAdjustmentCard(
     order: OrderRow,
     accountId: string,
@@ -1770,10 +1784,25 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
       status: 'pending' | 'approved';
     },
   ): Promise<void> {
-    const shop = await this.db.query.shops.findFirst({
-      where: eq(shops.id, order.shopId),
-      columns: { currency: true },
-    });
+    const [shop, lines, methods] = await Promise.all([
+      this.db.query.shops.findFirst({
+        where: eq(shops.id, order.shopId),
+        columns: { currency: true },
+      }),
+      this.db.query.orderItems.findMany({
+        where: eq(orderItems.orderId, order.id),
+        with: {
+          product: { columns: { slug: true, images: true, emoji: true, tone: true } },
+        },
+      }),
+      this.paymentMethods.byCode(),
+    ]);
+    // Shipping and combo-reconciliation rows are not things the buyer bought.
+    const bought = productLines(lines);
+    const method = order.paymentMethod
+      ? methods.get(order.paymentMethod)
+      : undefined;
+
     await this.messages.postShopMessage(order.shopId, accountId, {
       type: 'adjustment',
       adjustment: {
@@ -1786,6 +1815,25 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
         direction:
           a.newTotalCents < a.previousTotalCents ? 'decrease' : 'increase',
         status: a.status,
+        items: bought
+          .slice(0, OrdersService.ADJUST_CARD_LINES)
+          .map((l) => ({
+            name: l.name,
+            qty: l.qty,
+            variant: l.variant ?? undefined,
+            lineTotal: centsToDollars(l.unitPriceCents * l.qty),
+            imageUrl: l.product?.images?.[0],
+            emoji: l.product?.emoji,
+            tone: l.product?.tone,
+            slug: l.product?.slug,
+          })),
+        moreItems: Math.max(0, bought.length - OrdersService.ADJUST_CARD_LINES),
+        itemCount: bought.reduce((n, l) => n + l.qty, 0),
+        delivery: centsToDollars(order.deliveryCents),
+        placedAt: order.placedAt.toISOString(),
+        orderStatus: order.status,
+        paymentMethod: order.paymentMethod ?? undefined,
+        paymentLabel: method?.title,
       },
     });
   }
