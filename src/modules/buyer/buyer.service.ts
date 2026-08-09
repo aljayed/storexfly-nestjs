@@ -152,22 +152,17 @@ export class BuyerService {
         // Issue (or re-issue) the code and tell the client to collect it. A
         // mail outage must not turn this into a 500: the code is stored either
         // way, and the caller still needs to be told what to do next.
-        let retryAfterSeconds = 60;
-        try {
-          ({ retryAfterSeconds } = await this.emailOtp.start(
-            SIGNUP_OTP_SCOPE,
-            email,
-            true,
-            {
-              heading: 'Confirm your email',
-              intro: 'Use this code to finish creating your Hoomri account:',
-            },
-          ));
-        } catch (err) {
-          this.logger.error(
-            `Signup verification email to ${email} failed: ${String(err)}`,
-          );
-        }
+        // Storing the code and posting the email are separate now, so this
+        // returns straight away and a mail outage only loses the email.
+        const { retryAfterSeconds } = await this.emailOtp.start(
+          SIGNUP_OTP_SCOPE,
+          email,
+          true,
+          {
+            heading: 'Confirm your email',
+            intro: 'Use this code to finish creating your Hoomri account:',
+          },
+        );
         throw new ForbiddenException({
           code: 'EMAIL_VERIFICATION_REQUIRED',
           message:

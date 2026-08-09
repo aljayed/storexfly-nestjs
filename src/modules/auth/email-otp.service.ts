@@ -17,7 +17,8 @@ interface PendingEntry {
 /**
  * What `start` did. `sent: false` means a live code is already in the
  * recipient's inbox and they should wait `retryAfterSeconds` before asking for
- * another - not that anything failed.
+ * another - not that anything failed. `sent: true` means an email was handed
+ * to the mail server, which delivers it after this call has returned.
  */
 export interface OtpDispatch {
   sent: boolean;
@@ -104,12 +105,21 @@ export class EmailOtpService {
 
     const heading = mail?.heading ?? 'Verify your email';
     const intro = mail?.intro ?? 'Your Hoomri verification code is:';
-    await this.mail.send({
-      to: email,
-      subject: mail?.subject ?? 'Your Hoomri verification code',
-      text: textBody(code, intro),
-      html: htmlBody(code, heading, intro),
-    });
+    // Posted, not awaited. The code is already stored, so nothing the caller
+    // does next depends on SMTP - and a mail server having a slow morning
+    // should not hold a signup open for its whole timeout.
+    void this.mail
+      .send({
+        to: email,
+        subject: mail?.subject ?? 'Your Hoomri verification code',
+        text: textBody(code, intro),
+        html: htmlBody(code, heading, intro),
+      })
+      .catch((err: unknown) => {
+        this.logger.error(
+          `Could not email the ${scope} code to ${email}: ${String(err)}`,
+        );
+      });
     return { sent: true, retryAfterSeconds: this.resendCooldownMs / 1000 };
   }
 
