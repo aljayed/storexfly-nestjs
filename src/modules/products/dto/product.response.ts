@@ -26,6 +26,18 @@ export interface PublicVariantGroup {
   options: PublicVariantOption[];
 }
 
+/** Exact sellable option combination with its own price and inventory. */
+export interface PublicVariantCombination {
+  id: string;
+  optionIds: Record<string, string>;
+  price: number;
+  comparePrice?: number;
+  stock: number;
+  image?: string;
+  sku?: string;
+  available: boolean;
+}
+
 /** Public multi-buy pack - `price` is the total for `units` units. */
 export interface PublicPack {
   id: string;
@@ -81,9 +93,14 @@ export class ProductResponse {
   @ApiPropertyOptional({ description: 'Optional YouTube product video URL' })
   videoUrl?: string;
   @ApiProperty({
-    description: 'Buyer-facing option groups (≤ 2); deltas in dollars.',
+    description: 'Buyer-facing option groups (≤ 3); deltas in dollars.',
   })
   variantGroups!: PublicVariantGroup[];
+  @ApiProperty({
+    description:
+      'Exact sellable combinations; empty means legacy per-option behavior.',
+  })
+  variantCombinations!: PublicVariantCombination[];
   @ApiProperty({
     description: 'Multi-buy bundles; the single unit is always offered too.',
   })
@@ -129,6 +146,18 @@ export class ProductResponse {
           stock: o.stock ?? undefined,
           onlyWith: o.onlyWith?.length ? o.onlyWith : undefined,
         })),
+      })),
+      variantCombinations: (row.variantCombinations ?? []).map((c) => ({
+        id: c.id,
+        optionIds: c.optionIds,
+        price: centsToDollars(c.priceCents),
+        comparePrice: c.comparePriceCents
+          ? centsToDollars(c.comparePriceCents)
+          : undefined,
+        stock: c.stock,
+        image: c.image ?? undefined,
+        sku: c.sku ?? undefined,
+        available: c.available,
       })),
       packs: (row.packs ?? []).map((p) => ({
         id: p.id,

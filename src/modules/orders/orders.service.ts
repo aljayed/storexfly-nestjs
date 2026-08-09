@@ -169,14 +169,14 @@ function normalizePhone(raw: string | null | undefined): string {
 }
 
 /**
- * Units to take off one variant option's own counter. Only options the seller
- * chose to track produce these - untracked options live purely off the
- * product-level `stock` column.
+ * Units to move for one exact variant selection. New products resolve this to
+ * a combination counter; legacy products still resolve it to any per-option
+ * counters the seller chose to track.
  */
 interface VariantDeduction {
   productId: string;
-  groupId: string;
-  optionId: string;
+  variantPick: Record<string, string>;
+  combinationId?: string | null;
   units: number;
 }
 
@@ -206,6 +206,8 @@ interface CheckoutCart {
     variant: string | null;
     /** `{ groupId: optionId }` of what was picked - null when no variants. */
     variantPick: Record<string, string> | null;
+    /** Exact matrix row used; null identifies legacy per-option inventory. */
+    variantCombinationId?: string | null;
   }[];
 }
 
@@ -412,6 +414,7 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
           unitPriceCents: line.unitPriceCents,
           variant: line.variant,
           variantPick: line.variantPick,
+          variantCombinationId: line.variantCombinationId ?? null,
         })),
       );
 
@@ -707,6 +710,11 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
             `“${item.name}” is no longer available - ask the seller for a new offer.`,
           );
         }
+        if ((product.variantCombinations ?? []).length) {
+          throw new ConflictException(
+            `“${product.name}” now has buyer-selectable variants - ask the seller for a new offer.`,
+          );
+        }
         if (!product.paymentMethods.includes(method.kind)) {
           throw new BadRequestException(
             `“${product.name}” cannot be paid with that method - please pick another.`,
@@ -928,8 +936,8 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
   ): {
     line: CheckoutCart['lines'][number];
     units: number;
-    /** Options the buyer picked that carry their own stock counter. */
-    tracked: { groupId: string; optionId: string }[];
+    variantPick: Record<string, string>;
+    combinationId: string | null;
   } {
     // Showcase items are advertised only - the sale happens offline, so
     // online checkout is never allowed for them.
@@ -953,7 +961,6 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
     // One option per variant group is mandatory once a product defines groups.
     const parts: string[] = [];
     const variantPick: Record<string, string> = {};
-    const tracked: { groupId: string; optionId: string }[] = [];
     let deltaCents = 0;
     for (const group of product.variantGroups ?? []) {
       const option = group.options.find(
@@ -967,18 +974,32 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
       deltaCents += option.priceDeltaCents;
       parts.push(`${group.name}: ${option.label}`);
       variantPick[group.id] = option.id;
-      // Only options the seller counts individually need their own decrement;
-      // the rest ride on the product-level total.
-      if (typeof option.stock === 'number') {
-        tracked.push({ groupId: group.id, optionId: option.id });
-      }
     }
+
+    // Combination products price and stock the exact cross-group selection.
+    // Empty preserves the legacy option-delta behavior below.
+    const combination = (product.variantCombinations ?? []).find((c) =>
+      Object.entries(variantPick).every(
+        ([groupId, optionId]) => c.optionIds[groupId] === optionId,
+      ),
+    );
+    if ((product.variantCombinations ?? []).length && !combination) {
+      throw new ConflictException(
+        'That option combination is not sold - please pick another.',
+      );
+    }
+    if (combination && !combination.available) {
+      throw new ConflictException(
+        'That option combination is unavailable - please pick another.',
+      );
+    }
+    if (combination) deltaCents = combination.priceCents - product.priceCents;
 
     // Not every pair of options exists: a colour may only be made in some of
     // the configurations. The storefront greys those out, so reaching here
     // means a stale page or a hand-made request - either way the combination
     // can't be shipped, so it can't be sold.
-    for (const group of product.variantGroups ?? []) {
+    for (const group of combination ? [] : (product.variantGroups ?? [])) {
       const option = group.options.find((o) => o.id === variantPick[group.id])!;
       if (!option.onlyWith?.length) continue;
       const partner = (product.variantGroups ?? []).find(
@@ -1008,6 +1029,12 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
       parts.push(pack.label.trim() || `Pack of ${pack.units}`);
     }
 
+    if (combination && combination.stock < unitsPerPick * pick.qty) {
+      throw new ConflictException(
+        `Only ${combination.stock} left of that combination - please lower the quantity.`,
+      );
+    }
+
     return {
       line: {
         productId: product.id,
@@ -1017,15 +1044,19 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
         unitPriceCents,
         variant: parts.length ? parts.join(' · ').slice(0, 240) : null,
         variantPick: Object.keys(variantPick).length ? variantPick : null,
+        variantCombinationId: combination?.id ?? null,
       },
       units: unitsPerPick * pick.qty,
-      tracked,
+      variantPick,
+      combinationId: combination?.id ?? null,
     };
   }
 
   /**
-   * Take units off (or, with a positive `sign`, hand them back to) the
-   * per-option counters inside `products.variant_groups`.
+   * Take units off (or, with a positive `sign`, hand them back to) whichever
+   * inventory model the product uses: the exact-row counters in
+   * `products.variant_combinations`, or the legacy per-option counters inside
+   * `products.variant_groups`.
    *
    * The counters live in jsonb, so there is no column to guard with a `>=`
    * predicate the way product-level stock is. Instead the product row is
@@ -1040,12 +1071,25 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
     sign: 1 | -1,
   ): Promise<void> {
     if (!deductions.length) return;
-    const byProduct = new Map<string, Map<string, number>>();
+    // Two lines that moved the same thing are one movement, so the check runs
+    // against their combined units. The picks are keyed on sorted entries
+    // rather than the object's own order: a pick read back out of jsonb comes
+    // with Postgres' key order, not the one checkout wrote it in.
+    const byProduct = new Map<string, Map<string, VariantDeduction>>();
     for (const d of deductions) {
-      const key = `${d.groupId} ${d.optionId}`;
+      const key = d.combinationId
+        ? `c:${d.combinationId}`
+        : `o:${Object.entries(d.variantPick)
+            .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+            .map(([g, o]) => `${g}=${o}`)
+            .join('|')}`;
       const forProduct =
-        byProduct.get(d.productId) ?? new Map<string, number>();
-      forProduct.set(key, (forProduct.get(key) ?? 0) + d.units);
+        byProduct.get(d.productId) ?? new Map<string, VariantDeduction>();
+      const seen = forProduct.get(key);
+      forProduct.set(
+        key,
+        seen ? { ...seen, units: seen.units + d.units } : { ...d },
+      );
       byProduct.set(d.productId, forProduct);
     }
 
@@ -1056,16 +1100,43 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
       a < b ? -1 : a > b ? 1 : 0,
     )) {
       const [row] = await tx
-        .select({ variantGroups: products.variantGroups })
+        .select({
+          variantGroups: products.variantGroups,
+          variantCombinations: products.variantCombinations,
+        })
         .from(products)
         .where(eq(products.id, productId))
         .for('update');
       if (!row) continue;
 
+      const moves = [...wanted.values()];
+      const combinations = [...(row.variantCombinations ?? [])];
+      for (const move of moves) {
+        if (!move.combinationId) continue;
+        const i = combinations.findIndex((c) => c.id === move.combinationId);
+        // The seller reshaped the matrix since the order was placed, so there
+        // is no counter left to move. The aggregate recompute below keeps the
+        // rows that do still exist honest.
+        if (i < 0) continue;
+        const current = combinations[i];
+        const next = current.stock + sign * move.units;
+        if (next < 0) {
+          throw new ConflictException(
+            `Only ${current.stock} left of that combination - please lower the quantity.`,
+          );
+        }
+        combinations[i] = { ...current, stock: next };
+      }
+
+      // Exact-combination orders never touch the legacy per-option counters.
+      const perOption = moves.filter((m) => !m.combinationId);
       const groups = (row.variantGroups ?? []).map((g) => ({
         ...g,
         options: g.options.map((o) => {
-          const units = wanted.get(`${g.id} ${o.id}`);
+          const units = perOption.reduce(
+            (sum, m) => sum + (m.variantPick[g.id] === o.id ? m.units : 0),
+            0,
+          );
           // Untouched options, and ones the seller has since stopped tracking,
           // pass through unchanged.
           if (!units || typeof o.stock !== 'number') return o;
@@ -1081,7 +1152,21 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
 
       await tx
         .update(products)
-        .set({ variantGroups: groups })
+        .set({
+          variantGroups: groups,
+          variantCombinations: combinations,
+          // Once a product sells exact rows they are the only truth about how
+          // much of it exists, so the aggregate is recomputed rather than
+          // nudged - that is what keeps it right when a seller disables or
+          // deletes a row between checkout and cancellation. A product with no
+          // exact rows keeps whatever the caller did to the column itself.
+          stock: combinations.length
+            ? combinations.reduce(
+                (sum, c) => sum + (c.available ? c.stock : 0),
+                0,
+              )
+            : undefined,
+        })
         .where(eq(products.id, productId));
     }
   }
@@ -1105,7 +1190,7 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
       throw new NotFoundException('Product not found in this shop');
     }
 
-    const { line, units, tracked } = this.priceProductPick(
+    const { line, units, variantPick, combinationId } = this.priceProductPick(
       product,
       { qty: dto.qty ?? 1, variant: dto.variant, packId: dto.packId },
       payKind,
@@ -1123,11 +1208,9 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
       deliveryCents,
       totalUnits: units,
       deductions: [{ productId: product.id, units }],
-      variantDeductions: tracked.map((t) => ({
-        productId: product.id,
-        ...t,
-        units,
-      })),
+      variantDeductions: Object.keys(variantPick).length
+        ? [{ productId: product.id, variantPick, combinationId, units }]
+        : [],
       lines,
     };
   }
@@ -1164,7 +1247,7 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
     const variantDeductions: VariantDeduction[] = [];
     for (const pick of picks) {
       const product = byId.get(pick.productId)!;
-      const { line, units, tracked } = this.priceProductPick(
+      const { line, units, variantPick, combinationId } = this.priceProductPick(
         product,
         pick,
         payKind,
@@ -1174,10 +1257,13 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
         product.id,
         (unitsByProduct.get(product.id) ?? 0) + units,
       );
-      // Summed per option by applyVariantStock, so two lines sharing a
-      // variant are checked against their combined units.
-      for (const t of tracked) {
-        variantDeductions.push({ productId: product.id, ...t, units });
+      if (Object.keys(variantPick).length) {
+        variantDeductions.push({
+          productId: product.id,
+          variantPick,
+          combinationId,
+          units,
+        });
       }
     }
     for (const [productId, units] of unitsByProduct) {
@@ -1185,6 +1271,24 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
       if (product.stock < units) {
         throw new ConflictException(
           `Not enough stock of ${product.name} for this quantity`,
+        );
+      }
+    }
+    const unitsByCombination = new Map<string, number>();
+    for (const d of variantDeductions) {
+      if (!d.combinationId) continue;
+      const key = `${d.productId}:${d.combinationId}`;
+      unitsByCombination.set(key, (unitsByCombination.get(key) ?? 0) + d.units);
+    }
+    for (const [key, units] of unitsByCombination) {
+      const separator = key.indexOf(':');
+      const product = byId.get(key.slice(0, separator));
+      const combination = product?.variantCombinations?.find(
+        (c) => c.id === key.slice(separator + 1),
+      );
+      if (!combination || !combination.available || combination.stock < units) {
+        throw new ConflictException(
+          `Not enough stock of ${product?.name ?? 'that combination'} for this quantity`,
         );
       }
     }
@@ -1237,7 +1341,10 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
     const lines: CheckoutCart['lines'] = [];
     for (const item of combo.items) {
       const product = item.product;
-      if (product.listingType !== 'sale') {
+      if (
+        product.listingType !== 'sale' ||
+        (product.variantCombinations ?? []).length
+      ) {
         throw new ConflictException('This combo offer is no longer available.');
       }
       // A member that disallows the picked payment kind restricts the combo.
@@ -1794,7 +1901,9 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
       this.db.query.orderItems.findMany({
         where: eq(orderItems.orderId, order.id),
         with: {
-          product: { columns: { slug: true, images: true, emoji: true, tone: true } },
+          product: {
+            columns: { slug: true, images: true, emoji: true, tone: true },
+          },
         },
       }),
       this.paymentMethods.byCode(),
@@ -1817,18 +1926,16 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
         direction:
           a.newTotalCents < a.previousTotalCents ? 'decrease' : 'increase',
         status: a.status,
-        items: bought
-          .slice(0, OrdersService.ADJUST_CARD_LINES)
-          .map((l) => ({
-            name: l.name,
-            qty: l.qty,
-            variant: l.variant ?? undefined,
-            lineTotal: centsToDollars(l.unitPriceCents * l.qty),
-            imageUrl: l.product?.images?.[0],
-            emoji: l.product?.emoji,
-            tone: l.product?.tone,
-            slug: l.product?.slug,
-          })),
+        items: bought.slice(0, OrdersService.ADJUST_CARD_LINES).map((l) => ({
+          name: l.name,
+          qty: l.qty,
+          variant: l.variant ?? undefined,
+          lineTotal: centsToDollars(l.unitPriceCents * l.qty),
+          imageUrl: l.product?.images?.[0],
+          emoji: l.product?.emoji,
+          tone: l.product?.tone,
+          slug: l.product?.slug,
+        })),
         moreItems: Math.max(0, bought.length - OrdersService.ADJUST_CARD_LINES),
         itemCount: bought.reduce((n, l) => n + l.qty, 0),
         delivery: centsToDollars(order.deliveryCents),
@@ -2340,6 +2447,11 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
       // since that column existed, `qty` for older rows - which is also all
       // those orders ever had deducted for non-pack lines.
       const units = item.units ?? item.qty;
+      // On a product that still sells exact rows this increment is overwritten
+      // a few lines down, where the aggregate is recomputed from those rows -
+      // so it neither double-counts nor invents stock for a row the seller has
+      // since deleted. It only survives when the product has left the exact
+      // model entirely, which is precisely when it is the right place to land.
       await tx
         .update(products)
         .set({ stock: sql`${products.stock} + ${units}` })
@@ -2347,10 +2459,13 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
       // Lines placed before per-option stock existed have no pick recorded;
       // those only ever moved the product-level counter, so there is nothing
       // else to give back.
-      for (const [groupId, optionId] of Object.entries(
-        item.variantPick ?? {},
-      )) {
-        returns.push({ productId: item.productId, groupId, optionId, units });
+      if (item.variantPick && Object.keys(item.variantPick).length) {
+        returns.push({
+          productId: item.productId,
+          variantPick: item.variantPick,
+          combinationId: item.variantCombinationId,
+          units,
+        });
       }
     }
     // Options the seller has stopped tracking since the order are skipped by

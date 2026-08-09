@@ -141,6 +141,10 @@ export const orderItems = pgTable(
     // order has to know *which* choice to hand the units back to. Null for
     // lines with no variants (and for orders placed before this column).
     variantPick: jsonb('variant_pick').$type<Record<string, string>>(),
+    // Stable id of the exact combination whose stock was moved. Null marks a
+    // legacy per-option order, so later catalog migrations cannot restock the
+    // wrong inventory model on cancellation.
+    variantCombinationId: varchar('variant_combination_id', { length: 24 }),
   },
   (table) => [index('order_items_order_idx').on(table.orderId)],
 );

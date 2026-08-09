@@ -185,6 +185,11 @@ export class ChatOffersService {
           `“${product.name}” is a showcase-only listing and can't be ordered online.`,
         );
       }
+      if ((product.variantCombinations ?? []).length) {
+        throw new BadRequestException(
+          `“${product.name}” has buyer-selectable variants. Create the offer from a product without variants.`,
+        );
+      }
       const unitPriceCents =
         pick.unitPrice === undefined
           ? product.priceCents

@@ -53,7 +53,7 @@ export interface ProductVariantOption {
 
 /**
  * A buyer-facing option group (e.g. "Size" or "Color"). A product carries at
- * most 2 groups; the buyer picks exactly one option per group and the deltas
+ * most 3 groups; the buyer picks exactly one option per group and the deltas
  * add onto the base unit price. Product-level `stock` is always the ceiling;
  * an option may additionally track its own count (see `stock` above).
  */
@@ -61,6 +61,23 @@ export interface ProductVariantGroup {
   id: string;
   name: string;
   options: ProductVariantOption[];
+}
+
+/**
+ * One exact sellable combination of the product's option groups. Unlike the
+ * legacy per-option deltas/counters, this can accurately represent a SKU such
+ * as `16 GB · 512 GB · Silver` with its own price, photo and inventory.
+ */
+export interface ProductVariantCombination {
+  id: string;
+  /** One option id for every group, keyed by the stable group id. */
+  optionIds: Record<string, string>;
+  priceCents: number;
+  comparePriceCents?: number | null;
+  stock: number;
+  image?: string | null;
+  sku?: string | null;
+  available: boolean;
 }
 
 /**
@@ -122,10 +139,17 @@ export const products = pgTable(
     // Optional product video - a YouTube watch/share/embed URL. Rendered as an
     // embedded player on the storefront product page.
     videoUrl: text('video_url'),
-    // Buyer-facing option groups (Size, Color, …) - at most 2, deltas on the
+    // Buyer-facing option groups (Size, Color, …) - at most 3, deltas on the
     // base price. Empty = the product has no variants.
     variantGroups: jsonb('variant_groups')
       .$type<ProductVariantGroup[]>()
+      .notNull()
+      .default([]),
+    // Exact SKU-like rows generated from the option groups. Empty keeps the
+    // legacy per-option pricing/stock behavior for products saved before the
+    // combination editor was introduced.
+    variantCombinations: jsonb('variant_combinations')
+      .$type<ProductVariantCombination[]>()
       .notNull()
       .default([]),
     // Multi-buy bundles ("Pack of 3 - ৳270"). Empty = only singles are sold.

@@ -5,9 +5,11 @@ import {
   ArrayMinSize,
   ArrayUnique,
   IsArray,
+  IsBoolean,
   IsEnum,
   IsInt,
   IsNumber,
+  IsObject,
   IsOptional,
   IsString,
   Matches,
@@ -119,6 +121,59 @@ export class VariantGroupDto {
   @ValidateNested({ each: true })
   @Type(() => VariantOptionDto)
   options!: VariantOptionDto[];
+}
+
+/** One exact, sellable combination generated from all option groups. */
+export class VariantCombinationDto {
+  @ApiPropertyOptional({ description: 'Stable combination id.' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(24)
+  id?: string;
+
+  @ApiProperty({
+    example: { ram: 'ram-16', storage: 'ssd-512' },
+    description: 'Chosen option id keyed by group id.',
+  })
+  @IsObject()
+  optionIds!: Record<string, string>;
+
+  @ApiProperty({ example: 49500 })
+  @Type(() => Number)
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0)
+  price!: number;
+
+  @ApiPropertyOptional({ example: 52000 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0)
+  comparePrice?: number;
+
+  @ApiProperty({ example: 6 })
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  @Max(1_000_000)
+  stock!: number;
+
+  @ApiPropertyOptional({ description: 'Combination-specific product photo.' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(3_000_000)
+  image?: string;
+
+  @ApiPropertyOptional({ example: 'PC-16-512-SLV' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  sku?: string;
+
+  @ApiPropertyOptional({ default: true })
+  @IsOptional()
+  @IsBoolean()
+  available?: boolean;
 }
 
 /** A multi-buy bundle: `units` units for `price` total. */
@@ -287,10 +342,22 @@ export class CreateProductDto {
   })
   @IsOptional()
   @IsArray()
-  @ArrayMaxSize(2)
+  @ArrayMaxSize(3)
   @ValidateNested({ each: true })
   @Type(() => VariantGroupDto)
   variantGroups?: VariantGroupDto[];
+
+  @ApiPropertyOptional({
+    type: [VariantCombinationDto],
+    description:
+      'Exact sellable combinations. Empty uses legacy per-option behavior.',
+  })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(250)
+  @ValidateNested({ each: true })
+  @Type(() => VariantCombinationDto)
+  variantCombinations?: VariantCombinationDto[];
 
   @ApiPropertyOptional({
     type: [PackDto],

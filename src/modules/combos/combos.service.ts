@@ -60,7 +60,10 @@ export class CombosService {
         (c) =>
           c.items.length >= 2 &&
           c.items.every(
-            (i) => i.product.listingType === 'sale' && i.product.stock >= i.qty,
+            (i) =>
+              i.product.listingType === 'sale' &&
+              !(i.product.variantCombinations ?? []).length &&
+              i.product.stock >= i.qty,
           ),
       )
       .map((c) => ComboResponse.fromRows(c, c.items));
@@ -182,7 +185,7 @@ export class CombosService {
           members.map((m) => m.productId),
         ),
       ),
-      columns: { id: true, listingType: true },
+      columns: { id: true, listingType: true, variantCombinations: true },
     });
     const found = new Map(rows.map((r) => [r.id, r]));
     for (const m of members) {
@@ -195,6 +198,11 @@ export class CombosService {
       if (row.listingType !== 'sale') {
         throw new BadRequestException(
           'Showcase items cannot be part of a combo - only items sold online',
+        );
+      }
+      if ((row.variantCombinations ?? []).length) {
+        throw new BadRequestException(
+          'Products with buyer-selectable variants cannot be added to a combo yet.',
         );
       }
     }

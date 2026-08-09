@@ -297,6 +297,7 @@ export class ConversationsService {
       emoji: p.emoji,
       tone: p.tone,
       imageUrl: p.images?.[0],
+      hasVariants: (p.variantCombinations ?? []).length > 0,
       // The item's own delivery charges, so an offer can start from the
       // numbers the seller already set instead of a blank field.
       deliveryDhaka: centsToDollars(p.deliveryDhakaCents),
