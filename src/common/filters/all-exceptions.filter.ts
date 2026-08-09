@@ -16,6 +16,9 @@ interface ErrorBody {
   // Optional machine-readable code (e.g. 'PHONE_TAKEN') for clients that need
   // to branch on a specific failure rather than match on the message text.
   code?: string;
+  // Seconds until the action that was refused can be retried - a countdown a
+  // screen can show, rather than a button that keeps looking available.
+  retryAfterSeconds?: number;
   path: string;
   timestamp: string;
 }
@@ -39,6 +42,7 @@ export class AllExceptionsFilter implements ExceptionFilter {
     let message: string | string[] = 'Internal server error';
     let error = 'Internal Server Error';
     let code: string | undefined;
+    let retryAfterSeconds: number | undefined;
 
     if (exception instanceof HttpException) {
       status = exception.getStatus();
@@ -50,6 +54,9 @@ export class AllExceptionsFilter implements ExceptionFilter {
         message = (body.message as string | string[]) ?? exception.message;
         error = (body.error as string) ?? exception.name;
         if (typeof body.code === 'string') code = body.code;
+        if (typeof body.retryAfterSeconds === 'number') {
+          retryAfterSeconds = body.retryAfterSeconds;
+        }
       }
     } else {
       const mapped = postgresErrorToHttp(exception);
@@ -72,6 +79,7 @@ export class AllExceptionsFilter implements ExceptionFilter {
       error,
       message,
       ...(code ? { code } : {}),
+      ...(retryAfterSeconds !== undefined ? { retryAfterSeconds } : {}),
       path: request.url,
       timestamp: new Date().toISOString(),
     };
