@@ -9,7 +9,7 @@ import {
   type OnModuleDestroy,
   type OnModuleInit,
 } from '@nestjs/common';
-import { and, desc, eq, gte, lt, ne, sql } from 'drizzle-orm';
+import { and, desc, eq, gte, isNull, lt, ne, sql } from 'drizzle-orm';
 import {
   COMMISSION_DUE_GRACE_MS,
   CREDIT_BALANCE_CAP_CENTS,
@@ -795,11 +795,19 @@ export class SubscriptionsService implements OnModuleInit, OnModuleDestroy {
   /**
    * Turn the storefront on/off. Going live needs something to sell against:
    * free orders left in the trial, credit in the balance, or the verified
-   * track (which bills afterwards and so is never blocked up front).
+   * track (which bills afterwards and so is never blocked up front) - and a
+   * shop the platform has suspended cannot re-open itself at all.
    */
   async setShopLive(shopId: string, live: boolean): Promise<{ live: boolean }> {
     if (live) {
       const shop = await this.requireShop(shopId);
+      if (shop.suspendedAt) {
+        throw new ForbiddenException(
+          shop.suspendedReason
+            ? `This shop is suspended: ${shop.suspendedReason}`
+            : 'This shop is suspended. Contact Hoomri support to resolve it.',
+        );
+      }
       const sub = await this.findByShop(shopId);
       if (sub?.status === 'cancelled') {
         throw new ForbiddenException(
@@ -1125,12 +1133,22 @@ export class SubscriptionsService implements OnModuleInit, OnModuleDestroy {
 
   // ── Helpers ────────────────────────────────────────────────────
 
-  /** Lift a pause this system caused, leaving a seller's own switch-off alone. */
+  /**
+   * Lift a pause this system caused, leaving a seller's own switch-off alone.
+   * A platform suspension is not ours to lift: paying a bill does not undo it,
+   * so a suspended shop stays dark until the operator says otherwise.
+   */
   private async liftPause(shopId: string): Promise<void> {
     await this.db
       .update(shops)
       .set({ live: true })
-      .where(and(eq(shops.id, shopId), eq(shops.live, false)));
+      .where(
+        and(
+          eq(shops.id, shopId),
+          eq(shops.live, false),
+          isNull(shops.suspendedAt),
+        ),
+      );
   }
 
   private async requireShop(shopId: string): Promise<ShopRow> {

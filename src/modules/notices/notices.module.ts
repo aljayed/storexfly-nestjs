@@ -12,5 +12,7 @@ import { PlatformNoticesController } from './platform-notices.controller';
   imports: [ShopsModule],
   controllers: [NoticesController, PlatformNoticesController],
   providers: [NoticesService],
+  // The platform console's shop drawer messages one seller through this.
+  exports: [NoticesService],
 })
 export class NoticesModule {}

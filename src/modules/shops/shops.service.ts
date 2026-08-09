@@ -882,10 +882,14 @@ export class ShopsService {
    * Like `requireByHandle`, but for buyer-facing routes: a shop that has been
    * switched off is invisible to buyers. The `ShopOffline` error code lets
    * the storefront render a dedicated "temporarily closed" page.
+   *
+   * Suspending already forces `live` false, so the second check is belt and
+   * braces - but it is the one thing here that must never be wrong, so it
+   * does not rely on the two columns staying in step.
    */
   async requireLiveByHandle(handle: string): Promise<ShopRow> {
     const shop = await this.requireByHandle(handle);
-    if (!shop.live) {
+    if (!shop.live || shop.suspendedAt) {
       throw new HttpException(
         {
           statusCode: HttpStatus.FORBIDDEN,

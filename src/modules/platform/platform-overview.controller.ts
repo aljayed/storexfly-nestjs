@@ -5,6 +5,7 @@ import {
   Param,
   ParseUUIDPipe,
   Patch,
+  Post,
   Query,
   UseGuards,
 } from '@nestjs/common';
@@ -26,7 +27,15 @@ import {
   PlatformKycDetailResponse,
   PlatformKycListResponse,
 } from './dto/platform-kyc.response';
-import { PlatformShopListResponse } from './dto/platform-shop.response';
+import { NoticeListResponse, NoticeResponse } from '../notices/dto/notice.dto';
+import {
+  PlatformShopMessageDto,
+  UpdatePlatformShopDto,
+} from './dto/platform-shop-action.dto';
+import {
+  PlatformShopDetailResponse,
+  PlatformShopListResponse,
+} from './dto/platform-shop.response';
 import { PlatformOverviewService } from './platform-overview.service';
 
 /** Cross-shop shop/customer listings for the platform-admin console. */
@@ -43,6 +52,42 @@ export class PlatformOverviewController {
   @ApiOkResponse({ type: PlatformShopListResponse })
   listShops(@Query() query: PlatformListQueryDto) {
     return this.overview.listShops(query);
+  }
+
+  @Get('shops/:shopId')
+  @ApiOperation({ summary: 'Platform admin: one shop, with lifetime trade' })
+  @ApiOkResponse({ type: PlatformShopDetailResponse })
+  getShop(@Param('shopId', ParseUUIDPipe) shopId: string) {
+    return this.overview.getShop(shopId);
+  }
+
+  @Patch('shops/:shopId')
+  @ApiOperation({
+    summary: 'Platform admin: suspend / restore a shop, or switch it offline',
+  })
+  @ApiOkResponse({ type: PlatformShopDetailResponse })
+  updateShop(
+    @Param('shopId', ParseUUIDPipe) shopId: string,
+    @Body() dto: UpdatePlatformShopDto,
+  ) {
+    return this.overview.updateShop(shopId, dto);
+  }
+
+  @Get('shops/:shopId/messages')
+  @ApiOperation({ summary: 'Platform admin: messages sent to one shop' })
+  @ApiOkResponse({ type: NoticeListResponse })
+  shopMessages(@Param('shopId', ParseUUIDPipe) shopId: string) {
+    return this.overview.listShopMessages(shopId);
+  }
+
+  @Post('shops/:shopId/messages')
+  @ApiOperation({ summary: "Platform admin: message one shop's seller" })
+  @ApiOkResponse({ type: NoticeResponse })
+  messageShop(
+    @Param('shopId', ParseUUIDPipe) shopId: string,
+    @Body() dto: PlatformShopMessageDto,
+  ) {
+    return this.overview.messageShop(shopId, dto.message, dto.tone);
   }
 
   @Get('customers')

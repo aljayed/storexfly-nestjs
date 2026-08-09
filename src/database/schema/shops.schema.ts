@@ -92,6 +92,17 @@ export const shops = pgTable(
     // and checkout endpoints all refuse to serve the shop. Forced off when
     // the platform subscription is cancelled.
     live: boolean('live').notNull().default(true),
+    // ── Platform suspension ────────────────────────────────────────
+    // The operator's lock, and deliberately a separate column from `live`:
+    // `live` is the seller's own switch (and the one billing pauses), so a
+    // suspension written into it would be undone the moment the seller
+    // re-opens the shop or the next payment lifts the billing pause.
+    // While this is set the shop is off and stays off - only the platform
+    // console can clear it. Suspending also forces `live` false, so every
+    // buyer-facing check that already reads `live` keeps working unchanged.
+    suspendedAt: timestamp('suspended_at', { withTimezone: true }),
+    // Shown to the seller so a suspension is never silent.
+    suspendedReason: varchar('suspended_reason', { length: 300 }),
     // Pricing tier. Free shops list as much as they like but are capped at 10
     // lifetime orders, and are deactivated at that cap until they buy credit
     // or verify. Existing shops predate the free tier and stay 'paid'.

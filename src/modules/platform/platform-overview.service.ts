@@ -1,21 +1,45 @@
 import { Inject, Injectable, NotFoundException } from '@nestjs/common';
-import { and, count, desc, eq, gte, ilike, ne, or, sql } from 'drizzle-orm';
+import {
+  and,
+  asc,
+  count,
+  desc,
+  eq,
+  gte,
+  ilike,
+  ne,
+  or,
+  sql,
+} from 'drizzle-orm';
 import { DRIZZLE } from '../../database/database.constants';
 import type { DrizzleDB } from '../../database/drizzle.types';
-import type { KycStatus } from '../../database/schema/enums';
-import { customers, orders, shops } from '../../database/schema';
-import type { ShopRow } from '../../database/schema';
-import { PlatformCustomerListResponse } from './dto/platform-customer.response';
+import type { NoticeTone } from '../../database/schema/enums';
 import {
-  KycStatusFilter,
-  PlatformKycQueryDto,
-} from './dto/platform-kyc-query.dto';
+  customers,
+  notices,
+  orders,
+  products,
+  shops,
+  subscriptions,
+} from '../../database/schema';
+import type { ShopRow } from '../../database/schema';
+import { NoticesService } from '../notices/notices.service';
+import type {
+  NoticeListResponse,
+  NoticeResponse,
+} from '../notices/dto/notice.dto';
+import { PlatformCustomerListResponse } from './dto/platform-customer.response';
+import { PlatformKycQueryDto } from './dto/platform-kyc-query.dto';
 import {
   PlatformKycDetailResponse,
   PlatformKycListResponse,
   PlatformKycResponse,
 } from './dto/platform-kyc.response';
-import { PlatformShopListResponse } from './dto/platform-shop.response';
+import { UpdatePlatformShopDto } from './dto/platform-shop-action.dto';
+import {
+  PlatformShopDetailResponse,
+  PlatformShopListResponse,
+} from './dto/platform-shop.response';
 
 /** Cents → major units (e.g. 18420_00 → 18420). */
 const toMajor = (cents: number) => Math.round(cents) / 100;
@@ -29,7 +53,10 @@ const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
  */
 @Injectable()
 export class PlatformOverviewService {
-  constructor(@Inject(DRIZZLE) private readonly db: DrizzleDB) {}
+  constructor(
+    @Inject(DRIZZLE) private readonly db: DrizzleDB,
+    private readonly notices: NoticesService,
+  ) {}
 
   /** Paginated list of all shops with owner contact and last-30-day sales. */
   async listShops(query: {
@@ -82,6 +109,7 @@ export class PlatformOverviewService {
           phone: s.owner?.phone ?? s.supportPhone ?? undefined,
           currency: s.currency,
           live: s.live,
+          suspended: !!s.suspendedAt,
           sales30d: toMajor(agg?.cents ?? 0),
           orders30d: agg?.n ?? 0,
           createdAt: s.createdAt.toISOString(),
@@ -91,6 +119,220 @@ export class PlatformOverviewService {
       page: query.page,
       limit: query.limit,
     };
+  }
+
+  /**
+   * One shop in full, for the operator's detail drawer. The list row plus the
+   * context an operator needs before switching a live business off: what it
+   * has sold over its life, how big the catalog is, whether it is verified,
+   * and how it pays the platform.
+   */
+  async getShop(shopId: string): Promise<PlatformShopDetailResponse> {
+    const shop = await this.requireShop(shopId);
+    const since = new Date(Date.now() - THIRTY_DAYS_MS);
+
+    const [[lifetime], [recent], [placed], [buyers], [catalog], sub] =
+      await Promise.all([
+        // Paid trade over the shop's whole life, plus when it last sold.
+        this.db
+          .select({
+            cents: sql<string>`coalesce(sum(${orders.totalCents}), 0)`,
+            lastAt: sql<string | null>`max(${orders.placedAt})`,
+          })
+          .from(orders)
+          .where(and(eq(orders.shopId, shopId), eq(orders.pay, 'Paid'))),
+        this.db
+          .select({
+            cents: sql<string>`coalesce(sum(${orders.totalCents}), 0)`,
+            n: count(),
+          })
+          .from(orders)
+          .where(
+            and(
+              eq(orders.shopId, shopId),
+              eq(orders.pay, 'Paid'),
+              gte(orders.placedAt, since),
+            ),
+          ),
+        // Every order ever placed, paid or not.
+        this.db
+          .select({ n: count() })
+          .from(orders)
+          .where(eq(orders.shopId, shopId)),
+        this.db
+          .select({ n: count() })
+          .from(customers)
+          .where(eq(customers.shopId, shopId)),
+        this.db
+          .select({ n: count() })
+          .from(products)
+          .where(eq(products.shopId, shopId)),
+        this.db.query.subscriptions.findFirst({
+          where: eq(subscriptions.shopId, shopId),
+          columns: { billingMode: true, status: true, dueCents: true },
+        }),
+      ]);
+
+    return {
+      id: shop.id,
+      name: shop.name,
+      handle: shop.handle,
+      ownerName: shop.owner?.name ?? '-',
+      email: shop.owner?.email ?? undefined,
+      phone: shop.owner?.phone ?? shop.supportPhone ?? undefined,
+      currency: shop.currency,
+      live: shop.live,
+      suspended: !!shop.suspendedAt,
+      sales30d: toMajor(Number(recent.cents)),
+      orders30d: recent.n,
+      createdAt: shop.createdAt.toISOString(),
+      tagline: shop.tagline ?? undefined,
+      cat: shop.cat,
+      language: shop.language,
+      plan: shop.plan,
+      botChatEnabled: shop.botChatEnabled,
+      kycStatus: shop.kycStatus,
+      suspendedAt: shop.suspendedAt?.toISOString(),
+      suspendedReason: shop.suspendedReason ?? undefined,
+      supportEmail: shop.supportEmail ?? undefined,
+      hasPayoutBank: !!shop.payoutBank,
+      products: catalog.n,
+      ordersTotal: placed.n,
+      salesTotal: toMajor(Number(lifetime.cents)),
+      customers: buyers.n,
+      lastOrderAt: lifetime.lastAt
+        ? new Date(lifetime.lastAt).toISOString()
+        : undefined,
+      billingMode: sub?.billingMode,
+      billingStatus: sub?.status,
+      dueAmount: sub ? toMajor(sub.dueCents) : undefined,
+    };
+  }
+
+  /**
+   * Flip the operator's two switches on a shop.
+   *
+   * Suspending forces the storefront off in the same write, which is what lets
+   * every buyer-facing route keep checking only `live`. Lifting a suspension
+   * puts the shop back on sale - the operator is returning it to service, and
+   * if its billing is actually in arrears the hourly sweep pauses it again on
+   * its own terms.
+   *
+   * `live` on its own is the softer action: the shop goes dark, but the seller
+   * can re-open it themselves.
+   */
+  async updateShop(
+    shopId: string,
+    dto: UpdatePlatformShopDto,
+  ): Promise<PlatformShopDetailResponse> {
+    const shop = await this.requireShop(shopId);
+
+    const patch: {
+      live?: boolean;
+      suspendedAt?: Date | null;
+      suspendedReason?: string | null;
+    } = {};
+
+    if (dto.suspended !== undefined && dto.suspended !== !!shop.suspendedAt) {
+      if (dto.suspended) {
+        patch.suspendedAt = new Date();
+        patch.suspendedReason = dto.reason?.trim() || null;
+        patch.live = false;
+      } else {
+        patch.suspendedAt = null;
+        patch.suspendedReason = null;
+        patch.live = true;
+      }
+    }
+    // An explicit `live` wins over the suspension's implied one, except that a
+    // shop cannot be left on sale while it is (or is being) suspended.
+    if (dto.live !== undefined) {
+      const suspended = dto.suspended ?? !!shop.suspendedAt;
+      patch.live = suspended ? false : dto.live;
+    }
+
+    if (Object.keys(patch).length) {
+      await this.db.update(shops).set(patch).where(eq(shops.id, shopId));
+    }
+
+    // Tell the seller why their shop went off - a silent suspension leaves
+    // them staring at a dead storefront with nothing to act on.
+    if (patch.suspendedAt) {
+      await this.notices.create(
+        patch.suspendedReason
+          ? `Your shop has been suspended by Hoomri: ${patch.suspendedReason}`
+          : 'Your shop has been suspended by Hoomri. Contact support to resolve it.',
+        'danger',
+        shopId,
+      );
+    } else if (patch.suspendedAt === null) {
+      // Retire the banner the suspension raised before announcing the lift,
+      // or the seller reads "you are suspended" and "you are back" at once.
+      // The window is exactly the suspension's: urgent notices to this shop
+      // from the moment it went off until now.
+      if (shop.suspendedAt) {
+        await this.db
+          .update(notices)
+          .set({ active: false })
+          .where(
+            and(
+              eq(notices.shopId, shopId),
+              eq(notices.tone, 'danger'),
+              eq(notices.active, true),
+              gte(notices.createdAt, shop.suspendedAt),
+            ),
+          );
+      }
+      await this.notices.create(
+        'Your shop’s suspension has been lifted - your storefront is live again.',
+        'success',
+        shopId,
+      );
+    }
+
+    return this.getShop(shopId);
+  }
+
+  /**
+   * The operator's message thread with one shop: notices addressed to this
+   * shop alone, oldest first so it reads like a conversation. Broadcasts to
+   * every shop are the Notices screen's business, not this drawer's.
+   */
+  async listShopMessages(shopId: string): Promise<NoticeListResponse> {
+    await this.requireShop(shopId);
+    const rows = await this.db.query.notices.findMany({
+      where: eq(notices.shopId, shopId),
+      orderBy: [asc(notices.createdAt)],
+    });
+    return {
+      data: rows.map((n) => ({
+        id: n.id,
+        shopId: n.shopId ?? undefined,
+        message: n.message,
+        tone: n.tone,
+        active: n.active,
+        createdAt: n.createdAt.toISOString(),
+      })),
+    };
+  }
+
+  /** Send the seller a message. It banners at the top of their console. */
+  async messageShop(
+    shopId: string,
+    message: string,
+    tone: NoticeTone = 'info',
+  ): Promise<NoticeResponse> {
+    await this.requireShop(shopId);
+    return this.notices.create(message, tone, shopId);
+  }
+
+  private async requireShop(shopId: string) {
+    const shop = await this.db.query.shops.findFirst({
+      where: eq(shops.id, shopId),
+      with: { owner: { columns: { name: true, email: true, phone: true } } },
+    });
+    if (!shop) throw new NotFoundException('Shop not found');
+    return shop;
   }
 
   /** Paginated list of all buyers across every shop. */
