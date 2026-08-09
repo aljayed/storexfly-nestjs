@@ -33,6 +33,15 @@ export class AdminUsersService {
     return row;
   }
 
+  /** Replaces a staff member's console password. Owners never reach this -
+   *  they authenticate against their Hoomri account row instead. */
+  async updatePassword(id: string, passwordHash: string): Promise<void> {
+    await this.db
+      .update(adminUsers)
+      .set({ passwordHash })
+      .where(eq(adminUsers.id, id));
+  }
+
   async markLogin(id: string): Promise<void> {
     await this.db
       .update(adminUsers)

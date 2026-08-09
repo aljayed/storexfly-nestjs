@@ -1,5 +1,6 @@
 import {
   ForbiddenException,
+  HttpStatus,
   Inject,
   Injectable,
   UnauthorizedException,
@@ -14,6 +15,7 @@ import {
   permissionsForRole,
   type AdminPermission,
 } from '../../common/auth/admin-permissions';
+import type { AdminPrincipal } from '../../common/types/principal';
 import { shops, type AdminUserRow } from '../../database/schema';
 import type { AdminRole } from '../../database/schema/enums';
 import { handleize } from '../../common/utils/slug.util';
@@ -21,7 +23,11 @@ import { ShopsService } from '../shops/shops.service';
 import { UsersService } from '../users/users.service';
 import { AdminUsersService } from './admin-users.service';
 import type { AdminLoginDto, AdminTwoFactorDto } from './dto/admin-login.dto';
+import type { SetPasswordDto } from './dto/set-password.dto';
 import { TokenService } from './token.service';
+
+/** Matches the account side - see AuthService. */
+const BCRYPT_ROUNDS = 12;
 
 export interface AdminLoginResult {
   twoFactorRequired: boolean;
@@ -219,6 +225,90 @@ export class AdminAuthService {
     // (e.g. a seller who was also invited to a friend's shop as staff).
     const token = await this.issueAdminToken(admin, activeShop.id, 'owner');
     return { adminUser: this.toView(admin, activeShop.id, 'owner'), token };
+  }
+
+  /**
+   * Which credential this console session actually signs in with.
+   *
+   * `login` accepts two stores, so "your password" means different rows for
+   * different people: an owner types their Hoomri account password (`users`),
+   * an invited staffer types the one on their `admin_users` record. The
+   * profile page reads this to know which it is about to change - and whether
+   * one exists at all, which it does not for an owner who has only ever used
+   * Google.
+   */
+  private async credentialFor(principal: AdminPrincipal): Promise<
+    | { kind: 'account'; userId: string; passwordHash: string | null }
+    | { kind: 'console'; adminId: string; passwordHash: string }
+  > {
+    const admin = await this.adminUsers.findById(principal.id);
+    if (!admin) {
+      throw new UnauthorizedException('Admin account no longer exists');
+    }
+    const shop = await this.db.query.shops.findFirst({
+      where: eq(shops.id, principal.shopId),
+    });
+    const seller = await this.users.findByEmail(admin.email);
+    if (seller && shop && shop.ownerId === seller.id) {
+      return {
+        kind: 'account',
+        userId: seller.id,
+        passwordHash: seller.passwordHash,
+      };
+    }
+    return {
+      kind: 'console',
+      adminId: admin.id,
+      passwordHash: admin.passwordHash,
+    };
+  }
+
+  /** What the console's profile page shows before anything is typed. */
+  async passwordState(
+    principal: AdminPrincipal,
+  ): Promise<{ hasPassword: boolean; credential: 'account' | 'console' }> {
+    const credential = await this.credentialFor(principal);
+    return {
+      hasPassword: !!credential.passwordHash,
+      credential: credential.kind,
+    };
+  }
+
+  /**
+   * Set or change the password this console session signs in with, without
+   * leaving the console (and without the account token, which a staffer who
+   * signed in here directly never had).
+   *
+   * For an owner this writes the Hoomri account password - the same one the
+   * account page edits, because it is the same credential `login` checks. An
+   * account opened with Google has none yet, and the console session in hand
+   * stands in for the current password exactly as it does on the account page;
+   * Google sign-in is untouched either way.
+   */
+  async setPassword(
+    principal: AdminPrincipal,
+    dto: SetPasswordDto,
+  ): Promise<{ hasPassword: boolean; credential: 'account' | 'console' }> {
+    const credential = await this.credentialFor(principal);
+    if (credential.passwordHash) {
+      const ok =
+        !!dto.currentPassword &&
+        (await bcrypt.compare(dto.currentPassword, credential.passwordHash));
+      if (!ok) {
+        throw new UnauthorizedException({
+          statusCode: HttpStatus.UNAUTHORIZED,
+          error: 'CurrentPasswordInvalid',
+          message: 'Your current password is not right.',
+        });
+      }
+    }
+    const passwordHash = await bcrypt.hash(dto.password, BCRYPT_ROUNDS);
+    if (credential.kind === 'account') {
+      await this.users.updatePassword(credential.userId, passwordHash);
+    } else {
+      await this.adminUsers.updatePassword(credential.adminId, passwordHash);
+    }
+    return { hasPassword: true, credential: credential.kind };
   }
 
   private async issueAdminToken(

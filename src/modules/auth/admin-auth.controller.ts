@@ -23,6 +23,7 @@ import {
   AdminSessionDto,
   AdminTwoFactorDto,
 } from './dto/admin-login.dto';
+import { SetPasswordDto } from './dto/set-password.dto';
 
 @ApiTags('admin-auth')
 @Controller('auth/admin')
@@ -58,6 +59,35 @@ export class AdminAuthController {
   @ApiOperation({ summary: 'Hydrate the current admin principal' })
   me(@CurrentUser() admin: AdminPrincipal) {
     return { ...admin, permissions: permissionsForRole(admin.role) };
+  }
+
+  /**
+   * The console's own password controls. A staffer who signed in here directly
+   * has no account token, and an owner's password lives on their Hoomri
+   * account, so both are resolved from the console session instead of asking
+   * the profile page to know the difference.
+   */
+  @Public()
+  @ApiBearerAuth()
+  @UseGuards(AdminJwtAuthGuard)
+  @Get('password')
+  @ApiOperation({ summary: 'Whether this console sign-in has a password yet' })
+  passwordState(@CurrentUser() admin: AdminPrincipal) {
+    return this.adminAuth.passwordState(admin);
+  }
+
+  @Public()
+  @ApiBearerAuth()
+  @UseGuards(AdminJwtAuthGuard)
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
+  @Post('password')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Set or change the console sign-in password' })
+  setPassword(
+    @CurrentUser() admin: AdminPrincipal,
+    @Body() dto: SetPasswordDto,
+  ) {
+    return this.adminAuth.setPassword(admin, dto);
   }
 
   /**
