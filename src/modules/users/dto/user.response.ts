@@ -13,6 +13,10 @@ export class UserResponse {
   // Shop creation needs both proven - the console reads them off /auth/me.
   @ApiProperty() emailVerified!: boolean;
   @ApiProperty() phoneVerified!: boolean;
+  // Whether a password sign-in exists at all - a Google account has none until
+  // it sets one. Never the hash itself; the profile page only needs to know
+  // whether to offer "set a password" or "change password".
+  @ApiProperty() hasPassword!: boolean;
 
   static fromRow(row: UserRow): UserResponse {
     return {
@@ -24,6 +28,7 @@ export class UserResponse {
       isAdmin: row.isAdmin,
       emailVerified: row.emailVerified,
       phoneVerified: row.phoneVerified,
+      hasPassword: !!row.passwordHash,
     };
   }
 }

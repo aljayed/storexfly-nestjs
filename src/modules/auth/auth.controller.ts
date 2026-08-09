@@ -32,6 +32,7 @@ import { AuthService } from './auth.service';
 import { LoginDto } from './dto/login.dto';
 import { ForgotPasswordDto, ResetPasswordDto } from './dto/password-reset.dto';
 import { RegisterDto } from './dto/register.dto';
+import { SetPasswordDto } from './dto/set-password.dto';
 import {
   VerifyEmailConfirmDto,
   VerifyEmailStartDto,
@@ -214,6 +215,24 @@ export class AuthController {
   @ApiOkResponse({ type: UserResponse })
   me(@CurrentUser() user: SellerPrincipal) {
     return this.auth.me(user.id);
+  }
+
+  /**
+   * Add a password to an account that signs in with Google, or replace an
+   * existing one. Rate-limited like the other credential routes so the
+   * current-password check can't be ground down from a stolen session.
+   */
+  @ApiBearerAuth()
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
+  @Post('password')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Set or change the signed-in account password' })
+  @ApiOkResponse({ type: UserResponse })
+  setPassword(
+    @CurrentUser() user: SellerPrincipal,
+    @Body() dto: SetPasswordDto,
+  ) {
+    return this.auth.setPassword(user.id, dto);
   }
 
   @ApiBearerAuth()

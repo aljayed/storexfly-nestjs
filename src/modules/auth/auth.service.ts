@@ -16,6 +16,7 @@ import { UsersService } from '../users/users.service';
 import { EmailOtpService } from './email-otp.service';
 import type { LoginDto } from './dto/login.dto';
 import type { RegisterDto } from './dto/register.dto';
+import type { SetPasswordDto } from './dto/set-password.dto';
 import { OtpService } from './otp.service';
 import { SessionScopeService } from './session-scope.service';
 import { TokenService } from './token.service';
@@ -260,5 +261,35 @@ export class AuthService {
    */
   async refreshSession(userId: string): Promise<AuthResult> {
     return this.toAuthResult(await this.requireUser(userId));
+  }
+
+  /**
+   * Set or change the signed-in account's password.
+   *
+   * An account made through Google has no hash to prove, so the session it is
+   * already holding is the proof - the same standing that lets it place orders
+   * or open a shop. Once a password exists it must be typed again to replace
+   * it, which is what stops a borrowed screen from quietly taking the account
+   * over. Either way the account keeps its Google sign-in; this only adds the
+   * second door, and is what makes the console's password login reachable for
+   * an owner who has only ever used Google.
+   */
+  async setPassword(userId: string, dto: SetPasswordDto): Promise<UserResponse> {
+    const user = await this.requireUser(userId);
+    if (user.passwordHash) {
+      const ok =
+        !!dto.currentPassword &&
+        (await bcrypt.compare(dto.currentPassword, user.passwordHash));
+      if (!ok) {
+        throw new UnauthorizedException({
+          statusCode: HttpStatus.UNAUTHORIZED,
+          error: 'CurrentPasswordInvalid',
+          message: 'Your current password is not right.',
+        });
+      }
+    }
+    const passwordHash = await bcrypt.hash(dto.password, BCRYPT_ROUNDS);
+    await this.users.updatePassword(user.id, passwordHash);
+    return UserResponse.fromRow({ ...user, passwordHash });
   }
 }
