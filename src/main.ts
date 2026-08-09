@@ -19,6 +19,20 @@ async function bootstrap(): Promise<void> {
   const config = app.get(ConfigService);
   const logger = new Logger('Bootstrap');
 
+  /**
+   * Behind nginx, every request arrives from the proxy, so `req.ip` reads as
+   * the container's address unless Express is told how many hops to trust.
+   * Anything keyed on the client IP - rate limits, the repeat-order checks -
+   * would otherwise see the whole world as one address.
+   *
+   * The count is how many proxies sit in front. Express then takes the entry
+   * that hop appended, so a client cannot forge its own X-Forwarded-For
+   * without first bypassing nginx. Raise TRUST_PROXY_HOPS to 2 if a CDN is
+   * added in front of it.
+   */
+  const trustProxyHops = Number(process.env.TRUST_PROXY_HOPS ?? 1);
+  app.getHttpAdapter().getInstance().set('trust proxy', trustProxyHops);
+
   const apiPrefix = config.get<string>('app.apiPrefix', 'api');
   const port = config.get<number>('app.port', 3000);
   const bindHost = config.get<string>('app.bindHost');

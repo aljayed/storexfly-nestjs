@@ -8,6 +8,7 @@ import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
 import { SessionScopeGuard } from './common/guards/session-scope.guard';
 import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
+import { RiskModule } from './modules/risk/risk.module';
 import { DatabaseModule } from './database/database.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { BuyerModule } from './modules/buyer/buyer.module';
@@ -54,6 +55,7 @@ import { UsersModule } from './modules/users/users.module';
       }),
     }),
     DatabaseModule,
+    RiskModule,
     UsersModule,
     AuthModule,
     ShopsModule,

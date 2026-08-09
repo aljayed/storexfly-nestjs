@@ -31,3 +31,4 @@ export * from './shop-couriers.schema';
 export * from './shop-courier-stores.schema';
 export * from './courier-webhook-events.schema';
 export * from './buyer-notifications.schema';
+export * from './risk-events.schema';
