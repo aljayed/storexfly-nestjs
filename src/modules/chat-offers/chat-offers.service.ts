@@ -242,6 +242,15 @@ export class ChatOffersService {
       throw new BadRequestException('The expiry must be in the future');
     }
 
+    // An offer is a shop selling to a buyer, and accepting one places a real
+    // order at these prices. A thread without both sides - Hoomri Support, or
+    // two people talking - has nobody to bill and nothing to fulfil it.
+    if (!convo.buyerId) {
+      throw new BadRequestException(
+        'Offers can only be sent in a conversation with a customer',
+      );
+    }
+
     const [row] = await this.db
       .insert(chatOrderOffers)
       .values({

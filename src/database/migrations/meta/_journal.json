@@ -505,6 +505,13 @@
       "when": 1792108800000,
       "tag": "0074_risk_events",
       "breakpoints": true
+    },
+    {
+      "idx": 75,
+      "version": "7",
+      "when": 1792195200000,
+      "tag": "0075_chat_pairs_contract",
+      "breakpoints": true
     }
   ]
 }

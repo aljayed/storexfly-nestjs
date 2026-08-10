@@ -28,7 +28,8 @@ import type { StartConversationDto } from './dto/chat.dto';
 /** Caller-scoped conversation payload (unread counts are per-side). */
 export interface ConversationDto {
   id: string;
-  shop: {
+  /** The storefront side, when the thread has one. */
+  shop?: {
     id: string;
     name: string;
     handle: string;
@@ -36,7 +37,8 @@ export interface ConversationDto {
     brandSoft: string;
     currency: string;
   };
-  customer: { id: string; name: string };
+  /** The buyer side, when the thread has one. */
+  customer?: { id: string; name: string };
   /**
    * The other party, from this viewer's seat. A shop owner is the shop in one
    * thread and the buyer in the next, so a list cannot label rows by the
@@ -93,8 +95,10 @@ export interface CustomerContextDto {
 }
 
 type ConversationWithParties = ChatConversationRow & {
-  shop: typeof shops.$inferSelect;
-  buyer: typeof users.$inferSelect;
+  /** Absent on threads with no shop side (support↔account, account↔account). */
+  shop: typeof shops.$inferSelect | null;
+  /** Absent on threads with no buyer side (support↔shop). */
+  buyer: typeof users.$inferSelect | null;
 };
 
 @Injectable()
@@ -274,6 +278,11 @@ export class ConversationsService {
     conversationId: string,
   ): Promise<CustomerContextDto> {
     const convo = await this.requireParticipantRow(actor, conversationId);
+    // The panel describes a shopper. A thread with no buyer side - Hoomri
+    // Support writing to a shop - has no shopper to describe.
+    if (!convo.buyer || !convo.buyerId || !convo.shop) {
+      throw new NotFoundException('This conversation has no customer');
+    }
 
     // The platform's per-shop customer aggregate is keyed by (shop, email);
     // the account links to it through the email captured at checkout.
@@ -294,6 +303,7 @@ export class ConversationsService {
       with: { items: true },
     });
 
+    const shop = convo.shop;
     return {
       customerId: convo.buyerId,
       name: convo.buyer.name,
@@ -301,7 +311,7 @@ export class ConversationsService {
       segment: customer?.segment ?? 'New',
       ordersCount: customer?.ordersCount ?? recent.length,
       totalSpent: centsToDollars(customer?.spentCents ?? 0),
-      currency: convo.shop.currency,
+      currency: shop.currency,
       customerSince: (customer?.firstOrderAt ?? undefined)?.toISOString(),
       recentOrders: recent.map((o) => ({
         orderId: o.id,
@@ -311,7 +321,7 @@ export class ConversationsService {
             .map((i) => `${i.name} ×${i.qty}`)
             .join(', ') || `${o.qty} item${o.qty === 1 ? '' : 's'}`,
         total: centsToDollars(o.totalCents),
-        currency: convo.shop.currency,
+        currency: shop.currency,
         status: o.status,
         placedAt: o.placedAt.toISOString(),
       })),
@@ -325,6 +335,10 @@ export class ConversationsService {
    */
   async catalogue(actor: ChatActor, conversationId: string) {
     const convo = await this.requireParticipantRow(actor, conversationId);
+    // A catalogue belongs to a storefront; a thread without one has nothing
+    // to pick from.
+    if (!convo.shop || !convo.shopId) return [];
+    const catalogueShop = convo.shop;
     const rows = await this.db.query.products.findMany({
       where: eq(products.shopId, convo.shopId),
       orderBy: [desc(products.createdAt)],
@@ -334,7 +348,7 @@ export class ConversationsService {
       id: p.id,
       name: p.name,
       price: centsToDollars(p.priceCents),
-      currency: convo.shop.currency,
+      currency: catalogueShop.currency,
       unit: p.unit,
       emoji: p.emoji,
       tone: p.tone,
@@ -435,16 +449,20 @@ export class ConversationsService {
     });
     if (!row) return;
     const originMap = await this.resolveOrigins([row]);
-    this.realtime.emitTo(
-      ChatRealtimeService.room('buyer', row.buyerId),
-      'conversation.updated',
-      this.toDto(row, { role: 'customer' }, originMap),
-    );
-    this.realtime.emitTo(
-      ChatRealtimeService.room('shop', row.shopId),
-      'conversation.updated',
-      this.toDto(row, { role: 'seller' }, originMap),
-    );
+    if (row.buyerId) {
+      this.realtime.emitTo(
+        ChatRealtimeService.room('buyer', row.buyerId),
+        'conversation.updated',
+        this.toDto(row, { role: 'customer' }, originMap),
+      );
+    }
+    if (row.shopId) {
+      this.realtime.emitTo(
+        ChatRealtimeService.room('shop', row.shopId),
+        'conversation.updated',
+        this.toDto(row, { role: 'seller' }, originMap),
+      );
+    }
   }
 
   /* ---------- DTO assembly ---------- */
@@ -487,7 +505,7 @@ export class ConversationsService {
           subtitle: `Conversation started from this product`,
           emoji: p.emoji,
           tone: p.tone,
-          url: `/shop/${row.shop.handle}/p/${p.slug}`,
+          url: row.shop ? `/shop/${row.shop.handle}/p/${p.slug}` : '',
           imageUrl: p.images?.[0],
           price: centsToDollars(p.priceCents),
           unit: p.unit,
@@ -502,7 +520,7 @@ export class ConversationsService {
           subtitle: `This conversation references an order`,
           emoji: '🧾',
           tone: '#e9eefc',
-          url: `/shop/${row.shop.handle}`,
+          url: row.shop ? `/shop/${row.shop.handle}` : '',
         });
       }
     }
@@ -538,6 +556,36 @@ export class ConversationsService {
     return out;
   }
 
+  /**
+   * Who is across from this viewer. Prefers the participant rows, which
+   * describe every thread shape; the buyer/shop fallback only ever applies to
+   * threads written before participants existed.
+   */
+  private counterpartOf(
+    row: ConversationWithParties,
+    mine: { unread: number; side: string } | undefined,
+    forCustomer: boolean,
+  ): ConversationDto['counterpart'] {
+    const shopSide = row.shop
+      ? ({ kind: 'shop', id: row.shop.id, name: row.shop.name } as const)
+      : null;
+    const buyerSide = row.buyer
+      ? ({ kind: 'account', id: row.buyer.id, name: row.buyer.name } as const)
+      : null;
+    // Side 'a' sorts first, and 'account:' sorts before 'shop:' - so a viewer
+    // on side 'a' is looking at the shop, and vice versa.
+    const theirs = mine ? (mine.side === 'a' ? shopSide : buyerSide) : forCustomer ? shopSide : buyerSide;
+    return (
+      theirs ??
+      shopSide ??
+      buyerSide ?? {
+        kind: 'support',
+        id: 'support',
+        name: 'Hoomri Support',
+      }
+    );
+  }
+
   private toDto(
     row: ConversationWithParties,
     actor: Pick<ChatActor, 'role'>,
@@ -546,33 +594,39 @@ export class ConversationsService {
     mine?: { unread: number; side: string },
   ): ConversationDto {
     const forCustomer = actor.role === 'customer';
+    const counterpart = this.counterpartOf(row, mine, forCustomer);
     return {
       id: row.id,
-      shop: {
-        id: row.shop.id,
-        name: row.shop.name,
-        handle: row.shop.handle,
-        brand: row.shop.brand,
-        brandSoft: row.shop.brandSoft,
-        currency: row.shop.currency,
-      },
-      customer: { id: row.buyer.id, name: row.buyer.name },
-      counterpart:
-        (mine ? mine.side === 'a' : forCustomer)
-          ? { kind: 'shop', id: row.shop.id, name: row.shop.name }
-          : { kind: 'account', id: row.buyer.id, name: row.buyer.name },
+      ...(row.shop && {
+        shop: {
+          id: row.shop.id,
+          name: row.shop.name,
+          handle: row.shop.handle,
+          brand: row.shop.brand,
+          brandSoft: row.shop.brandSoft,
+          currency: row.shop.currency,
+        },
+      }),
+      ...(row.buyer && {
+        customer: { id: row.buyer.id, name: row.buyer.name },
+      }),
+      counterpart,
       origin: originMap.get(row.id),
       lastMessage: row.lastMessagePreview ?? undefined,
       // Falls back to the legacy pair only for threads with no participant
       // rows yet, where the viewer can only be the buyer or the shop anyway.
       unreadCount:
         mine?.unread ?? (forCustomer ? row.buyerUnread : row.sellerUnread),
-      counterpartOnline: forCustomer
-        ? this.realtime.isOnline('shop', row.shopId)
-        : this.realtime.isOnline('buyer', row.buyerId),
-      counterpartLastSeenAt: forCustomer
-        ? this.realtime.lastSeenAt('shop', row.shopId)
-        : this.realtime.lastSeenAt('buyer', row.buyerId),
+      // Presence follows the counterpart the DTO just named, so it stays right
+      // for a viewer who is the shop in one thread and the buyer in the next.
+      counterpartOnline: this.realtime.isOnline(
+        counterpart.kind === 'shop' ? 'shop' : 'buyer',
+        counterpart.id,
+      ),
+      counterpartLastSeenAt: this.realtime.lastSeenAt(
+        counterpart.kind === 'shop' ? 'shop' : 'buyer',
+        counterpart.id,
+      ),
       createdAt: row.createdAt.toISOString(),
       updatedAt: row.updatedAt.toISOString(),
     };

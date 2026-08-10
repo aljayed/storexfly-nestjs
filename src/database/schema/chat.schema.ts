@@ -217,20 +217,18 @@ export const chatConversations = pgTable(
      * can be looked up by its pair regardless of who opened it. The parties
      * themselves live in {@link chatParticipants}; this is the unique handle.
      */
-    pairKey: varchar('pair_key', { length: 160 }),
+    pairKey: varchar('pair_key', { length: 160 }).notNull(),
     /**
-     * Buyer↔shop threads, and the reason those two keep their foreign keys:
-     * they are what cascade-deletes a thread when the account or the shop goes
-     * away. They stay NOT NULL until the readers below move onto
-     * {@link chatParticipants}; the migration that relaxes them is the same one
-     * that teaches every query to read a party pair instead.
+     * Set only on buyer↔shop threads, which is what they are for: the foreign
+     * keys that cascade a thread away when the account or the shop is deleted.
+     * A support thread has no buyer and a person-to-person thread has no shop,
+     * so both are null there - {@link chatParticipants} is what every reader
+     * goes through, and these are the delete rules.
      */
-    buyerId: uuid('buyer_id')
-      .notNull()
-      .references(() => users.id, { onDelete: 'cascade' }),
-    shopId: uuid('shop_id')
-      .notNull()
-      .references(() => shops.id, { onDelete: 'cascade' }),
+    buyerId: uuid('buyer_id').references(() => users.id, {
+      onDelete: 'cascade',
+    }),
+    shopId: uuid('shop_id').references(() => shops.id, { onDelete: 'cascade' }),
     // What started (or most recently re-entered) the thread - drives the
     // context strip under the thread header.
     originType: chatOriginTypeEnum('origin_type'),

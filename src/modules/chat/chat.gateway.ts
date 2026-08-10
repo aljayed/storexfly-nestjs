@@ -141,10 +141,13 @@ export class ChatGateway
     ) {
       return;
     }
+    // Threads without a shop or buyer side get their typing indicator once
+    // the party rooms land there too; nothing to notify until then.
     const counterpartRoom =
       actor.role === 'customer'
-        ? ChatRealtimeService.room('shop', convo.shopId)
-        : ChatRealtimeService.room('buyer', convo.buyerId);
+        ? convo.shopId && ChatRealtimeService.room('shop', convo.shopId)
+        : convo.buyerId && ChatRealtimeService.room('buyer', convo.buyerId);
+    if (!counterpartRoom) return;
     this.realtime.emitTo(counterpartRoom, 'typing', {
       conversationId: convo.id,
       isTyping: body.isTyping === true,
@@ -199,11 +202,13 @@ export class ChatGateway
           ),
     };
     const counterpartRooms = new Set(
-      convos.map((c) =>
-        isCustomer
-          ? ChatRealtimeService.room('shop', c.shopId)
-          : ChatRealtimeService.room('buyer', c.buyerId),
-      ),
+      convos
+        .map((c) =>
+          isCustomer
+            ? c.shopId && ChatRealtimeService.room('shop', c.shopId)
+            : c.buyerId && ChatRealtimeService.room('buyer', c.buyerId),
+        )
+        .filter((room): room is string => !!room),
     );
     for (const room of counterpartRooms) {
       this.realtime.emitTo(room, 'presence', payload);

@@ -152,11 +152,19 @@ export class MessagesService {
 
     const senderRole: ChatSenderRole =
       actor.role === 'customer' ? 'customer' : 'seller';
-    const counterpartOnline =
-      senderRole === 'customer'
-        ? this.realtime.isOnline('shop', convo.shopId)
-        : this.realtime.isOnline('buyer', convo.buyerId);
+    // "Delivered" means the other side is connected. Threads with no shop or
+    // buyer side simply start at 'sent' until their rooms exist.
+    const counterpartId =
+      senderRole === 'customer' ? convo.shopId : convo.buyerId;
+    const counterpartOnline = counterpartId
+      ? this.realtime.isOnline(
+          senderRole === 'customer' ? 'shop' : 'buyer',
+          counterpartId,
+        )
+      : false;
 
+    // Product and order cards are drawn from the thread's shop; a thread
+    // without one can still carry text and attachments.
     const fields = await this.buildTypedFields(dto, convo);
     const preview = this.previewOf(dto.type, fields);
 
@@ -214,8 +222,24 @@ export class MessagesService {
     // returned, and a model round trip takes seconds. The bot answers text
     // only - it has nothing useful to say to an image, an offer or an order
     // card, and the agent's API takes a string.
-    if (senderRole === 'customer' && dto.type === 'text' && fields.text) {
-      this.botReply.maybeReply(convo, fields.text);
+    if (
+      senderRole === 'customer' &&
+      dto.type === 'text' &&
+      fields.text &&
+      convo.shopId &&
+      convo.shop &&
+      convo.buyerId
+    ) {
+      this.botReply.maybeReply(
+        {
+          id: convo.id,
+          shopId: convo.shopId,
+          buyerId: convo.buyerId,
+          originType: convo.originType,
+          originRefId: convo.originRefId,
+        },
+        fields.text,
+      );
     }
 
     return message;
@@ -269,13 +293,17 @@ export class MessagesService {
     });
 
     // Read receipt to the author's side; sidebar refresh to both.
-    this.realtime.emitTo(
+    const authorRoom =
       counterpart === 'customer'
-        ? ChatRealtimeService.room('buyer', convo.buyerId)
-        : ChatRealtimeService.room('shop', convo.shopId),
-      'message.status',
-      { conversationId, status: 'read', upToMessageId: dto.upToMessageId },
-    );
+        ? convo.buyerId && ChatRealtimeService.room('buyer', convo.buyerId)
+        : convo.shopId && ChatRealtimeService.room('shop', convo.shopId);
+    if (authorRoom) {
+      this.realtime.emitTo(authorRoom, 'message.status', {
+        conversationId,
+        status: 'read',
+        upToMessageId: dto.upToMessageId,
+      });
+    }
     await this.conversations.broadcastUpdated(conversationId);
   }
 
@@ -289,7 +317,7 @@ export class MessagesService {
    */
   private async threadRooms(
     conversationId: string,
-    convo: { buyerId: string; shopId: string },
+    convo: { buyerId: string | null; shopId: string | null },
   ): Promise<string[]> {
     const sides = await this.db.query.chatParticipants.findMany({
       where: eq(chatParticipants.conversationId, conversationId),
@@ -297,9 +325,9 @@ export class MessagesService {
     });
     if (!sides.length) {
       return [
-        ChatRealtimeService.room('buyer', convo.buyerId),
-        ChatRealtimeService.room('shop', convo.shopId),
-      ];
+        convo.buyerId && ChatRealtimeService.room('buyer', convo.buyerId),
+        convo.shopId && ChatRealtimeService.room('shop', convo.shopId),
+      ].filter((r): r is string => !!r);
     }
     return [
       ...new Set(
@@ -345,13 +373,15 @@ export class MessagesService {
         where: eq(chatConversations.id, conversationId),
       });
       if (!convo) continue;
-      this.realtime.emitTo(
+      const room =
         counterpart === 'customer'
-          ? ChatRealtimeService.room('buyer', convo.buyerId)
-          : ChatRealtimeService.room('shop', convo.shopId),
-        'message.status',
-        { conversationId, status: 'delivered' },
-      );
+          ? convo.buyerId && ChatRealtimeService.room('buyer', convo.buyerId)
+          : convo.shopId && ChatRealtimeService.room('shop', convo.shopId);
+      if (!room) continue;
+      this.realtime.emitTo(room, 'message.status', {
+        conversationId,
+        status: 'delivered',
+      });
     }
   }
 
@@ -361,9 +391,11 @@ export class MessagesService {
   private async buildTypedFields(
     dto: SendMessageDto,
     convo: {
-      shopId: string;
-      buyer: { email: string | null };
-      shop: { currency: string; handle: string };
+      // Only the product and order cards need a shop; text and attachments
+      // work in any thread, including ones that have no storefront side.
+      shopId: string | null;
+      buyer: { email: string | null } | null;
+      shop: { currency: string; handle: string } | null;
     },
   ): Promise<Partial<typeof chatMessages.$inferInsert>> {
     switch (dto.type) {
@@ -377,6 +409,13 @@ export class MessagesService {
         if (!dto.productId) {
           throw new BadRequestException('productId is required');
         }
+        // Product cards come out of a storefront's catalogue.
+        if (!convo.shopId || !convo.shop) {
+          throw new BadRequestException(
+            'This conversation has no shop to share a product from',
+          );
+        }
+        const shopCurrency = convo.shop.currency;
         const p = await this.db.query.products.findFirst({
           where: and(
             eq(products.id, dto.productId),
@@ -394,7 +433,7 @@ export class MessagesService {
           name: p.name,
           slug: p.slug,
           price: centsToDollars(p.priceCents),
-          currency: convo.shop.currency,
+          currency: shopCurrency,
           unit: p.unit,
           emoji: p.emoji,
           tone: p.tone,
@@ -406,13 +445,22 @@ export class MessagesService {
         if (!dto.orderId) {
           throw new BadRequestException('orderId is required');
         }
+        // An order belongs to a shop and a buyer; a thread missing either has
+        // no order to reference.
+        if (!convo.shopId || !convo.shop || !convo.buyer) {
+          throw new BadRequestException(
+            'This conversation has no order to reference',
+          );
+        }
+        const orderShop = convo.shop;
+        const orderBuyer = convo.buyer;
         // The order must belong to this shop AND to this conversation's buyer
         // (matched by checkout email), whichever side references it.
         const o = await this.db.query.orders.findFirst({
           where: and(
             eq(orders.id, dto.orderId),
             eq(orders.shopId, convo.shopId),
-            sql`lower(${orders.email}) = ${(convo.buyer.email ?? '').toLowerCase()}`,
+            sql`lower(${orders.email}) = ${(orderBuyer.email ?? '').toLowerCase()}`,
           ),
           with: { items: true },
         });
