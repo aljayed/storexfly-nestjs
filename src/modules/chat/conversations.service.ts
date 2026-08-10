@@ -176,8 +176,9 @@ export class ConversationsService {
 
     const page = rows.slice(0, limit) as ConversationWithParties[];
     const originMap = await this.resolveOrigins(page);
+    const unread = await this.unreadFor(page.map((r) => r.id), parties);
     return {
-      items: page.map((row) => this.toDto(row, actor, originMap)),
+      items: page.map((row) => this.toDto(row, actor, originMap, unread.get(row.id))),
       nextCursor: rows.length > limit ? offset + limit : undefined,
     };
   }
@@ -186,7 +187,8 @@ export class ConversationsService {
   async getById(actor: ChatActor, id: string): Promise<ConversationDto> {
     const row = await this.requireParticipantRow(actor, id);
     const originMap = await this.resolveOrigins([row]);
-    return this.toDto(row, actor, originMap);
+    const unread = await this.unreadFor([row.id], await this.partySetFor(actor));
+    return this.toDto(row, actor, originMap, unread.get(row.id));
   }
 
   /**
@@ -375,7 +377,7 @@ export class ConversationsService {
    * Invited staff are only ever the shop: an owner's conversations with other
    * shops are their own business, and a console token must not open them.
    */
-  private async partySetFor(actor: ChatActor): Promise<ChatParty[]> {
+  async partySetFor(actor: ChatActor): Promise<ChatParty[]> {
     if (actor.role === 'customer') {
       const owned = await this.db.query.shops.findMany({
         where: eq(shops.ownerId, actor.id),
@@ -501,10 +503,41 @@ export class ConversationsService {
     return map;
   }
 
+  /**
+   * How many messages each of these threads holds unread *for this viewer*.
+   *
+   * Read from their own participant row: a shop owner is the buyer in one
+   * thread and the shop in the next, and the pair of counters on the
+   * conversation cannot say which of those a number belongs to.
+   */
+  private async unreadFor(
+    conversationIds: string[],
+    parties: ChatParty[],
+  ): Promise<Map<string, number>> {
+    const out = new Map<string, number>();
+    if (!conversationIds.length) return out;
+    const rows = await this.db.query.chatParticipants.findMany({
+      where: inArray(chatParticipants.conversationId, conversationIds),
+    });
+    for (const row of rows) {
+      const mine = parties.some((p) =>
+        p.kind === 'account'
+          ? row.kind === 'account' && row.accountId === p.id
+          : p.kind === 'shop'
+            ? row.kind === 'shop' && row.shopId === p.id
+            : row.kind === 'support',
+      );
+      if (mine) out.set(row.conversationId, row.unread);
+    }
+    return out;
+  }
+
   private toDto(
     row: ConversationWithParties,
     actor: Pick<ChatActor, 'role'>,
     originMap: Map<string, ConversationDto['origin']>,
+    /** This viewer's own unread; absent on threads predating participants. */
+    myUnread?: number,
   ): ConversationDto {
     const forCustomer = actor.role === 'customer';
     return {
@@ -520,7 +553,9 @@ export class ConversationsService {
       customer: { id: row.buyer.id, name: row.buyer.name },
       origin: originMap.get(row.id),
       lastMessage: row.lastMessagePreview ?? undefined,
-      unreadCount: forCustomer ? row.buyerUnread : row.sellerUnread,
+      // Falls back to the legacy pair only for threads with no participant
+      // rows yet, where the viewer can only be the buyer or the shop anyway.
+      unreadCount: myUnread ?? (forCustomer ? row.buyerUnread : row.sellerUnread),
       counterpartOnline: forCustomer
         ? this.realtime.isOnline('shop', row.shopId)
         : this.realtime.isOnline('buyer', row.buyerId),

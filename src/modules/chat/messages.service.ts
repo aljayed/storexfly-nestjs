@@ -27,7 +27,12 @@ import { productLines } from '../../common/utils/order-line.util';
 import type { ChatActor } from './chat-actor';
 import { BotReplyService } from './bot-reply.service';
 import { ChatRealtimeService } from './chat-realtime.service';
-import { pairKeyFor } from './chat-parties';
+import { pairKeyFor, type ChatParty } from './chat-parties';
+import {
+  bumpUnreadForOthers,
+  clearUnreadFor,
+  sideOf,
+} from './participant-unread.util';
 import {
   buyerShopParties,
   writeThreadParticipants,
@@ -154,6 +159,7 @@ export class MessagesService {
     const fields = await this.buildTypedFields(dto, convo);
     const preview = this.previewOf(dto.type, fields);
 
+    const senderParties = await this.conversations.partySetFor(actor);
     const row = await this.db.transaction(async (tx) => {
       const [inserted] = await tx
         .insert(chatMessages)
@@ -182,6 +188,15 @@ export class MessagesService {
             : { buyerUnread: sql`${chatConversations.buyerUnread} + 1` }),
         })
         .where(eq(chatConversations.id, conversationId));
+
+      // The counters above answer "unread for the buyer / for the shop", which
+      // cannot say whose number it is once one person is both. Count it
+      // against the side that did not send instead.
+      // Resolved from every party this viewer speaks as, not from their role:
+      // an owner replying in the console may be the *account* side of the
+      // thread, not the shop.
+      const mine = await sideOf(tx, conversationId, senderParties);
+      if (mine) await bumpUnreadForOthers(tx, conversationId, mine.side);
       return inserted;
     });
 
@@ -230,6 +245,7 @@ export class MessagesService {
 
     const counterpart: ChatSenderRole =
       actor.role === 'customer' ? 'seller' : 'customer';
+    const readerParties = await this.conversations.partySetFor(actor);
     await this.db.transaction(async (tx) => {
       await tx
         .update(chatMessages)
@@ -250,6 +266,10 @@ export class MessagesService {
           actor.role === 'customer' ? { buyerUnread: 0 } : { sellerUnread: 0 },
         )
         .where(eq(chatConversations.id, conversationId));
+
+      // Clear the reader's own side, whichever of the two they are here.
+      const mine = await sideOf(tx, conversationId, readerParties);
+      if (mine) await clearUnreadFor(tx, conversationId, mine.side);
     });
 
     // Read receipt to the author's side; sidebar refresh to both.
