@@ -9,6 +9,11 @@ import {
 import { and, eq, or, sql } from 'drizzle-orm';
 import { dollarsToCents } from '../../common/utils/money.util';
 import { DRIZZLE } from '../../database/database.constants';
+import { pairKeyFor } from '../chat/chat-parties';
+import {
+  buyerShopParties,
+  writeThreadParticipants,
+} from '../chat/thread-participants.util';
 import type { DrizzleDB } from '../../database/drizzle.types';
 import {
   chatConversations,
@@ -123,9 +128,14 @@ export class ChatOffersService {
         : { found: false, reason: 'no_account' };
     }
 
+    const parties = buyerShopParties(match.id, actor.shopId);
     await this.db
       .insert(chatConversations)
-      .values({ buyerId: match.id, shopId: actor.shopId })
+      .values({
+        buyerId: match.id,
+        shopId: actor.shopId,
+        pairKey: pairKeyFor(parties[0], parties[1]),
+      })
       .onConflictDoNothing({
         target: [chatConversations.buyerId, chatConversations.shopId],
       });
@@ -136,6 +146,9 @@ export class ChatOffersService {
       ),
       columns: { id: true },
     });
+    if (convo) {
+      await writeThreadParticipants(this.db, convo.id, parties[0], parties[1]);
+    }
     return { found: true, conversationId: convo?.id, buyerName: match.name };
   }
 

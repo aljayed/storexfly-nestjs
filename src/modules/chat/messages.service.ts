@@ -27,6 +27,11 @@ import { productLines } from '../../common/utils/order-line.util';
 import type { ChatActor } from './chat-actor';
 import { BotReplyService } from './bot-reply.service';
 import { ChatRealtimeService } from './chat-realtime.service';
+import { pairKeyFor } from './chat-parties';
+import {
+  buyerShopParties,
+  writeThreadParticipants,
+} from './thread-participants.util';
 import { ConversationsService } from './conversations.service';
 import type { MarkReadDto, SendMessageDto } from './dto/chat.dto';
 
@@ -463,9 +468,14 @@ export class MessagesService {
       offer?: ChatOfferSnapshotValue;
     },
   ): Promise<void> {
+    const parties = buyerShopParties(buyerAccountId, shopId);
     await this.db
       .insert(chatConversations)
-      .values({ buyerId: buyerAccountId, shopId })
+      .values({
+        buyerId: buyerAccountId,
+        shopId,
+        pairKey: pairKeyFor(parties[0], parties[1]),
+      })
       .onConflictDoNothing({
         target: [chatConversations.buyerId, chatConversations.shopId],
       });
@@ -476,6 +486,7 @@ export class MessagesService {
       ),
     });
     if (!convo) return;
+    await writeThreadParticipants(this.db, convo.id, parties[0], parties[1]);
     const shop = await this.db.query.shops.findFirst({
       where: eq(shops.id, shopId),
       columns: { ownerId: true },

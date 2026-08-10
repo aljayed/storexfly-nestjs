@@ -4,12 +4,13 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { and, desc, eq, ilike, inArray, sql } from 'drizzle-orm';
+import { and, desc, eq, ilike, inArray, or, sql } from 'drizzle-orm';
 import { DRIZZLE } from '../../database/database.constants';
 import type { DrizzleDB } from '../../database/drizzle.types';
 import {
   users,
   chatConversations,
+  chatParticipants,
   customers,
   orders,
   products,
@@ -19,6 +20,8 @@ import {
 import { centsToDollars } from '../../common/utils/money.util';
 import { productLines } from '../../common/utils/order-line.util';
 import type { ChatActor, CustomerActor, SellerActor } from './chat-actor';
+import { pairKeyFor, partiesOf, type ChatParty } from './chat-parties';
+import { writeThreadParticipants } from './thread-participants.util';
 import { ChatRealtimeService } from './chat-realtime.service';
 import type { StartConversationDto } from './dto/chat.dto';
 
@@ -108,10 +111,32 @@ export class ConversationsService {
     const limit = opts.limit ?? 20;
     const offset = opts.cursor ?? 0;
 
-    const sideFilter =
-      actor.role === 'customer'
-        ? eq(chatConversations.buyerId, actor.id)
-        : eq(chatConversations.shopId, actor.shopId);
+    // "Threads I am a participant in". A shop owner speaks as two parties -
+    // themselves and their storefront - so this one query is what makes their
+    // inbox the same list in the console and on their storefront profile,
+    // rather than two inboxes kept in step.
+    const parties = await this.partySetFor(actor);
+    const sideFilter = inArray(
+      chatConversations.id,
+      this.db
+        .select({ id: chatParticipants.conversationId })
+        .from(chatParticipants)
+        .where(
+          or(
+            ...parties.map((p) =>
+              p.kind === 'account'
+                ? and(
+                    eq(chatParticipants.kind, 'account'),
+                    eq(chatParticipants.accountId, p.id as string),
+                  )
+                : and(
+                    eq(chatParticipants.kind, 'shop'),
+                    eq(chatParticipants.shopId, p.id as string),
+                  ),
+            ),
+          ),
+        ),
+    );
     const unreadFilter =
       opts.filter === 'unread'
         ? actor.role === 'customer'
@@ -178,11 +203,14 @@ export class ConversationsService {
     });
     if (!shop) throw new NotFoundException('Shop not found');
 
+    const buyerParty: ChatParty = { kind: 'account', id: actor.id };
+    const shopParty: ChatParty = { kind: 'shop', id: dto.shopId };
     const inserted = await this.db
       .insert(chatConversations)
       .values({
         buyerId: actor.id,
         shopId: dto.shopId,
+        pairKey: pairKeyFor(buyerParty, shopParty),
         originType: dto.origin?.type ?? null,
         originRefId: dto.origin?.refId ?? null,
       })
@@ -190,6 +218,12 @@ export class ConversationsService {
         target: [chatConversations.buyerId, chatConversations.shopId],
       })
       .returning({ id: chatConversations.id });
+
+    // Every thread carries its two participants, so an inbox is one query over
+    // the parties a viewer speaks as rather than a union of special cases.
+    if (inserted[0]) {
+      await writeThreadParticipants(this.db, inserted[0].id, buyerParty, shopParty);
+    }
 
     const created = inserted.length > 0;
     let row = await this.db.query.chatConversations.findFirst({
@@ -305,6 +339,61 @@ export class ConversationsService {
     }));
   }
 
+  /** Does this viewer speak as either side of the thread? */
+  private async isParticipant(
+    actor: ChatActor,
+    row: ChatConversationRow,
+  ): Promise<boolean> {
+    const parties = await this.partySetFor(actor);
+    const sides = await this.db.query.chatParticipants.findMany({
+      where: eq(chatParticipants.conversationId, row.id),
+      columns: { kind: true, accountId: true, shopId: true },
+    });
+    // Threads created before participants existed are matched on the columns
+    // they were written with, so nothing is locked out mid-migration.
+    if (!sides.length) {
+      return actor.role === 'customer'
+        ? row.buyerId === actor.id
+        : row.shopId === actor.shopId;
+    }
+    return sides.some((side) =>
+      parties.some((p) =>
+        p.kind === 'account'
+          ? side.kind === 'account' && side.accountId === p.id
+          : side.kind === 'shop' && side.shopId === p.id,
+      ),
+    );
+  }
+
+  /**
+   * Every party this viewer speaks as.
+   *
+   * A shop owner is themselves *and* their storefront, from either side of the
+   * platform - which is what makes their inbox one list whether they open it
+   * in the console or on their storefront profile.
+   *
+   * Invited staff are only ever the shop: an owner's conversations with other
+   * shops are their own business, and a console token must not open them.
+   */
+  private async partySetFor(actor: ChatActor): Promise<ChatParty[]> {
+    if (actor.role === 'customer') {
+      const owned = await this.db.query.shops.findMany({
+        where: eq(shops.ownerId, actor.id),
+        columns: { id: true },
+      });
+      return partiesOf(actor, { ownedShopIds: owned.map((s) => s.id) });
+    }
+    const shop = await this.db.query.shops.findFirst({
+      where: eq(shops.id, actor.shopId),
+      columns: { ownerId: true },
+    });
+    // The seller actor's id is an admin-user id; it equals the owner's account
+    // id only on the owner's own auto-elevated console session.
+    const ownerAccountId =
+      shop && shop.ownerId === actor.id ? shop.ownerId : null;
+    return partiesOf(actor, { ownerAccountId });
+  }
+
   /** Membership check shared by every per-conversation route. */
   async requireParticipantRow(
     actor: ChatActor,
@@ -314,13 +403,10 @@ export class ConversationsService {
       where: eq(chatConversations.id, id),
       with: { shop: true, buyer: true },
     });
+    // Same rule the inbox lists by, so a thread that appears in the list can
+    // always be opened - and one that does not, cannot.
     // 404 (not 403) for non-participants, so ids can't be probed.
-    if (
-      !row ||
-      (actor.role === 'customer'
-        ? row.buyerId !== actor.id
-        : row.shopId !== actor.shopId)
-    ) {
+    if (!row || !(await this.isParticipant(actor, row))) {
       throw new NotFoundException('Conversation not found');
     }
     return row;
