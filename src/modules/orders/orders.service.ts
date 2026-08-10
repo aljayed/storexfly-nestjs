@@ -747,12 +747,17 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
 
     const order = await this.db.transaction(async (tx) => {
       const [shop] = await tx
-        .select({ live: shops.live, plan: shops.plan })
+        .select({ live: shops.live, plan: shops.plan, ownerId: shops.ownerId })
         .from(shops)
         .where(eq(shops.id, offer.shopId))
         .for('update');
       if (!shop?.live) {
         throw new ForbiddenException('This shop is currently offline.');
+      }
+      if (shop.ownerId === args.buyer.id) {
+        throw new ForbiddenException(
+          'You cannot accept an order offer from your own shop.',
+        );
       }
 
       let priorOrders = 0;
@@ -913,7 +918,7 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
 
       // The order that spends the last of the credit stands; the shop closes
       // behind it until the seller tops up.
-      if (credit && credit.balanceCents - order.totalCents <= 0) {
+      if (credit && credit.balanceCents - offer.totalCents <= 0) {
         await tx
           .update(shops)
           .set({ live: false })
@@ -1016,7 +1021,8 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
 
     const email = contact.email?.trim().toLowerCase();
     const phone = normalizePhone(contact.phone);
-    const sameEmail = !!email && !!owner.email && owner.email.toLowerCase() === email;
+    const sameEmail =
+      !!email && !!owner.email && owner.email.toLowerCase() === email;
     const samePhone = !!phone && normalizePhone(owner.phone) === phone;
 
     if (sameEmail || samePhone) {

@@ -78,9 +78,12 @@ export class ChatTokenService {
     // rarest and the other two are cheap to rule out.
     try {
       const payload = await this.jwt.verifyAsync<PlatformJwtPayload>(token, {
-        secret: this.config.getOrThrow<string>('platformAuth.jwtSecret'),
+        secret: this.config.getOrThrow<string>('platformAdmin.jwtSecret'),
       });
-      if (payload.typ === 'platform') {
+      if (
+        payload.typ === 'platform' &&
+        payload.email === this.config.getOrThrow<string>('platformAdmin.email')
+      ) {
         return {
           role: 'support',
           id: payload.sub,

@@ -5,7 +5,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { and, desc, eq, ilike, inArray, or, sql } from 'drizzle-orm';
+import { and, desc, eq, gt, ilike, inArray, not, or, sql } from 'drizzle-orm';
 import { DRIZZLE } from '../../database/database.constants';
 import type { DrizzleDB } from '../../database/drizzle.types';
 import {
@@ -29,7 +29,11 @@ import {
   type ChatParty,
 } from './chat-parties';
 import { isParty } from './participant-unread.util';
-import { SUPPORT_NAME, SUPPORT_PARTY_ID } from './support.constants';
+import {
+  SUPPORT_EMAIL,
+  SUPPORT_NAME,
+  SUPPORT_PARTY_ID,
+} from './support.constants';
 import { writeThreadParticipants } from './thread-participants.util';
 import { ChatRealtimeService } from './chat-realtime.service';
 import type { StartConversationDto } from './dto/chat.dto';
@@ -53,7 +57,17 @@ export interface ConversationDto {
    * thread and the buyer in the next, so a list cannot label rows by the
    * viewer's role - it has to name whoever is across from them.
    */
-  counterpart: { kind: 'shop' | 'account' | 'support'; id: string; name: string };
+  counterpart: {
+    kind: 'shop' | 'account' | 'support';
+    id: string;
+    name: string;
+    /** Optional second line, currently used for the verified support address. */
+    subtitle?: string;
+  };
+  /** Participant slot occupied by this viewer in this thread. */
+  currentSide?: 'a' | 'b';
+  /** Party this viewer represents in this particular thread. */
+  currentParty?: { kind: 'shop' | 'account' | 'support'; id: string };
   origin?: {
     type: 'product' | 'order';
     refId: string;
@@ -159,29 +173,70 @@ export class ConversationsService {
           ),
         ),
     );
+    const mine = or(
+      ...parties.map((p) =>
+        p.kind === 'account'
+          ? and(
+              eq(chatParticipants.kind, 'account'),
+              eq(chatParticipants.accountId, p.id as string),
+            )
+          : p.kind === 'shop'
+            ? and(
+                eq(chatParticipants.kind, 'shop'),
+                eq(chatParticipants.shopId, p.id as string),
+              )
+            : eq(chatParticipants.kind, 'support'),
+      ),
+    );
     const unreadFilter =
       opts.filter === 'unread'
-        ? actor.role === 'customer'
-          ? sql`${chatConversations.buyerUnread} > 0`
-          : sql`${chatConversations.sellerUnread} > 0`
-        : undefined;
-    // Search matches the counterpart's display name.
-    const searchFilter = opts.q
-      ? actor.role === 'customer'
         ? inArray(
-            chatConversations.shopId,
+            chatConversations.id,
             this.db
-              .select({ id: shops.id })
-              .from(shops)
-              .where(ilike(shops.name, `%${opts.q}%`)),
+              .select({ id: chatParticipants.conversationId })
+              .from(chatParticipants)
+              .where(and(mine, gt(chatParticipants.unread, 0))),
           )
-        : inArray(
-            chatConversations.buyerId,
-            this.db
-              .select({ id: users.id })
-              .from(users)
-              .where(ilike(users.name, `%${opts.q}%`)),
-          )
+        : undefined;
+    // Search the participant across from the viewer. This cannot be based on
+    // the viewer's role: an owner is an account in one row and a shop in the
+    // next, and account↔account has no fixed "buyer" column at all.
+    const q = opts.q?.trim();
+    const nameMatch = q
+      ? or(
+          and(
+            eq(chatParticipants.kind, 'account'),
+            inArray(
+              chatParticipants.accountId,
+              this.db
+                .select({ id: users.id })
+                .from(users)
+                .where(ilike(users.name, `%${q}%`)),
+            ),
+          ),
+          and(
+            eq(chatParticipants.kind, 'shop'),
+            inArray(
+              chatParticipants.shopId,
+              this.db
+                .select({ id: shops.id })
+                .from(shops)
+                .where(ilike(shops.name, `%${q}%`)),
+            ),
+          ),
+          ...(SUPPORT_NAME.toLowerCase().includes(q.toLowerCase())
+            ? [eq(chatParticipants.kind, 'support')]
+            : []),
+        )
+      : undefined;
+    const searchFilter = nameMatch
+      ? inArray(
+          chatConversations.id,
+          this.db
+            .select({ id: chatParticipants.conversationId })
+            .from(chatParticipants)
+            .where(and(not(mine!), nameMatch)),
+        )
       : undefined;
 
     const rows = await this.db.query.chatConversations.findMany({
@@ -198,9 +253,14 @@ export class ConversationsService {
 
     const page = rows.slice(0, limit) as ConversationWithParties[];
     const originMap = await this.resolveOrigins(page);
-    const sides = await this.sidesFor(page.map((r) => r.id), parties);
+    const sides = await this.sidesFor(
+      page.map((r) => r.id),
+      parties,
+    );
     const names = await this.namesFor(
-      [...sides.values()].map((v) => v.theirs).filter((v): v is ChatParticipantRow => !!v),
+      [...sides.values()]
+        .map((v) => v.theirs)
+        .filter((v): v is ChatParticipantRow => !!v),
     );
     return {
       items: page.map((row) =>
@@ -233,7 +293,38 @@ export class ConversationsService {
     const shop = await this.db.query.shops.findFirst({
       where: eq(shops.id, dto.shopId),
     });
-    if (!shop) throw new NotFoundException('Shop not found');
+    if (!shop?.live) throw new NotFoundException('Shop not found');
+    if (shop.ownerId === actor.id) {
+      throw new BadRequestException(
+        'You cannot start a chat with your own shop',
+      );
+    }
+
+    // Origin ids are client input. Validate ownership before storing them or
+    // an arbitrary order UUID could make another customer's reference appear
+    // in this thread's header.
+    if (dto.origin?.type === 'product') {
+      const product = await this.db.query.products.findFirst({
+        where: and(
+          eq(products.id, dto.origin.refId),
+          eq(products.shopId, dto.shopId),
+        ),
+        columns: { id: true },
+      });
+      if (!product)
+        throw new BadRequestException('Invalid conversation origin');
+    }
+    if (dto.origin?.type === 'order') {
+      const order = await this.db.query.orders.findFirst({
+        where: and(
+          eq(orders.id, dto.origin.refId),
+          eq(orders.shopId, dto.shopId),
+          sql`lower(${orders.email}) = ${actor.email.toLowerCase()}`,
+        ),
+        columns: { id: true },
+      });
+      if (!order) throw new BadRequestException('Invalid conversation origin');
+    }
 
     const buyerParty: ChatParty = { kind: 'account', id: actor.id };
     const shopParty: ChatParty = { kind: 'shop', id: dto.shopId };
@@ -246,15 +337,18 @@ export class ConversationsService {
         originType: dto.origin?.type ?? null,
         originRefId: dto.origin?.refId ?? null,
       })
-      .onConflictDoNothing({
-        target: [chatConversations.buyerId, chatConversations.shopId],
-      })
+      .onConflictDoNothing({ target: chatConversations.pairKey })
       .returning({ id: chatConversations.id });
 
     // Every thread carries its two participants, so an inbox is one query over
     // the parties a viewer speaks as rather than a union of special cases.
     if (inserted[0]) {
-      await writeThreadParticipants(this.db, inserted[0].id, buyerParty, shopParty);
+      await writeThreadParticipants(
+        this.db,
+        inserted[0].id,
+        buyerParty,
+        shopParty,
+      );
     }
 
     const created = inserted.length > 0;
@@ -266,6 +360,7 @@ export class ConversationsService {
       with: { shop: true, buyer: true },
     });
     if (!row) throw new NotFoundException('Conversation not found');
+    await writeThreadParticipants(this.db, row.id, buyerParty, shopParty);
 
     const originChanged =
       !!dto.origin &&
@@ -284,8 +379,12 @@ export class ConversationsService {
     }
 
     const originMap = await this.resolveOrigins([row]);
+    const sides = await this.sidesFor([row.id], await this.partySetFor(actor));
+    const names = await this.namesFor(
+      [sides.get(row.id)?.theirs].filter((v): v is ChatParticipantRow => !!v),
+    );
     return {
-      conversation: this.toDto(row, actor, originMap),
+      conversation: this.toDto(row, actor, originMap, sides.get(row.id), names),
       // The controller uses this to attach the initial product card only when
       // the thread is new or was re-entered from a different product/order.
       created: created || originChanged,
@@ -447,11 +546,49 @@ export class ConversationsService {
   async startWithParty(
     actor: ChatActor,
     target: ChatParty,
+    preferAccount = false,
   ): Promise<{ conversation: ConversationDto; created: boolean }> {
-    const mine = (await this.partySetFor(actor))[0];
+    const myParties = await this.partySetFor(actor);
+    const mine = preferAccount
+      ? (myParties.find((p) => p.kind === 'account') ?? myParties[0])
+      : myParties[0];
     if (!mine) throw new ForbiddenException('No party to speak as');
-    if (partyKey(mine) === partyKey(target)) {
+    if (myParties.some((p) => partyKey(p) === partyKey(target))) {
       throw new BadRequestException('You cannot start a thread with yourself');
+    }
+    // Direct support routes arrive by id rather than handle. Resolve every
+    // target before insert so a stale/guessed id returns a clean 404 instead
+    // of surfacing a foreign-key error as a server failure.
+    if (target.kind === 'shop') {
+      const shop = await this.db.query.shops.findFirst({
+        where: eq(shops.id, target.id as string),
+        columns: { id: true },
+      });
+      if (!shop) throw new NotFoundException('Shop not found');
+    } else if (target.kind === 'account') {
+      const account = await this.db.query.users.findFirst({
+        where: eq(users.id, target.id as string),
+        columns: { id: true },
+      });
+      if (!account) throw new NotFoundException('Account not found');
+    }
+    if (mine.kind === 'account' && target.kind === 'account') {
+      const account = await this.db.query.users.findFirst({
+        where: eq(users.id, mine.id as string),
+        columns: { emailVerified: true, phoneVerified: true },
+      });
+      const ownsShop = await this.db.query.shops.findFirst({
+        where: eq(shops.ownerId, mine.id as string),
+        columns: { id: true },
+      });
+      if (
+        !account ||
+        (!account.emailVerified && !account.phoneVerified && !ownsShop)
+      ) {
+        throw new ForbiddenException(
+          'Verify your email or phone before messaging another person',
+        );
+      }
     }
 
     const pairKey = pairKeyFor(mine, target);
@@ -464,7 +601,12 @@ export class ConversationsService {
     if (!row) {
       // buyer_id / shop_id stay meaningful for the classic pair, because they
       // are what cascade the thread away with the account or the shop.
-      const account = [mine, target].find((p) => p.kind === 'account');
+      const classic =
+        [mine, target].some((p) => p.kind === 'account') &&
+        [mine, target].some((p) => p.kind === 'shop');
+      const account = classic
+        ? [mine, target].find((p) => p.kind === 'account')
+        : undefined;
       const shop = [mine, target].find((p) => p.kind === 'shop');
       const [inserted] = await this.db
         .insert(chatConversations)
@@ -485,6 +627,9 @@ export class ConversationsService {
         })) ?? null;
     }
     if (!row) throw new NotFoundException('Conversation not found');
+    // Also repairs a row left between conversation insert and participant
+    // insert by an interrupted deployment/process.
+    await writeThreadParticipants(this.db, row.id, mine, target);
 
     const originMap = await this.resolveOrigins([row]);
     const sides = await this.sidesFor([row.id], await this.partySetFor(actor));
@@ -530,6 +675,44 @@ export class ConversationsService {
     });
     if (!row) return;
     const originMap = await this.resolveOrigins([row]);
+    const participants = await this.db.query.chatParticipants.findMany({
+      where: eq(chatParticipants.conversationId, conversationId),
+    });
+    if (participants.length === 2) {
+      const names = await this.namesFor(participants);
+      for (const mine of participants) {
+        const theirs = participants.find((p) => p.side !== mine.side);
+        const party: ChatParty = {
+          kind: mine.kind,
+          id:
+            mine.kind === 'account'
+              ? mine.accountId
+              : mine.kind === 'shop'
+                ? mine.shopId
+                : null,
+        };
+        this.realtime.emitTo(
+          ChatRealtimeService.partyRoom(party),
+          'conversation.updated',
+          this.toDto(
+            row,
+            {
+              role:
+                mine.kind === 'shop'
+                  ? 'seller'
+                  : mine.kind === 'support'
+                    ? 'support'
+                    : 'customer',
+            },
+            originMap,
+            { mine, theirs },
+            names,
+          ),
+        );
+      }
+      return;
+    }
+    // Compatibility for a row created before the participant backfill.
     if (row.buyerId) {
       this.realtime.emitTo(
         ChatRealtimeService.room('buyer', row.buyerId),
@@ -619,7 +802,9 @@ export class ConversationsService {
   private async sidesFor(
     conversationIds: string[],
     parties: ChatParty[],
-  ): Promise<Map<string, { mine?: ChatParticipantRow; theirs?: ChatParticipantRow }>> {
+  ): Promise<
+    Map<string, { mine?: ChatParticipantRow; theirs?: ChatParticipantRow }>
+  > {
     const out = new Map<
       string,
       { mine?: ChatParticipantRow; theirs?: ChatParticipantRow }
@@ -655,13 +840,13 @@ export class ConversationsService {
             where: inArray(shops.id, shopIds),
             columns: { id: true, name: true },
           })
-        : Promise.resolve([]),
+        : Promise.resolve([] as { id: string; name: string }[]),
       accountIds.length
         ? this.db.query.users.findMany({
             where: inArray(users.id, accountIds),
             columns: { id: true, name: true },
           })
-        : Promise.resolve([]),
+        : Promise.resolve([] as { id: string; name: string }[]),
     ]);
     return {
       shops: new Map<string, string>(
@@ -682,14 +867,23 @@ export class ConversationsService {
    */
   private counterpartOf(
     row: ConversationWithParties,
-    sides: { mine?: ChatParticipantRow; theirs?: ChatParticipantRow } | undefined,
-    names: { shops: Map<string, string>; accounts: Map<string, string> } | undefined,
+    sides:
+      | { mine?: ChatParticipantRow; theirs?: ChatParticipantRow }
+      | undefined,
+    names:
+      | { shops: Map<string, string>; accounts: Map<string, string> }
+      | undefined,
     forCustomer: boolean,
   ): ConversationDto['counterpart'] {
     const theirs = sides?.theirs;
     if (theirs) {
       if (theirs.kind === 'support') {
-        return { kind: 'support', id: SUPPORT_PARTY_ID, name: SUPPORT_NAME };
+        return {
+          kind: 'support',
+          id: SUPPORT_PARTY_ID,
+          name: SUPPORT_NAME,
+          subtitle: SUPPORT_EMAIL,
+        };
       }
       if (theirs.kind === 'shop' && theirs.shopId) {
         return {
@@ -712,7 +906,12 @@ export class ConversationsService {
       ? { kind: 'shop', id: row.shop.id, name: row.shop.name }
       : row.buyer
         ? { kind: 'account', id: row.buyer.id, name: row.buyer.name }
-        : { kind: 'support', id: SUPPORT_PARTY_ID, name: SUPPORT_NAME };
+        : {
+            kind: 'support',
+            id: SUPPORT_PARTY_ID,
+            name: SUPPORT_NAME,
+            subtitle: SUPPORT_EMAIL,
+          };
   }
 
   private toDto(
@@ -741,22 +940,35 @@ export class ConversationsService {
         customer: { id: row.buyer.id, name: row.buyer.name },
       }),
       counterpart,
+      currentSide: sides?.mine?.side as 'a' | 'b' | undefined,
+      currentParty: sides?.mine
+        ? {
+            kind: sides.mine.kind,
+            id:
+              sides.mine.kind === 'account'
+                ? (sides.mine.accountId as string)
+                : sides.mine.kind === 'shop'
+                  ? (sides.mine.shopId as string)
+                  : SUPPORT_PARTY_ID,
+          }
+        : undefined,
       origin: originMap.get(row.id),
       lastMessage: row.lastMessagePreview ?? undefined,
       // Falls back to the legacy pair only for threads with no participant
       // rows yet, where the viewer can only be the buyer or the shop anyway.
       unreadCount:
-        sides?.mine?.unread ?? (forCustomer ? row.buyerUnread : row.sellerUnread),
+        sides?.mine?.unread ??
+        (forCustomer ? row.buyerUnread : row.sellerUnread),
       // Presence follows the counterpart the DTO just named, so it stays right
       // for a viewer who is the shop in one thread and the buyer in the next.
-      counterpartOnline: this.realtime.isOnline(
-        counterpart.kind === 'shop' ? 'shop' : 'buyer',
-        counterpart.id,
-      ),
-      counterpartLastSeenAt: this.realtime.lastSeenAt(
-        counterpart.kind === 'shop' ? 'shop' : 'buyer',
-        counterpart.id,
-      ),
+      counterpartOnline: this.realtime.isPartyOnline({
+        kind: counterpart.kind,
+        id: counterpart.kind === 'support' ? null : counterpart.id,
+      }),
+      counterpartLastSeenAt: this.realtime.partyLastSeenAt({
+        kind: counterpart.kind,
+        id: counterpart.kind === 'support' ? null : counterpart.id,
+      }),
       createdAt: row.createdAt.toISOString(),
       updatedAt: row.updatedAt.toISOString(),
     };

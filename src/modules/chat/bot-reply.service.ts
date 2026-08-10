@@ -6,6 +6,7 @@ import {
   adminUsers,
   chatConversations,
   chatMessages,
+  chatParticipants,
   shops,
 } from '../../database/schema';
 import { ChatRealtimeService } from './chat-realtime.service';
@@ -65,7 +66,9 @@ export class BotReplyService {
    * this, so in practice it answers first; this only stops a wedged request
    * from holding a connection open forever.
    */
-  private readonly timeoutMs = Number(process.env.CHAT_AGENT_TIMEOUT_MS ?? 45_000);
+  private readonly timeoutMs = Number(
+    process.env.CHAT_AGENT_TIMEOUT_MS ?? 45_000,
+  );
 
   constructor(
     @Inject(DRIZZLE) private readonly db: DrizzleDB,
@@ -114,7 +117,9 @@ export class BotReplyService {
       columns: { id: true },
     });
     if (!owner) {
-      this.log.warn(`shop ${convo.shopId} has no owner admin - skipping bot reply`);
+      this.log.warn(
+        `shop ${convo.shopId} has no owner admin - skipping bot reply`,
+      );
       return;
     }
 
@@ -165,7 +170,9 @@ export class BotReplyService {
         escalated: Boolean(body.escalated_to_human),
       };
     } catch (err) {
-      this.log.warn(`agent call failed for shop ${convo.shopId}: ${String(err)}`);
+      this.log.warn(
+        `agent call failed for shop ${convo.shopId}: ${String(err)}`,
+      );
       return null;
     } finally {
       clearTimeout(timer);
@@ -191,6 +198,7 @@ export class BotReplyService {
           conversationId: convo.id,
           senderRole: 'seller',
           senderId,
+          senderSide: 'b',
           type: 'text',
           text,
           status: buyerOnline ? 'delivered' : 'sent',
@@ -206,6 +214,7 @@ export class BotReplyService {
             type: 'text',
             text,
             senderRole: 'seller',
+            senderSide: 'b',
             sentAt: inserted.sentAt.toISOString(),
           },
           buyerUnread: sql`${chatConversations.buyerUnread} + 1`,
@@ -225,6 +234,27 @@ export class BotReplyService {
         })
         .where(eq(chatConversations.id, convo.id));
 
+      await tx
+        .update(chatParticipants)
+        .set({ unread: sql`${chatParticipants.unread} + 1` })
+        .where(
+          and(
+            eq(chatParticipants.conversationId, convo.id),
+            eq(chatParticipants.side, 'a'),
+          ),
+        );
+      if (!escalated) {
+        await tx
+          .update(chatParticipants)
+          .set({ unread: sql`GREATEST(${chatParticipants.unread} - 1, 0)` })
+          .where(
+            and(
+              eq(chatParticipants.conversationId, convo.id),
+              eq(chatParticipants.side, 'b'),
+            ),
+          );
+      }
+
       return inserted;
     });
 
@@ -233,6 +263,7 @@ export class BotReplyService {
       conversationId: row.conversationId,
       senderId: row.senderId,
       senderRole: row.senderRole,
+      senderSide: row.senderSide,
       type: row.type,
       text: row.text ?? undefined,
       status: row.status,

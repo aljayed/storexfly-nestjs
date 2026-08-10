@@ -10,8 +10,9 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { Throttle } from '@nestjs/throttler';
 import { Public } from '../../common/decorators/public.decorator';
-import type { ChatActor, CustomerActor, SellerActor } from '../chat/chat-actor';
+import type { CustomerActor, SellerActor } from '../chat/chat-actor';
 import {
   ChatAuthGuard,
   ChatRole,
@@ -52,6 +53,7 @@ export class ChatOffersController {
 
   @ChatRole('seller')
   @Post('conversations/:id/offers')
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @ApiOperation({ summary: 'Seller: send an order offer into the thread' })
   create(
     @CurrentChatActor() actor: SellerActor,
@@ -72,14 +74,14 @@ export class ChatOffersController {
     return this.offers.getById(actor, id);
   }
 
-  @ChatRole('customer')
+  @ChatRole('customer', 'seller')
   @Post('offers/:id/respond')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Buyer: accept (places the order) or reject an offer',
   })
   respond(
-    @CurrentChatActor() actor: CustomerActor,
+    @CurrentChatActor() actor: CustomerActor | SellerActor,
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: RespondOfferDto,
   ) {

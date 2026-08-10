@@ -9,8 +9,8 @@ import type { ChatParty } from './chat-parties';
  * emit through the helpers below without depending on the gateway itself
  * (avoids a circular dependency).
  *
- * Rooms: `buyer:{buyerId}` for the customer side, `shop:{shopId}` for the
- * seller side (every staff socket of a shop shares its room). Presence and
+ * Rooms: `account:{accountId}`, `shop:{shopId}`, and `support:support`.
+ * Every staff socket of a shop shares its room. Presence and
  * last-seen live in memory - a restart just degrades "Online" to
  * "Last seen recently", which the UI already handles.
  */
@@ -32,16 +32,12 @@ export class ChatRealtimeService {
    * never hear the messages addressed to the person.
    */
   static room(side: 'buyer' | 'shop', id: string): string {
-    return `${side}:${id}`;
+    return `${side === 'buyer' ? 'account' : 'shop'}:${id}`;
   }
 
   /** Room for a participant of a thread. */
   static partyRoom(party: ChatParty): string {
-    return party.kind === 'shop'
-      ? ChatRealtimeService.room('shop', party.id ?? '')
-      : party.kind === 'account'
-        ? ChatRealtimeService.room('buyer', party.id ?? '')
-        : 'support';
+    return `${party.kind}:${party.id ?? 'support'}`;
   }
 
   /** Every room a viewer should be listening in. */
@@ -55,7 +51,7 @@ export class ChatRealtimeService {
     }
     // Every support operator shares the desk's room, so a reply reaches
     // whichever of them has the thread open.
-    if (actor.role === 'support') return 'support';
+    if (actor.role === 'support') return 'support:support';
     return ChatRealtimeService.room('shop', actor.shopId);
   }
 
@@ -88,8 +84,18 @@ export class ChatRealtimeService {
     return this.sockets.has(ChatRealtimeService.room(side, id));
   }
 
+  isPartyOnline(party: ChatParty): boolean {
+    return this.sockets.has(ChatRealtimeService.partyRoom(party));
+  }
+
   lastSeenAt(side: 'buyer' | 'shop', id: string): string | undefined {
     return this.lastSeen.get(ChatRealtimeService.room(side, id))?.toISOString();
+  }
+
+  partyLastSeenAt(party: ChatParty): string | undefined {
+    return this.lastSeen
+      .get(ChatRealtimeService.partyRoom(party))
+      ?.toISOString();
   }
 
   /** Emit an event to one room. No-op until the gateway has attached. */

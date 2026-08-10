@@ -10,7 +10,9 @@ import {
   IsNotEmptyObject,
   IsOptional,
   IsString,
+  IsUUID,
   Matches,
+  Max,
   MaxLength,
   Min,
   ValidateNested,
@@ -24,13 +26,14 @@ import type {
 /** One line the seller adds to an offer. */
 export class OfferItemDto {
   @ApiProperty()
-  @IsString()
+  @IsUUID()
   productId!: string;
 
   @ApiProperty({ example: 2, minimum: 1 })
   @Type(() => Number)
   @IsInt()
   @Min(1)
+  @Max(100)
   qty!: number;
 
   @ApiPropertyOptional({
@@ -42,6 +45,7 @@ export class OfferItemDto {
   @IsOptional()
   @Type(() => Number)
   @Min(0)
+  @Max(10_000_000)
   unitPrice?: number;
 }
 
@@ -64,15 +68,17 @@ export class CreateOfferDto {
   @IsOptional()
   @Type(() => Number)
   @Min(0)
+  @Max(100_000)
   deliveryDhaka?: number;
 
   @ApiPropertyOptional({
     example: 120,
-    description: "Delivery outside Dhaka in ৳. Same rules as deliveryDhaka.",
+    description: 'Delivery outside Dhaka in ৳. Same rules as deliveryDhaka.',
   })
   @IsOptional()
   @Type(() => Number)
   @Min(0)
+  @Max(100_000)
   deliveryOutside?: number;
 
   @ApiPropertyOptional({ example: 'Special price for you - valid today only.' })
@@ -90,7 +96,11 @@ export class CreateOfferDto {
 class OfferAddressDto {
   @ApiProperty() @IsString() @MaxLength(240) line!: string;
   @ApiProperty() @IsString() @MaxLength(240) area!: string;
-  @ApiPropertyOptional() @IsOptional() @IsString() @MaxLength(20) pincode?: string;
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(20)
+  pincode?: string;
 }
 
 /** Buyer accepts or rejects. Accepting needs somewhere to send it and a way to pay. */
@@ -99,14 +109,20 @@ export class RespondOfferDto {
   @IsBoolean()
   accept!: boolean;
 
-  @ApiPropertyOptional({ type: OfferAddressDto, description: 'Required when accepting.' })
+  @ApiPropertyOptional({
+    type: OfferAddressDto,
+    description: 'Required when accepting.',
+  })
   @IsOptional()
   @IsNotEmptyObject()
   @ValidateNested()
   @Type(() => OfferAddressDto)
   address?: OfferAddressDto;
 
-  @ApiPropertyOptional({ example: 'cod', description: 'Required when accepting.' })
+  @ApiPropertyOptional({
+    example: 'cod',
+    description: 'Required when accepting.',
+  })
   @IsOptional()
   @IsString()
   @MaxLength(40)
@@ -139,18 +155,18 @@ export class StartWithCustomerDto {
  * rate among its items. Offers made while the seller set one flat charge
  * carry no per-item rates - that agreed number stands for both zones.
  */
-function zoneRate(
-  row: ChatOrderOfferRow,
-  zone: 'dhaka' | 'outside',
-): number {
+function zoneRate(row: ChatOrderOfferRow, zone: 'dhaka' | 'outside'): number {
   const rated = row.items.filter(
-    (i) => i.deliveryDhakaCents !== undefined || i.deliveryOutsideCents !== undefined,
+    (i) =>
+      i.deliveryDhakaCents !== undefined ||
+      i.deliveryOutsideCents !== undefined,
   );
   if (!rated.length) return row.deliveryCents;
   return Math.max(
     0,
     ...rated.map(
-      (i) => (zone === 'dhaka' ? i.deliveryDhakaCents : i.deliveryOutsideCents) ?? 0,
+      (i) =>
+        (zone === 'dhaka' ? i.deliveryDhakaCents : i.deliveryOutsideCents) ?? 0,
     ),
   );
 }
@@ -182,7 +198,9 @@ export class OfferResponse {
       'and accepts; quote from deliveryDhaka/deliveryOutside before that.',
   })
   delivery!: number;
-  @ApiProperty({ description: 'Items plus delivery once accepted; items only before.' })
+  @ApiProperty({
+    description: 'Items plus delivery once accepted; items only before.',
+  })
   total!: number;
   @ApiProperty({ description: "The offer's delivery charge inside Dhaka." })
   deliveryDhaka!: number;
@@ -205,8 +223,7 @@ export class OfferResponse {
     row: ChatOrderOfferRow,
     extra: { shopName: string; currency: string; orderReference?: string },
   ): OfferResponse {
-    const expired =
-      !!row.expiresAt && row.expiresAt.getTime() <= Date.now();
+    const expired = !!row.expiresAt && row.expiresAt.getTime() <= Date.now();
     return {
       id: row.id,
       conversationId: row.conversationId,

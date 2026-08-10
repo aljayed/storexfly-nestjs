@@ -81,6 +81,9 @@ export class ConversationsController {
       target.kind === 'shop'
         ? { kind: 'shop', id: target.shopId }
         : { kind: 'account', id: target.accountId },
+      // An owner searching by a public handle is speaking personally. Seller
+      // outreach by verified phone/email remains the explicit shop path.
+      actor.role === 'seller',
     );
     return { conversation, created };
   }
@@ -96,7 +99,10 @@ export class ConversationsController {
     @CurrentChatActor() actor: ChatActor,
     @Param('shopId', ParseUUIDPipe) shopId: string,
   ) {
-    return this.conversations.startWithParty(actor, { kind: 'shop', id: shopId });
+    return this.conversations.startWithParty(actor, {
+      kind: 'shop',
+      id: shopId,
+    });
   }
 
   @Get()
@@ -171,6 +177,7 @@ export class ConversationsController {
   }
 
   @Post(':id/messages')
+  @Throttle({ default: { limit: 30, ttl: 60_000 } })
   @ApiOperation({ summary: 'Send a message' })
   send(
     @CurrentChatActor() actor: ChatActor,

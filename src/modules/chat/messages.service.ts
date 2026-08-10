@@ -1,10 +1,23 @@
 import {
   BadRequestException,
+  HttpException,
+  HttpStatus,
   Inject,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { and, desc, eq, inArray, ne, sql, type SQL } from 'drizzle-orm';
+import {
+  and,
+  count,
+  desc,
+  eq,
+  gte,
+  isNotNull,
+  ne,
+  or,
+  sql,
+  type SQL,
+} from 'drizzle-orm';
 import { DRIZZLE } from '../../database/database.constants';
 import type { DrizzleDB } from '../../database/drizzle.types';
 import {
@@ -73,6 +86,7 @@ export interface MessageDto {
   conversationId: string;
   senderId: string;
   senderRole: ChatSenderRole;
+  senderSide: string;
   type: string;
   text?: string;
   product?: ChatProductSnapshotValue;
@@ -88,7 +102,7 @@ export interface MessageDto {
   };
   status: ChatMessageStatus;
   sentAt: string;
-  /** Echoed from SendMessageDto for optimistic-UI reconciliation (not stored). */
+  /** Stored idempotency key, echoed for optimistic-UI reconciliation. */
   clientRef?: string;
 }
 
@@ -158,25 +172,87 @@ export class MessagesService {
           ? 'support'
           : 'seller';
     // The desk writes as itself; see SUPPORT_SENDER_ID.
-    const senderId =
-      actor.role === 'support' ? SUPPORT_SENDER_ID : actor.id;
-    // "Delivered" means the other side is connected. Threads with no shop or
-    // buyer side simply start at 'sent' until their rooms exist.
-    const counterpartId =
-      senderRole === 'customer' ? convo.shopId : convo.buyerId;
-    const counterpartOnline = counterpartId
-      ? this.realtime.isOnline(
-          senderRole === 'customer' ? 'shop' : 'buyer',
-          counterpartId,
-        )
-      : false;
+    const senderId = actor.role === 'support' ? SUPPORT_SENDER_ID : actor.id;
+    const prior = await this.db.query.chatMessages.findFirst({
+      where: and(
+        eq(chatMessages.senderId, senderId),
+        eq(chatMessages.clientRef, dto.clientRef),
+      ),
+    });
+    if (prior) {
+      if (prior.conversationId !== conversationId) {
+        throw new BadRequestException('clientRef was already used');
+      }
+      return { ...this.toDto(prior), clientRef: dto.clientRef };
+    }
+    // The global HTTP throttle is IP-based. Add an identity-based budget so a
+    // signed-in spammer cannot multiply it across proxies or mobile networks.
+    const [recent] = await this.db
+      .select({ value: count() })
+      .from(chatMessages)
+      .where(
+        and(
+          eq(chatMessages.senderId, senderId),
+          // Do not let automatic shop/bot notifications exhaust the human
+          // sender's allowance and become a denial-of-service vector.
+          isNotNull(chatMessages.clientRef),
+          gte(chatMessages.sentAt, new Date(Date.now() - 60_000)),
+        ),
+      );
+    const limit = actor.role === 'support' ? 90 : 30;
+    if ((recent?.value ?? 0) >= limit) {
+      throw new HttpException(
+        'Too many messages. Please wait a moment before sending more.',
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
+    }
+    const senderParties = await this.conversations.partySetFor(actor);
+    let senderParticipant = await sideOf(
+      this.db,
+      conversationId,
+      senderParties,
+    );
+    // Compatibility for a database paused between the expand and contract
+    // migrations. New/generalized threads always have participant rows.
+    if (!senderParticipant && convo.buyerId && convo.shopId) {
+      const classic = buyerShopParties(convo.buyerId, convo.shopId);
+      await writeThreadParticipants(
+        this.db,
+        conversationId,
+        classic[0],
+        classic[1],
+      );
+      senderParticipant = await sideOf(this.db, conversationId, senderParties);
+    }
+    if (!senderParticipant) {
+      throw new NotFoundException('Conversation participant not found');
+    }
+    const counterpartParticipant =
+      await this.db.query.chatParticipants.findFirst({
+        where: and(
+          eq(chatParticipants.conversationId, conversationId),
+          ne(chatParticipants.side, senderParticipant.side),
+        ),
+      });
+    if (!counterpartParticipant) {
+      throw new NotFoundException('Conversation counterpart not found');
+    }
+    const counterpartParty: ChatParty = {
+      kind: counterpartParticipant.kind,
+      id:
+        counterpartParticipant.kind === 'account'
+          ? counterpartParticipant.accountId
+          : counterpartParticipant.kind === 'shop'
+            ? counterpartParticipant.shopId
+            : null,
+    };
+    const counterpartOnline = this.realtime.isPartyOnline(counterpartParty);
 
     // Product and order cards are drawn from the thread's shop; a thread
     // without one can still carry text and attachments.
     const fields = await this.buildTypedFields(dto, convo);
     const preview = this.previewOf(dto.type, fields);
 
-    const senderParties = await this.conversations.partySetFor(actor);
     const row = await this.db.transaction(async (tx) => {
       const [inserted] = await tx
         .insert(chatMessages)
@@ -184,12 +260,18 @@ export class MessagesService {
           conversationId,
           senderRole,
           senderId,
+          senderSide: senderParticipant.side,
+          clientRef: dto.clientRef,
           type: dto.type,
           status: counterpartOnline ? 'delivered' : 'sent',
           deliveredAt: counterpartOnline ? new Date() : null,
           ...fields,
         })
+        .onConflictDoNothing({
+          target: [chatMessages.senderId, chatMessages.clientRef],
+        })
         .returning();
+      if (!inserted) return null;
       await tx
         .update(chatConversations)
         .set({
@@ -198,11 +280,14 @@ export class MessagesService {
             type: dto.type,
             text: preview,
             senderRole,
+            senderSide: senderParticipant.side as 'a' | 'b',
             sentAt: inserted.sentAt.toISOString(),
           },
-          ...(senderRole === 'customer'
+          ...(senderParticipant.kind === 'account' && convo.buyerId
             ? { sellerUnread: sql`${chatConversations.sellerUnread} + 1` }
-            : { buyerUnread: sql`${chatConversations.buyerUnread} + 1` }),
+            : senderParticipant.kind === 'shop' && convo.shopId
+              ? { buyerUnread: sql`${chatConversations.buyerUnread} + 1` }
+              : {}),
         })
         .where(eq(chatConversations.id, conversationId));
 
@@ -212,10 +297,25 @@ export class MessagesService {
       // Resolved from every party this viewer speaks as, not from their role:
       // an owner replying in the console may be the *account* side of the
       // thread, not the shop.
-      const mine = await sideOf(tx, conversationId, senderParties);
-      if (mine) await bumpUnreadForOthers(tx, conversationId, mine.side);
+      await bumpUnreadForOthers(tx, conversationId, senderParticipant.side);
       return inserted;
     });
+
+    // Same sender + clientRef means the first request already committed. Do
+    // not emit again or increment unread a second time.
+    if (!row) {
+      const existing = await this.db.query.chatMessages.findFirst({
+        where: and(
+          eq(chatMessages.senderId, senderId),
+          eq(chatMessages.clientRef, dto.clientRef),
+        ),
+      });
+      if (!existing) throw new NotFoundException('Message could not be saved');
+      if (existing.conversationId !== conversationId) {
+        throw new BadRequestException('clientRef was already used');
+      }
+      return { ...this.toDto(existing), clientRef: dto.clientRef };
+    }
 
     const message = { ...this.toDto(row), clientRef: dto.clientRef };
     // To both participants' rooms, whoever they are - the pair is what the
@@ -231,7 +331,7 @@ export class MessagesService {
     // only - it has nothing useful to say to an image, an offer or an order
     // card, and the agent's API takes a string.
     if (
-      senderRole === 'customer' &&
+      senderParticipant.kind === 'account' &&
       dto.type === 'text' &&
       fields.text &&
       convo.shopId &&
@@ -271,9 +371,10 @@ export class MessagesService {
     });
     if (!upTo) throw new NotFoundException('Message not found');
 
-    const counterpart: ChatSenderRole =
-      actor.role === 'customer' ? 'seller' : 'customer';
     const readerParties = await this.conversations.partySetFor(actor);
+    const reader = await sideOf(this.db, conversationId, readerParties);
+    if (!reader)
+      throw new NotFoundException('Conversation participant not found');
     await this.db.transaction(async (tx) => {
       await tx
         .update(chatMessages)
@@ -281,7 +382,7 @@ export class MessagesService {
         .where(
           and(
             eq(chatMessages.conversationId, conversationId),
-            eq(chatMessages.senderRole, counterpart),
+            ne(chatMessages.senderSide, reader.side),
             // Subquery keeps Postgres's microsecond precision - a JS Date
             // round-trip truncates to ms and would miss the anchor message.
             sql`${chatMessages.sentAt} <= (select m.sent_at from chat_messages m where m.id = ${upTo.id})`,
@@ -291,21 +392,35 @@ export class MessagesService {
       await tx
         .update(chatConversations)
         .set(
-          actor.role === 'customer' ? { buyerUnread: 0 } : { sellerUnread: 0 },
+          reader.kind === 'account' && convo.buyerId
+            ? { buyerUnread: 0 }
+            : reader.kind === 'shop' && convo.shopId
+              ? { sellerUnread: 0 }
+              : {},
         )
         .where(eq(chatConversations.id, conversationId));
 
       // Clear the reader's own side, whichever of the two they are here.
-      const mine = await sideOf(tx, conversationId, readerParties);
-      if (mine) await clearUnreadFor(tx, conversationId, mine.side);
+      await clearUnreadFor(tx, conversationId, reader.side);
     });
 
     // Read receipt to the author's side; sidebar refresh to both.
-    const authorRoom =
-      counterpart === 'customer'
-        ? convo.buyerId && ChatRealtimeService.room('buyer', convo.buyerId)
-        : convo.shopId && ChatRealtimeService.room('shop', convo.shopId);
-    if (authorRoom) {
+    const author = await this.db.query.chatParticipants.findFirst({
+      where: and(
+        eq(chatParticipants.conversationId, conversationId),
+        ne(chatParticipants.side, reader.side),
+      ),
+    });
+    if (author) {
+      const authorRoom = ChatRealtimeService.partyRoom({
+        kind: author.kind,
+        id:
+          author.kind === 'account'
+            ? author.accountId
+            : author.kind === 'shop'
+              ? author.shopId
+              : null,
+      });
       this.realtime.emitTo(authorRoom, 'message.status', {
         conversationId,
         status: 'read',
@@ -315,10 +430,6 @@ export class MessagesService {
     await this.conversations.broadcastUpdated(conversationId);
   }
 
-  /**
-   * Flip this actor's pending incoming messages to `delivered` (called when
-   * they connect) and notify each author's side.
-   */
   /**
    * Rooms for both sides of a thread. Falls back to the buyer/shop columns for
    * threads written before participants existed.
@@ -350,49 +461,57 @@ export class MessagesService {
   }
 
   async markDeliveredOnConnect(actor: ChatActor): Promise<void> {
-    const counterpart: ChatSenderRole =
-      actor.role === 'customer' ? 'seller' : 'customer';
-    // Support threads carry no buyer/shop columns to sweep on; their delivery
-    // marks come with the participant migration of this query.
-    if (actor.role === 'support') return;
-    const sideFilter =
-      actor.role === 'customer'
-        ? eq(chatConversations.buyerId, actor.id)
-        : eq(chatConversations.shopId, actor.shopId);
-
-    const pending = await this.db
-      .update(chatMessages)
-      .set({ status: 'delivered', deliveredAt: new Date() })
-      .where(
-        and(
-          inArray(
-            chatMessages.conversationId,
-            this.db
-              .select({ id: chatConversations.id })
-              .from(chatConversations)
-              .where(sideFilter),
-          ),
-          eq(chatMessages.senderRole, counterpart),
-          eq(chatMessages.status, 'sent'),
+    const parties = await this.conversations.partySetFor(actor);
+    const recipients = await this.db.query.chatParticipants.findMany({
+      where: or(
+        ...parties.map((p) =>
+          p.kind === 'account'
+            ? and(
+                eq(chatParticipants.kind, 'account'),
+                eq(chatParticipants.accountId, p.id as string),
+              )
+            : p.kind === 'shop'
+              ? and(
+                  eq(chatParticipants.kind, 'shop'),
+                  eq(chatParticipants.shopId, p.id as string),
+                )
+              : eq(chatParticipants.kind, 'support'),
         ),
-      )
-      .returning({ conversationId: chatMessages.conversationId });
-
-    const convoIds = [...new Set(pending.map((p) => p.conversationId))];
-    for (const conversationId of convoIds) {
-      const convo = await this.db.query.chatConversations.findFirst({
-        where: eq(chatConversations.id, conversationId),
+      ),
+    });
+    for (const recipient of recipients) {
+      const pending = await this.db
+        .update(chatMessages)
+        .set({ status: 'delivered', deliveredAt: new Date() })
+        .where(
+          and(
+            eq(chatMessages.conversationId, recipient.conversationId),
+            ne(chatMessages.senderSide, recipient.side),
+            eq(chatMessages.status, 'sent'),
+          ),
+        )
+        .returning({ id: chatMessages.id });
+      if (!pending.length) continue;
+      const author = await this.db.query.chatParticipants.findFirst({
+        where: and(
+          eq(chatParticipants.conversationId, recipient.conversationId),
+          ne(chatParticipants.side, recipient.side),
+        ),
       });
-      if (!convo) continue;
-      const room =
-        counterpart === 'customer'
-          ? convo.buyerId && ChatRealtimeService.room('buyer', convo.buyerId)
-          : convo.shopId && ChatRealtimeService.room('shop', convo.shopId);
-      if (!room) continue;
-      this.realtime.emitTo(room, 'message.status', {
-        conversationId,
-        status: 'delivered',
-      });
+      if (!author) continue;
+      this.realtime.emitTo(
+        ChatRealtimeService.partyRoom({
+          kind: author.kind,
+          id:
+            author.kind === 'account'
+              ? author.accountId
+              : author.kind === 'shop'
+                ? author.shopId
+                : null,
+        }),
+        'message.status',
+        { conversationId: recipient.conversationId, status: 'delivered' },
+      );
     }
   }
 
@@ -463,7 +582,6 @@ export class MessagesService {
             'This conversation has no order to reference',
           );
         }
-        const orderShop = convo.shop;
         const orderBuyer = convo.buyer;
         // The order must belong to this shop AND to this conversation's buyer
         // (matched by checkout email), whichever side references it.
@@ -582,7 +700,7 @@ export class MessagesService {
         pairKey: pairKeyFor(parties[0], parties[1]),
       })
       .onConflictDoNothing({
-        target: [chatConversations.buyerId, chatConversations.shopId],
+        target: chatConversations.pairKey,
       });
     const convo = await this.db.query.chatConversations.findFirst({
       where: and(
@@ -612,6 +730,7 @@ export class MessagesService {
           conversationId: convo.id,
           senderRole: 'seller',
           senderId,
+          senderSide: 'b',
           type: payload.type,
           status: buyerOnline ? 'delivered' : 'sent',
           deliveredAt: buyerOnline ? new Date() : null,
@@ -626,11 +745,13 @@ export class MessagesService {
             type: payload.type,
             text: preview,
             senderRole: 'seller',
+            senderSide: 'b',
             sentAt: inserted.sentAt.toISOString(),
           },
           buyerUnread: sql`${chatConversations.buyerUnread} + 1`,
         })
         .where(eq(chatConversations.id, convo.id));
+      await bumpUnreadForOthers(tx, convo.id, 'b');
       return inserted;
     });
 
@@ -656,7 +777,7 @@ export class MessagesService {
     adjustmentId: string,
     status: ChatAdjustmentSnapshotValue['status'],
   ): Promise<void> {
-    await this.db
+    const rows = await this.db
       .update(chatMessages)
       .set({
         adjustment: sql`jsonb_set(${chatMessages.adjustment}, '{status}', ${JSON.stringify(
@@ -668,7 +789,9 @@ export class MessagesService {
           eq(chatMessages.type, 'adjustment'),
           sql`${chatMessages.adjustment}->>'adjustmentId' = ${adjustmentId}`,
         ),
-      );
+      )
+      .returning();
+    await this.emitUpdatedMessages(rows);
   }
 
   /**
@@ -680,7 +803,7 @@ export class MessagesService {
     offerId: string,
     status: ChatOfferSnapshotValue['status'],
   ): Promise<void> {
-    await this.db
+    const rows = await this.db
       .update(chatMessages)
       .set({
         offer: sql`jsonb_set(${chatMessages.offer}, '{status}', ${JSON.stringify(
@@ -692,7 +815,26 @@ export class MessagesService {
           eq(chatMessages.type, 'offer'),
           sql`${chatMessages.offer}->>'offerId' = ${offerId}`,
         ),
-      );
+      )
+      .returning();
+    await this.emitUpdatedMessages(rows);
+  }
+
+  /** Fan out an in-place card change (offer/adjustment outcome). */
+  private async emitUpdatedMessages(rows: ChatMessageRow[]): Promise<void> {
+    for (const row of rows) {
+      const convo = await this.db.query.chatConversations.findFirst({
+        where: eq(chatConversations.id, row.conversationId),
+      });
+      if (!convo) continue;
+      const message = this.toDto(row);
+      for (const room of await this.threadRooms(row.conversationId, convo)) {
+        this.realtime.emitTo(room, 'message.updated', {
+          conversationId: row.conversationId,
+          message,
+        });
+      }
+    }
   }
 
   private toDto(row: ChatMessageRow): MessageDto {
@@ -701,6 +843,8 @@ export class MessagesService {
       conversationId: row.conversationId,
       senderId: row.senderId,
       senderRole: row.senderRole,
+      senderSide: row.senderSide,
+      clientRef: row.clientRef ?? undefined,
       type: row.type,
       text: row.text ?? undefined,
       product: row.product ?? undefined,

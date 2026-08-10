@@ -1,6 +1,7 @@
-import { relations } from 'drizzle-orm';
+import { relations, sql } from 'drizzle-orm';
 import {
   boolean,
+  check,
   index,
   integer,
   jsonb,
@@ -79,6 +80,7 @@ export interface ChatMessagePreviewValue {
   type: ChatMessageType;
   text: string;
   senderRole: ChatSenderRole;
+  senderSide?: 'a' | 'b';
   sentAt: string;
 }
 
@@ -249,10 +251,7 @@ export const chatConversations = pgTable(
       .$onUpdate(() => new Date()),
   },
   (table) => [
-    uniqueIndex('chat_conversations_buyer_shop_unique_idx').on(
-      table.buyerId,
-      table.shopId,
-    ),
+    uniqueIndex('chat_conversations_pair_key_unique_idx').on(table.pairKey),
     index('chat_conversations_shop_idx').on(table.shopId),
     index('chat_conversations_buyer_idx').on(table.buyerId),
   ],
@@ -297,6 +296,13 @@ export const chatParticipants = pgTable(
     ),
     index('chat_participants_account_idx').on(table.accountId),
     index('chat_participants_shop_idx').on(table.shopId),
+    check('chat_participants_side_check', sql`${table.side} in ('a', 'b')`),
+    check(
+      'chat_participants_kind_ref_check',
+      sql`(${table.kind} = 'account' and ${table.accountId} is not null and ${table.shopId} is null)
+          or (${table.kind} = 'shop' and ${table.shopId} is not null and ${table.accountId} is null)
+          or (${table.kind} = 'support' and ${table.accountId} is null and ${table.shopId} is null)`,
+    ),
   ],
 );
 
@@ -312,6 +318,12 @@ export const chatMessages = pgTable(
     // the shop replies on its behalf); the support desk's fixed id for Hoomri
     // Support, which is one desk rather than one row per operator.
     senderId: uuid('sender_id').notNull(),
+    /** Participant slot that authored the message. Unlike senderRole this is
+     * stable when a shop owner opens the same merged inbox from their account
+     * profile and from the shop console. */
+    senderSide: varchar('sender_side', { length: 1 }).notNull(),
+    /** Sender-generated idempotency key; null for system/bot messages. */
+    clientRef: varchar('client_ref', { length: 64 }),
     type: chatMessageTypeEnum('type').notNull(),
     text: text('text'),
     product: jsonb('product').$type<ChatProductSnapshotValue>(),
@@ -328,6 +340,15 @@ export const chatMessages = pgTable(
     index('chat_messages_conversation_sent_idx').on(
       table.conversationId,
       table.sentAt,
+    ),
+    index('chat_messages_sender_sent_idx').on(table.senderId, table.sentAt),
+    uniqueIndex('chat_messages_sender_client_ref_idx').on(
+      table.senderId,
+      table.clientRef,
+    ),
+    check(
+      'chat_messages_sender_side_check',
+      sql`${table.senderSide} in ('a', 'b')`,
     ),
   ],
 );

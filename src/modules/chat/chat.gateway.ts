@@ -9,7 +9,7 @@ import {
   WebSocketGateway,
   WebSocketServer,
 } from '@nestjs/websockets';
-import { eq } from 'drizzle-orm';
+import { and, eq, inArray } from 'drizzle-orm';
 import { Inject } from '@nestjs/common';
 import type { Server, Socket } from 'socket.io';
 import { chatParticipants } from '../../database/schema';
@@ -17,6 +17,8 @@ import { DRIZZLE } from '../../database/database.constants';
 import type { DrizzleDB } from '../../database/drizzle.types';
 import { chatConversations } from '../../database/schema';
 import type { ChatActor } from './chat-actor';
+import type { ChatParty } from './chat-parties';
+import { isParty } from './participant-unread.util';
 import { ChatRealtimeService } from './chat-realtime.service';
 import { ConversationsService } from './conversations.service';
 import { ChatTokenService } from './chat-token.service';
@@ -96,16 +98,18 @@ export class ChatGateway
       const parties = await this.conversations.partySetFor(actor);
       const rooms = ChatRealtimeService.actorRooms(parties);
       client.data.rooms = rooms;
-      await Promise.all(rooms.map((r) => client.join(r)));
-      // Presence is still tracked on the identity's own room.
-      const room = ChatRealtimeService.actorRoom(actor);
-      const cameOnline = this.realtime.connected(room, client.id);
+      for (const room of rooms) await client.join(room);
+      const cameOnline = new Set(
+        rooms.filter((room) => this.realtime.connected(room, client.id)),
+      );
 
       // Anything sent while this side was away is now delivered.
       await this.messages.markDeliveredOnConnect(actor);
 
-      if (cameOnline) {
-        await this.broadcastPresence(actor, true);
+      for (const party of parties) {
+        if (cameOnline.has(ChatRealtimeService.partyRoom(party))) {
+          await this.broadcastPartyPresence(party, true);
+        }
       }
     } catch {
       client.emit('error', { message: 'Unauthorized' });
@@ -116,10 +120,12 @@ export class ChatGateway
   async handleDisconnect(client: ChatSocket): Promise<void> {
     const actor = client.data.actor;
     if (!actor) return;
-    const room = ChatRealtimeService.actorRoom(actor);
-    const wentOffline = this.realtime.disconnected(room, client.id);
-    if (wentOffline) {
-      await this.broadcastPresence(actor, false);
+    const parties = await this.conversations.partySetFor(actor);
+    for (const party of parties) {
+      const room = ChatRealtimeService.partyRoom(party);
+      if (this.realtime.disconnected(room, client.id)) {
+        await this.broadcastPartyPresence(party, false);
+      }
     }
   }
 
@@ -138,35 +144,31 @@ export class ChatGateway
     // Typing is a per-thread signal, so membership is the same question the
     // inbox asks: is this viewer one of the two parties?
     const parties = await this.conversations.partySetFor(actor);
-    const mine = await this.db.query.chatParticipants.findMany({
+    const participants = await this.db.query.chatParticipants.findMany({
       where: eq(chatParticipants.conversationId, convo.id),
-      columns: { kind: true, accountId: true, shopId: true },
     });
-    const isMember = mine.length
-      ? mine.some((side) =>
-          parties.some((p) =>
-            p.kind === 'account'
-              ? side.kind === 'account' && side.accountId === p.id
-              : p.kind === 'shop'
-                ? side.kind === 'shop' && side.shopId === p.id
-                : side.kind === 'support',
-          ),
-        )
-      : actor.role === 'customer'
-        ? convo.buyerId === actor.id
-        : actor.role === 'seller' && convo.shopId === actor.shopId;
-    if (!isMember) return;
-    // Threads without a shop or buyer side get their typing indicator once
-    // the party rooms land there too; nothing to notify until then.
-    const counterpartRoom =
-      actor.role === 'customer'
-        ? convo.shopId && ChatRealtimeService.room('shop', convo.shopId)
-        : convo.buyerId && ChatRealtimeService.room('buyer', convo.buyerId);
-    if (!counterpartRoom) return;
-    this.realtime.emitTo(counterpartRoom, 'typing', {
-      conversationId: convo.id,
-      isTyping: body.isTyping === true,
-    });
+    const mine = participants.find((side) =>
+      parties.some((party) => isParty(side, party)),
+    );
+    if (!mine) return;
+    const counterpart = participants.find((side) => side.side !== mine.side);
+    if (!counterpart) return;
+    this.realtime.emitTo(
+      ChatRealtimeService.partyRoom({
+        kind: counterpart.kind,
+        id:
+          counterpart.kind === 'account'
+            ? counterpart.accountId
+            : counterpart.kind === 'shop'
+              ? counterpart.shopId
+              : null,
+      }),
+      'typing',
+      {
+        conversationId: convo.id,
+        isTyping: body.isTyping === true,
+      },
+    );
   }
 
   @SubscribeMessage('read')
@@ -192,41 +194,51 @@ export class ChatGateway
     }
   }
 
-  /** Tell every counterpart of this actor that they went on/offline. */
-  private async broadcastPresence(
-    actor: ChatActor,
+  /** Tell every counterpart of one party that it went on/offline. */
+  private async broadcastPartyPresence(
+    party: ChatParty,
     online: boolean,
   ): Promise<void> {
-    const isCustomer = actor.role === 'customer';
     // Support has no presence to broadcast - the desk is not "online" the way
     // a person or a shop is.
-    if (actor.role === 'support') return;
-    const convos = await this.db.query.chatConversations.findMany({
-      where: isCustomer
-        ? eq(chatConversations.buyerId, actor.id)
-        : eq(chatConversations.shopId, actor.shopId),
-      columns: { buyerId: true, shopId: true },
+    if (party.kind === 'support') return;
+    const mine = await this.db.query.chatParticipants.findMany({
+      where:
+        party.kind === 'account'
+          ? and(
+              eq(chatParticipants.kind, 'account'),
+              eq(chatParticipants.accountId, party.id as string),
+            )
+          : and(
+              eq(chatParticipants.kind, 'shop'),
+              eq(chatParticipants.shopId, party.id as string),
+            ),
+    });
+    if (!mine.length) return;
+    const conversationIds = [...new Set(mine.map((p) => p.conversationId))];
+    const participants = await this.db.query.chatParticipants.findMany({
+      where: inArray(chatParticipants.conversationId, conversationIds),
     });
     const payload = {
-      role: actor.role,
-      // Sellers present as their shop (any staff socket online = shop online).
-      id: isCustomer ? actor.id : actor.shopId,
+      kind: party.kind,
+      id: party.id as string,
       online,
-      lastSeenAt: online
-        ? undefined
-        : this.realtime.lastSeenAt(
-            isCustomer ? 'buyer' : 'shop',
-            isCustomer ? actor.id : actor.shopId,
-          ),
+      lastSeenAt: online ? undefined : this.realtime.partyLastSeenAt(party),
     };
     const counterpartRooms = new Set(
-      convos
-        .map((c) =>
-          isCustomer
-            ? c.shopId && ChatRealtimeService.room('shop', c.shopId)
-            : c.buyerId && ChatRealtimeService.room('buyer', c.buyerId),
-        )
-        .filter((room): room is string => !!room),
+      participants
+        .filter((p) => !isParty(p, party))
+        .map((p) =>
+          ChatRealtimeService.partyRoom({
+            kind: p.kind,
+            id:
+              p.kind === 'account'
+                ? p.accountId
+                : p.kind === 'shop'
+                  ? p.shopId
+                  : null,
+          }),
+        ),
     );
     for (const room of counterpartRooms) {
       this.realtime.emitTo(room, 'presence', payload);

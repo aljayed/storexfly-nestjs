@@ -4,9 +4,10 @@ import {
   ForbiddenException,
   Inject,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
-import { and, eq, or, sql } from 'drizzle-orm';
+import { and, count, eq, inArray, or, sql } from 'drizzle-orm';
 import { dollarsToCents } from '../../common/utils/money.util';
 import { DRIZZLE } from '../../database/database.constants';
 import { pairKeyFor } from '../chat/chat-parties';
@@ -17,6 +18,7 @@ import {
 import type { DrizzleDB } from '../../database/drizzle.types';
 import {
   chatConversations,
+  chatParticipants,
   chatOrderOffers,
   orders,
   products,
@@ -40,6 +42,10 @@ function normalizePhone(raw: string | null | undefined): string {
   return (raw ?? '').replace(/\D/g, '').replace(/^880/, '').replace(/^0+/, '');
 }
 
+// PostgreSQL stores order amounts as 32-bit cents. Keep offers comfortably
+// inside that contract and reject implausible/scam totals before persistence.
+const MAX_OFFER_SUBTOTAL_CENTS = 1_000_000_000; // ৳10,000,000
+
 /**
  * Order offers in chat, plus the seller-initiated thread lookup.
  *
@@ -50,6 +56,8 @@ function normalizePhone(raw: string | null | undefined): string {
  */
 @Injectable()
 export class ChatOffersService {
+  private readonly logger = new Logger(ChatOffersService.name);
+
   constructor(
     @Inject(DRIZZLE) private readonly db: DrizzleDB,
     private readonly messages: MessagesService,
@@ -88,11 +96,12 @@ export class ChatOffersService {
     if (!phone && !email) return { found: false, reason: 'no_input' };
 
     const candidates = await this.db.query.users.findMany({
-      where: phone && email
-        ? or(eq(users.phone, phone), eq(users.email, email))
-        : phone
-          ? eq(users.phone, phone)
-          : eq(users.email, email),
+      where:
+        phone && email
+          ? or(eq(users.phone, phone), eq(users.email, email))
+          : phone
+            ? eq(users.phone, phone)
+            : eq(users.email, email),
       columns: {
         id: true,
         name: true,
@@ -116,7 +125,10 @@ export class ChatOffersService {
         where: and(
           eq(sql`customers.shop_id`, actor.shopId),
           phone && email
-            ? or(sql`customers.phone = ${phone}`, sql`lower(customers.email) = ${email}`)
+            ? or(
+                sql`customers.phone = ${phone}`,
+                sql`lower(customers.email) = ${email}`,
+              )
             : phone
               ? sql`customers.phone = ${phone}`
               : sql`lower(customers.email) = ${email}`,
@@ -124,7 +136,11 @@ export class ChatOffersService {
         columns: { name: true },
       });
       return customer
-        ? { found: false, reason: 'no_account_but_customer', customerName: customer.name }
+        ? {
+            found: false,
+            reason: 'no_account_but_customer',
+            customerName: customer.name,
+          }
         : { found: false, reason: 'no_account' };
     }
 
@@ -137,13 +153,10 @@ export class ChatOffersService {
         pairKey: pairKeyFor(parties[0], parties[1]),
       })
       .onConflictDoNothing({
-        target: [chatConversations.buyerId, chatConversations.shopId],
+        target: chatConversations.pairKey,
       });
     const convo = await this.db.query.chatConversations.findFirst({
-      where: and(
-        eq(chatConversations.buyerId, match.id),
-        eq(chatConversations.shopId, actor.shopId),
-      ),
+      where: eq(chatConversations.pairKey, pairKeyFor(parties[0], parties[1])),
       columns: { id: true },
     });
     if (convo) {
@@ -163,16 +176,29 @@ export class ChatOffersService {
       where: eq(chatConversations.id, conversationId),
     });
     if (!convo) throw new NotFoundException('Conversation not found');
-    if (convo.shopId !== actor.shopId) {
-      throw new ForbiddenException('Not your conversation');
+    const parties = await this.commerceParties(conversationId);
+    if (parties.shopId !== actor.shopId) {
+      // Match the rest of chat: do not reveal whether a guessed thread exists.
+      throw new NotFoundException('Conversation not found');
+    }
+    const [pending] = await this.db
+      .select({ value: count() })
+      .from(chatOrderOffers)
+      .where(
+        and(
+          eq(chatOrderOffers.conversationId, conversationId),
+          eq(chatOrderOffers.status, 'pending'),
+        ),
+      );
+    if ((pending?.value ?? 0) >= 5) {
+      throw new ConflictException(
+        'Withdraw an existing offer before sending another one',
+      );
     }
 
     const ids = [...new Set(dto.items.map((i) => i.productId))];
     const rows = await this.db.query.products.findMany({
-      where: and(
-        sql`${products.id} = any(${sql.raw(`array[${ids.map((i) => `'${i}'`).join(',')}]::uuid[]`)})`,
-        eq(products.shopId, actor.shopId),
-      ),
+      where: and(inArray(products.id, ids), eq(products.shopId, actor.shopId)),
     });
     const byId = new Map(rows.map((p) => [p.id, p]));
 
@@ -181,9 +207,13 @@ export class ChatOffersService {
     // snapshot, so the accept-time lookup - highest rate among the items -
     // finds the agreed number whichever line it reads.
     const overrideDhaka =
-      dto.deliveryDhaka === undefined ? undefined : dollarsToCents(dto.deliveryDhaka);
+      dto.deliveryDhaka === undefined
+        ? undefined
+        : dollarsToCents(dto.deliveryDhaka);
     const overrideOutside =
-      dto.deliveryOutside === undefined ? undefined : dollarsToCents(dto.deliveryOutside);
+      dto.deliveryOutside === undefined
+        ? undefined
+        : dollarsToCents(dto.deliveryOutside);
 
     const items: ChatOfferItemValue[] = [];
     for (const pick of dto.items) {
@@ -230,6 +260,9 @@ export class ChatOffersService {
     if (itemsSubtotalCents <= 0) {
       throw new BadRequestException('An offer must come to more than 0');
     }
+    if (itemsSubtotalCents > MAX_OFFER_SUBTOTAL_CENTS) {
+      throw new BadRequestException('That offer total is too large');
+    }
     // Delivery is not the seller's to set here: it depends on where this is
     // going, and nobody knows that until the buyer confirms their district on
     // the View screen. The offer therefore carries the items only, and the
@@ -245,18 +278,12 @@ export class ChatOffersService {
     // An offer is a shop selling to a buyer, and accepting one places a real
     // order at these prices. A thread without both sides - Hoomri Support, or
     // two people talking - has nobody to bill and nothing to fulfil it.
-    if (!convo.buyerId) {
-      throw new BadRequestException(
-        'Offers can only be sent in a conversation with a customer',
-      );
-    }
-
     const [row] = await this.db
       .insert(chatOrderOffers)
       .values({
         conversationId,
         shopId: actor.shopId,
-        buyerId: convo.buyerId,
+        buyerId: parties.buyerId,
         items,
         itemsSubtotalCents,
         deliveryCents,
@@ -267,7 +294,7 @@ export class ChatOffersService {
       .returning();
 
     const shop = await this.shopMeta(actor.shopId);
-    await this.messages.postShopMessage(actor.shopId, convo.buyerId, {
+    await this.messages.postShopMessage(actor.shopId, parties.buyerId, {
       type: 'offer',
       offer: {
         offerId: row.id,
@@ -318,7 +345,9 @@ export class ChatOffersService {
     legacyCents: number,
   ): number {
     const rated = items.filter(
-      (i) => i.deliveryDhakaCents !== undefined || i.deliveryOutsideCents !== undefined,
+      (i) =>
+        i.deliveryDhakaCents !== undefined ||
+        i.deliveryOutsideCents !== undefined,
     );
     if (!rated.length) return legacyCents;
     const inDhaka = area.trim().toLowerCase() === 'dhaka';
@@ -344,7 +373,7 @@ export class ChatOffersService {
     offerId: string,
   ): Promise<OfferResponse> {
     const row = await this.mustFind(offerId);
-    await this.assertParticipant(actor, row);
+    this.assertParticipant(actor, row);
     const shop = await this.shopMeta(row.shopId);
     let orderReference: string | undefined;
     if (row.orderId) {
@@ -370,11 +399,18 @@ export class ChatOffersService {
    * of a duplicate order.
    */
   async respond(
-    actor: CustomerActor,
+    actor: CustomerActor | SellerActor,
     offerId: string,
     dto: RespondOfferDto,
-  ): Promise<{ offer: OfferResponse; paymentUrl?: string; orderReference?: string }> {
+  ): Promise<{
+    offer: OfferResponse;
+    paymentUrl?: string;
+    orderReference?: string;
+  }> {
     const row = await this.mustFind(offerId);
+    // A shop owner may open their personal (account-side) thread from the
+    // merged console inbox. Their admin id equals the owner account id; staff
+    // ids do not, so this does not grant staff buyer powers.
     if (row.buyerId !== actor.id) {
       throw new ForbiddenException('This offer is not addressed to you');
     }
@@ -413,7 +449,10 @@ export class ChatOffersService {
       .update(chatOrderOffers)
       .set({ status: 'accepted', respondedAt: new Date() })
       .where(
-        and(eq(chatOrderOffers.id, row.id), eq(chatOrderOffers.status, 'pending')),
+        and(
+          eq(chatOrderOffers.id, row.id),
+          eq(chatOrderOffers.status, 'pending'),
+        ),
       )
       .returning({ id: chatOrderOffers.id });
     if (!claimed.length) {
@@ -436,7 +475,7 @@ export class ChatOffersService {
     );
     const totalCents = row.itemsSubtotalCents + deliveryCents;
 
-    let placed;
+    let placed: Awaited<ReturnType<OrdersService['placeFromOffer']>>;
     try {
       placed = await this.orders.placeFromOffer({
         offer: {
@@ -474,11 +513,21 @@ export class ChatOffersService {
       .where(eq(chatOrderOffers.id, row.id))
       .returning();
 
-    await this.messages.updateOfferStatus(row.id, 'accepted');
-    await this.messages.postShopMessage(row.shopId, row.buyerId, {
-      type: 'system',
-      text: `Offer accepted - order ${placed.order.reference} placed.`,
-    });
+    // The order and accepted offer are authoritative at this point. Realtime
+    // fan-out is best effort: failing it must not turn a successful purchase
+    // into an HTTP error that tempts the buyer to retry payment/order creation.
+    try {
+      await this.messages.updateOfferStatus(row.id, 'accepted');
+      await this.messages.postShopMessage(row.shopId, row.buyerId, {
+        type: 'system',
+        text: `Offer accepted - order ${placed.order.reference} placed.`,
+      });
+    } catch (error) {
+      this.logger.warn(
+        `Order ${placed.order.reference} was placed but its chat notification failed`,
+        error instanceof Error ? error.stack : undefined,
+      );
+    }
 
     const shop = await this.shopMeta(row.shopId);
     return {
@@ -512,6 +561,30 @@ export class ChatOffersService {
 
   // ── helpers ──────────────────────────────────────────────────────
 
+  /** Resolve the commercial parties from the authoritative participant rows.
+   * Offers are deliberately impossible in support or person-to-person chat. */
+  private async commerceParties(
+    conversationId: string,
+  ): Promise<{ shopId: string; buyerId: string }> {
+    const rows = await this.db.query.chatParticipants.findMany({
+      where: eq(chatParticipants.conversationId, conversationId),
+    });
+    const shop = rows.find((p) => p.kind === 'shop' && p.shopId);
+    const accounts = rows.filter((p) => p.kind === 'account' && p.accountId);
+    const hasSupport = rows.some((p) => p.kind === 'support');
+    if (
+      !shop?.shopId ||
+      accounts.length !== 1 ||
+      hasSupport ||
+      rows.length !== 2
+    ) {
+      throw new BadRequestException(
+        'Offers can only be sent in a buyer-to-shop conversation',
+      );
+    }
+    return { shopId: shop.shopId, buyerId: accounts[0].accountId as string };
+  }
+
   private async mustFind(offerId: string): Promise<ChatOrderOfferRow> {
     const row = await this.db.query.chatOrderOffers.findFirst({
       where: eq(chatOrderOffers.id, offerId),
@@ -520,13 +593,13 @@ export class ChatOffersService {
     return row;
   }
 
-  private async assertParticipant(
+  private assertParticipant(
     actor: CustomerActor | SellerActor,
     row: ChatOrderOfferRow,
-  ): Promise<void> {
+  ): void {
     const ok =
       actor.role === 'seller'
-        ? row.shopId === actor.shopId
+        ? row.shopId === actor.shopId || row.buyerId === actor.id
         : row.buyerId === actor.id;
     if (!ok) throw new ForbiddenException('Not your offer');
   }
@@ -538,8 +611,16 @@ export class ChatOffersService {
     const [row] = await this.db
       .update(chatOrderOffers)
       .set({ status, respondedAt: new Date() })
-      .where(eq(chatOrderOffers.id, offerId))
+      .where(
+        and(
+          eq(chatOrderOffers.id, offerId),
+          eq(chatOrderOffers.status, 'pending'),
+        ),
+      )
       .returning();
+    if (!row) {
+      throw new ConflictException('This offer has already been answered');
+    }
     return row;
   }
 
