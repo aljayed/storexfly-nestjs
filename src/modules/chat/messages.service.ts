@@ -29,6 +29,7 @@ import type { ChatActor } from './chat-actor';
 import { BotReplyService } from './bot-reply.service';
 import { ChatRealtimeService } from './chat-realtime.service';
 import { pairKeyFor, type ChatParty } from './chat-parties';
+import { SUPPORT_SENDER_ID } from './support.constants';
 import {
   bumpUnreadForOthers,
   clearUnreadFor,
@@ -151,7 +152,14 @@ export class MessagesService {
     );
 
     const senderRole: ChatSenderRole =
-      actor.role === 'customer' ? 'customer' : 'seller';
+      actor.role === 'customer'
+        ? 'customer'
+        : actor.role === 'support'
+          ? 'support'
+          : 'seller';
+    // The desk writes as itself; see SUPPORT_SENDER_ID.
+    const senderId =
+      actor.role === 'support' ? SUPPORT_SENDER_ID : actor.id;
     // "Delivered" means the other side is connected. Threads with no shop or
     // buyer side simply start at 'sent' until their rooms exist.
     const counterpartId =
@@ -175,7 +183,7 @@ export class MessagesService {
         .values({
           conversationId,
           senderRole,
-          senderId: actor.id,
+          senderId,
           type: dto.type,
           status: counterpartOnline ? 'delivered' : 'sent',
           deliveredAt: counterpartOnline ? new Date() : null,
@@ -344,6 +352,9 @@ export class MessagesService {
   async markDeliveredOnConnect(actor: ChatActor): Promise<void> {
     const counterpart: ChatSenderRole =
       actor.role === 'customer' ? 'seller' : 'customer';
+    // Support threads carry no buyer/shop columns to sweep on; their delivery
+    // marks come with the participant migration of this query.
+    if (actor.role === 'support') return;
     const sideFilter =
       actor.role === 'customer'
         ? eq(chatConversations.buyerId, actor.id)

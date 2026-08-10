@@ -23,7 +23,23 @@ export interface SellerActor {
   name: string;
 }
 
-export type ChatActor = CustomerActor | SellerActor;
+/**
+ * Hoomri Support - the platform's own desk.
+ *
+ * One desk rather than one row per operator: a seller writes to "Hoomri
+ * Support", not to whoever happens to be on shift, and the thread outlives any
+ * individual's account. `id` is the platform operator answering, kept for the
+ * audit trail on each message.
+ */
+export interface SupportActor {
+  role: 'support';
+  /** The platform operator behind this session. */
+  id: string;
+  name: string;
+  email: string;
+}
+
+export type ChatActor = CustomerActor | SellerActor | SupportActor;
 
 export interface RequestWithChatActor extends Request {
   chatActor: ChatActor;

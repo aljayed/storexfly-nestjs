@@ -24,6 +24,7 @@ import {
   MarkReadDto,
   SendMessageDto,
   StartConversationDto,
+  StartWithHandleDto,
 } from './dto/chat.dto';
 import { HandleLookupService } from './handle-lookup.service';
 import { MessagesService } from './messages.service';
@@ -59,6 +60,43 @@ export class ConversationsController {
     const target = await this.handles.resolve(handle);
     if (!target) throw new NotFoundException('No one uses that name');
     return target;
+  }
+
+  /**
+   * Open (or return) a thread with whoever holds a handle - a storefront, or a
+   * person. Hoomri Support uses the same route, which is what makes a support
+   * thread ordinary rather than a special case.
+   */
+  @Post('with')
+  @Throttle({ default: { limit: 20, ttl: 60_000 } })
+  @ApiOperation({ summary: 'Start (or return) a thread with a handle' })
+  async startWith(
+    @CurrentChatActor() actor: ChatActor,
+    @Body() dto: StartWithHandleDto,
+  ) {
+    const target = await this.handles.resolve(dto.handle);
+    if (!target) throw new NotFoundException('No one uses that name');
+    const { conversation, created } = await this.conversations.startWithParty(
+      actor,
+      target.kind === 'shop'
+        ? { kind: 'shop', id: target.shopId }
+        : { kind: 'account', id: target.accountId },
+    );
+    return { conversation, created };
+  }
+
+  /**
+   * Hoomri Support opening a thread with a shop, from the platform console.
+   * By shop id rather than handle, because that is what the console has.
+   */
+  @ChatRole('support')
+  @Post('support/shop/:shopId')
+  @ApiOperation({ summary: 'Support: start (or return) a thread with a shop' })
+  startSupportThread(
+    @CurrentChatActor() actor: ChatActor,
+    @Param('shopId', ParseUUIDPipe) shopId: string,
+  ) {
+    return this.conversations.startWithParty(actor, { kind: 'shop', id: shopId });
   }
 
   @Get()

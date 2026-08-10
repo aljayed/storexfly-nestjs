@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ForbiddenException,
   Inject,
   Injectable,
@@ -16,11 +17,19 @@ import {
   products,
   shops,
   type ChatConversationRow,
+  type ChatParticipantRow,
 } from '../../database/schema';
 import { centsToDollars } from '../../common/utils/money.util';
 import { productLines } from '../../common/utils/order-line.util';
 import type { ChatActor, CustomerActor, SellerActor } from './chat-actor';
-import { pairKeyFor, partiesOf, type ChatParty } from './chat-parties';
+import {
+  pairKeyFor,
+  partiesOf,
+  partyKey,
+  type ChatParty,
+} from './chat-parties';
+import { isParty } from './participant-unread.util';
+import { SUPPORT_NAME, SUPPORT_PARTY_ID } from './support.constants';
 import { writeThreadParticipants } from './thread-participants.util';
 import { ChatRealtimeService } from './chat-realtime.service';
 import type { StartConversationDto } from './dto/chat.dto';
@@ -63,7 +72,7 @@ export interface ConversationDto {
   lastMessage?: {
     type: string;
     text: string;
-    senderRole: 'customer' | 'seller';
+    senderRole: 'customer' | 'seller' | 'support';
     sentAt: string;
   };
   unreadCount: number;
@@ -139,10 +148,13 @@ export class ConversationsService {
                     eq(chatParticipants.kind, 'account'),
                     eq(chatParticipants.accountId, p.id as string),
                   )
-                : and(
-                    eq(chatParticipants.kind, 'shop'),
-                    eq(chatParticipants.shopId, p.id as string),
-                  ),
+                : p.kind === 'shop'
+                  ? and(
+                      eq(chatParticipants.kind, 'shop'),
+                      eq(chatParticipants.shopId, p.id as string),
+                    )
+                  : // One desk: every support thread belongs to it.
+                    eq(chatParticipants.kind, 'support'),
             ),
           ),
         ),
@@ -186,9 +198,14 @@ export class ConversationsService {
 
     const page = rows.slice(0, limit) as ConversationWithParties[];
     const originMap = await this.resolveOrigins(page);
-    const unread = await this.unreadFor(page.map((r) => r.id), parties);
+    const sides = await this.sidesFor(page.map((r) => r.id), parties);
+    const names = await this.namesFor(
+      [...sides.values()].map((v) => v.theirs).filter((v): v is ChatParticipantRow => !!v),
+    );
     return {
-      items: page.map((row) => this.toDto(row, actor, originMap, unread.get(row.id))),
+      items: page.map((row) =>
+        this.toDto(row, actor, originMap, sides.get(row.id), names),
+      ),
       nextCursor: rows.length > limit ? offset + limit : undefined,
     };
   }
@@ -197,8 +214,11 @@ export class ConversationsService {
   async getById(actor: ChatActor, id: string): Promise<ConversationDto> {
     const row = await this.requireParticipantRow(actor, id);
     const originMap = await this.resolveOrigins([row]);
-    const unread = await this.unreadFor([row.id], await this.partySetFor(actor));
-    return this.toDto(row, actor, originMap, unread.get(row.id));
+    const sides = await this.sidesFor([row.id], await this.partySetFor(actor));
+    const names = await this.namesFor(
+      [sides.get(row.id)?.theirs].filter((v): v is ChatParticipantRow => !!v),
+    );
+    return this.toDto(row, actor, originMap, sides.get(row.id), names);
   }
 
   /**
@@ -374,16 +394,15 @@ export class ConversationsService {
     // Threads created before participants existed are matched on the columns
     // they were written with, so nothing is locked out mid-migration.
     if (!sides.length) {
+      // Pre-participants threads are buyer↔shop by definition, so support has
+      // no claim on one.
+      if (actor.role === 'support') return false;
       return actor.role === 'customer'
         ? row.buyerId === actor.id
         : row.shopId === actor.shopId;
     }
     return sides.some((side) =>
-      parties.some((p) =>
-        p.kind === 'account'
-          ? side.kind === 'account' && side.accountId === p.id
-          : side.kind === 'shop' && side.shopId === p.id,
-      ),
+      parties.some((p) => isParty(side as ChatParticipantRow, p)),
     );
   }
 
@@ -405,6 +424,7 @@ export class ConversationsService {
       });
       return partiesOf(actor, { ownedShopIds: owned.map((s) => s.id) });
     }
+    if (actor.role === 'support') return partiesOf(actor);
     const shop = await this.db.query.shops.findFirst({
       where: eq(shops.id, actor.shopId),
       columns: { ownerId: true },
@@ -414,6 +434,67 @@ export class ConversationsService {
     const ownerAccountId =
       shop && shop.ownerId === actor.id ? shop.ownerId : null;
     return partiesOf(actor, { ownerAccountId });
+  }
+
+  /**
+   * Open (or return) the thread between the caller and one other party.
+   *
+   * The generalised form of `start`: the pair is the identity, so this is the
+   * one path that can express Hoomri Support writing to a shop, a seller
+   * writing to a person, or two people talking - none of which have both a
+   * buyer and a shop to key on.
+   */
+  async startWithParty(
+    actor: ChatActor,
+    target: ChatParty,
+  ): Promise<{ conversation: ConversationDto; created: boolean }> {
+    const mine = (await this.partySetFor(actor))[0];
+    if (!mine) throw new ForbiddenException('No party to speak as');
+    if (partyKey(mine) === partyKey(target)) {
+      throw new BadRequestException('You cannot start a thread with yourself');
+    }
+
+    const pairKey = pairKeyFor(mine, target);
+    const existing = await this.db.query.chatConversations.findFirst({
+      where: eq(chatConversations.pairKey, pairKey),
+      with: { shop: true, buyer: true },
+    });
+
+    let row = existing ?? null;
+    if (!row) {
+      // buyer_id / shop_id stay meaningful for the classic pair, because they
+      // are what cascade the thread away with the account or the shop.
+      const account = [mine, target].find((p) => p.kind === 'account');
+      const shop = [mine, target].find((p) => p.kind === 'shop');
+      const [inserted] = await this.db
+        .insert(chatConversations)
+        .values({
+          pairKey,
+          buyerId: account?.id ?? null,
+          shopId: shop?.id ?? null,
+        })
+        .onConflictDoNothing({ target: chatConversations.pairKey })
+        .returning({ id: chatConversations.id });
+      if (inserted) {
+        await writeThreadParticipants(this.db, inserted.id, mine, target);
+      }
+      row =
+        (await this.db.query.chatConversations.findFirst({
+          where: eq(chatConversations.pairKey, pairKey),
+          with: { shop: true, buyer: true },
+        })) ?? null;
+    }
+    if (!row) throw new NotFoundException('Conversation not found');
+
+    const originMap = await this.resolveOrigins([row]);
+    const sides = await this.sidesFor([row.id], await this.partySetFor(actor));
+    const names = await this.namesFor(
+      [sides.get(row.id)?.theirs].filter((v): v is ChatParticipantRow => !!v),
+    );
+    return {
+      conversation: this.toDto(row, actor, originMap, sides.get(row.id), names),
+      created: !existing,
+    };
   }
 
   /** Membership check shared by every per-conversation route. */
@@ -528,73 +609,122 @@ export class ConversationsService {
   }
 
   /**
-   * How many messages each of these threads holds unread *for this viewer*.
+   * This viewer's own side of each thread, and the side across from them.
    *
-   * Read from their own participant row: a shop owner is the buyer in one
-   * thread and the shop in the next, and the pair of counters on the
-   * conversation cannot say which of those a number belongs to.
+   * Both come from the participant rows, which are the only description that
+   * fits every thread shape: a support thread has no buyer to fall back on,
+   * and a thread between two people has two accounts, so "the other one"
+   * cannot be guessed from the legacy columns.
    */
-  private async unreadFor(
+  private async sidesFor(
     conversationIds: string[],
     parties: ChatParty[],
-  ): Promise<Map<string, { unread: number; side: string }>> {
-    const out = new Map<string, { unread: number; side: string }>();
+  ): Promise<Map<string, { mine?: ChatParticipantRow; theirs?: ChatParticipantRow }>> {
+    const out = new Map<
+      string,
+      { mine?: ChatParticipantRow; theirs?: ChatParticipantRow }
+    >();
     if (!conversationIds.length) return out;
     const rows = await this.db.query.chatParticipants.findMany({
       where: inArray(chatParticipants.conversationId, conversationIds),
     });
     for (const row of rows) {
-      const mine = parties.some((p) =>
-        p.kind === 'account'
-          ? row.kind === 'account' && row.accountId === p.id
-          : p.kind === 'shop'
-            ? row.kind === 'shop' && row.shopId === p.id
-            : row.kind === 'support',
-      );
-      if (mine) out.set(row.conversationId, { unread: row.unread, side: row.side });
+      const entry = out.get(row.conversationId) ?? {};
+      if (parties.some((p) => isParty(row, p))) entry.mine = row;
+      else entry.theirs = row;
+      out.set(row.conversationId, entry);
     }
     return out;
   }
 
+  /** Display names for a set of participant rows, in two queries. */
+  private async namesFor(
+    sides: ChatParticipantRow[],
+  ): Promise<{ shops: Map<string, string>; accounts: Map<string, string> }> {
+    const shopIds = [
+      ...new Set(sides.map((s) => s.shopId).filter((id): id is string => !!id)),
+    ];
+    const accountIds = [
+      ...new Set(
+        sides.map((s) => s.accountId).filter((id): id is string => !!id),
+      ),
+    ];
+    const [shopRows, accountRows] = await Promise.all([
+      shopIds.length
+        ? this.db.query.shops.findMany({
+            where: inArray(shops.id, shopIds),
+            columns: { id: true, name: true },
+          })
+        : Promise.resolve([]),
+      accountIds.length
+        ? this.db.query.users.findMany({
+            where: inArray(users.id, accountIds),
+            columns: { id: true, name: true },
+          })
+        : Promise.resolve([]),
+    ]);
+    return {
+      shops: new Map<string, string>(
+        shopRows.map((r): [string, string] => [r.id, r.name]),
+      ),
+      accounts: new Map<string, string>(
+        accountRows.map((r): [string, string] => [r.id, r.name]),
+      ),
+    };
+  }
+
   /**
-   * Who is across from this viewer. Prefers the participant rows, which
-   * describe every thread shape; the buyer/shop fallback only ever applies to
-   * threads written before participants existed.
+   * Who is across from this viewer.
+   *
+   * Read from the other participant row, which is the only thing that names
+   * the right party in every shape - the legacy columns cannot tell one
+   * account from the other, and a support thread has neither.
    */
   private counterpartOf(
     row: ConversationWithParties,
-    mine: { unread: number; side: string } | undefined,
+    sides: { mine?: ChatParticipantRow; theirs?: ChatParticipantRow } | undefined,
+    names: { shops: Map<string, string>; accounts: Map<string, string> } | undefined,
     forCustomer: boolean,
   ): ConversationDto['counterpart'] {
-    const shopSide = row.shop
-      ? ({ kind: 'shop', id: row.shop.id, name: row.shop.name } as const)
-      : null;
-    const buyerSide = row.buyer
-      ? ({ kind: 'account', id: row.buyer.id, name: row.buyer.name } as const)
-      : null;
-    // Side 'a' sorts first, and 'account:' sorts before 'shop:' - so a viewer
-    // on side 'a' is looking at the shop, and vice versa.
-    const theirs = mine ? (mine.side === 'a' ? shopSide : buyerSide) : forCustomer ? shopSide : buyerSide;
-    return (
-      theirs ??
-      shopSide ??
-      buyerSide ?? {
-        kind: 'support',
-        id: 'support',
-        name: 'Hoomri Support',
+    const theirs = sides?.theirs;
+    if (theirs) {
+      if (theirs.kind === 'support') {
+        return { kind: 'support', id: SUPPORT_PARTY_ID, name: SUPPORT_NAME };
       }
-    );
+      if (theirs.kind === 'shop' && theirs.shopId) {
+        return {
+          kind: 'shop',
+          id: theirs.shopId,
+          name: names?.shops.get(theirs.shopId) ?? row.shop?.name ?? '',
+        };
+      }
+      if (theirs.kind === 'account' && theirs.accountId) {
+        return {
+          kind: 'account',
+          id: theirs.accountId,
+          name: names?.accounts.get(theirs.accountId) ?? row.buyer?.name ?? '',
+        };
+      }
+    }
+    // Threads written before participants existed are buyer↔shop, so the
+    // viewer's role still identifies the other side.
+    return forCustomer && row.shop
+      ? { kind: 'shop', id: row.shop.id, name: row.shop.name }
+      : row.buyer
+        ? { kind: 'account', id: row.buyer.id, name: row.buyer.name }
+        : { kind: 'support', id: SUPPORT_PARTY_ID, name: SUPPORT_NAME };
   }
 
   private toDto(
     row: ConversationWithParties,
     actor: Pick<ChatActor, 'role'>,
     originMap: Map<string, ConversationDto['origin']>,
-    /** This viewer's own side; absent on threads predating participants. */
-    mine?: { unread: number; side: string },
+    /** This viewer's side and the other one; absent on pre-participant rows. */
+    sides?: { mine?: ChatParticipantRow; theirs?: ChatParticipantRow },
+    names?: { shops: Map<string, string>; accounts: Map<string, string> },
   ): ConversationDto {
     const forCustomer = actor.role === 'customer';
-    const counterpart = this.counterpartOf(row, mine, forCustomer);
+    const counterpart = this.counterpartOf(row, sides, names, forCustomer);
     return {
       id: row.id,
       ...(row.shop && {
@@ -616,7 +746,7 @@ export class ConversationsService {
       // Falls back to the legacy pair only for threads with no participant
       // rows yet, where the viewer can only be the buyer or the shop anyway.
       unreadCount:
-        mine?.unread ?? (forCustomer ? row.buyerUnread : row.sellerUnread),
+        sides?.mine?.unread ?? (forCustomer ? row.buyerUnread : row.sellerUnread),
       // Presence follows the counterpart the DTO just named, so it stays right
       // for a viewer who is the shop in one thread and the buyer in the next.
       counterpartOnline: this.realtime.isOnline(

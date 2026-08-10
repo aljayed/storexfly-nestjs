@@ -3,10 +3,12 @@ import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import type {
   AdminJwtPayload,
+  PlatformJwtPayload,
   SellerJwtPayload,
 } from '../auth/interfaces/jwt-payload.interface';
 import { roleHasPermission } from '../../common/auth/admin-permissions';
 import type { ChatActor } from './chat-actor';
+import { SUPPORT_EMAIL, SUPPORT_NAME } from './support.constants';
 
 /**
  * The chat module's ONLY tie into the host platform's auth. Accepts the
@@ -66,6 +68,24 @@ export class ChatTokenService {
           id: payload.sub,
           shopId: payload.shopId,
           name: payload.name,
+        };
+      }
+    } catch {
+      /* fall through to the rejection below */
+    }
+
+    // Platform console session -> Hoomri Support. Last, because it is the
+    // rarest and the other two are cheap to rule out.
+    try {
+      const payload = await this.jwt.verifyAsync<PlatformJwtPayload>(token, {
+        secret: this.config.getOrThrow<string>('platformAuth.jwtSecret'),
+      });
+      if (payload.typ === 'platform') {
+        return {
+          role: 'support',
+          id: payload.sub,
+          name: SUPPORT_NAME,
+          email: payload.email ?? SUPPORT_EMAIL,
         };
       }
     } catch {

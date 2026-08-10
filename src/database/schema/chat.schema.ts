@@ -31,6 +31,7 @@ export const chatOriginTypeEnum = pgEnum('chat_origin_type', [
 export const chatSenderRoleEnum = pgEnum('chat_sender_role', [
   'customer',
   'seller',
+  'support',
 ]);
 
 /**
@@ -308,7 +309,8 @@ export const chatMessages = pgTable(
       .references(() => chatConversations.id, { onDelete: 'cascade' }),
     senderRole: chatSenderRoleEnum('sender_role').notNull(),
     // Buyer id for customers; admin-user id for sellers (any staff member of
-    // the shop replies on its behalf).
+    // the shop replies on its behalf); the support desk's fixed id for Hoomri
+    // Support, which is one desk rather than one row per operator.
     senderId: uuid('sender_id').notNull(),
     type: chatMessageTypeEnum('type').notNull(),
     text: text('text'),

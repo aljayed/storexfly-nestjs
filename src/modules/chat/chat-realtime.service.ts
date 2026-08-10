@@ -50,9 +50,13 @@ export class ChatRealtimeService {
   }
 
   static actorRoom(actor: ChatActor): string {
-    return actor.role === 'customer'
-      ? ChatRealtimeService.room('buyer', actor.id)
-      : ChatRealtimeService.room('shop', actor.shopId);
+    if (actor.role === 'customer') {
+      return ChatRealtimeService.room('buyer', actor.id);
+    }
+    // Every support operator shares the desk's room, so a reply reaches
+    // whichever of them has the thread open.
+    if (actor.role === 'support') return 'support';
+    return ChatRealtimeService.room('shop', actor.shopId);
   }
 
   /** Track a connected socket; returns true if this identity just came online. */

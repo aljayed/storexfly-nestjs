@@ -157,3 +157,10 @@ export class ReorderQuickRepliesDto {
   @IsUUID(undefined, { each: true })
   ids!: string[];
 }
+
+/** POST /chat/conversations/with - open a thread with a published handle. */
+export class StartWithHandleDto {
+  @IsString()
+  @MaxLength(40)
+  handle!: string;
+}

@@ -36,6 +36,9 @@ export function partiesOf(
       ),
     ];
   }
+  // Support is one desk, so every operator speaks as the same party - which is
+  // what makes a support thread survive whoever answered it first.
+  if (actor.role === 'support') return [{ kind: 'support', id: null }];
   const parties: ChatParty[] = [{ kind: 'shop', id: actor.shopId }];
   if (extra.ownerAccountId) {
     parties.push({ kind: 'account', id: extra.ownerAccountId });

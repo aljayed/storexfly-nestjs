@@ -61,10 +61,12 @@ export class ChatOffersController {
     return this.offers.create(actor, conversationId, dto);
   }
 
+  // Support has no seat in an offer: it is a shop selling to a buyer.
+  @ChatRole('customer', 'seller')
   @Get('offers/:id')
   @ApiOperation({ summary: 'Read one offer (either side of the thread)' })
   getById(
-    @CurrentChatActor() actor: ChatActor,
+    @CurrentChatActor() actor: CustomerActor | SellerActor,
     @Param('id', ParseUUIDPipe) id: string,
   ) {
     return this.offers.getById(actor, id);

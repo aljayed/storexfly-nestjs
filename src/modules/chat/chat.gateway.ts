@@ -12,6 +12,7 @@ import {
 import { eq } from 'drizzle-orm';
 import { Inject } from '@nestjs/common';
 import type { Server, Socket } from 'socket.io';
+import { chatParticipants } from '../../database/schema';
 import { DRIZZLE } from '../../database/database.constants';
 import type { DrizzleDB } from '../../database/drizzle.types';
 import { chatConversations } from '../../database/schema';
@@ -134,13 +135,27 @@ export class ChatGateway
       where: eq(chatConversations.id, body.conversationId),
     });
     if (!convo) return;
-    if (
-      actor.role === 'customer'
-        ? convo.buyerId !== actor.id
-        : convo.shopId !== actor.shopId
-    ) {
-      return;
-    }
+    // Typing is a per-thread signal, so membership is the same question the
+    // inbox asks: is this viewer one of the two parties?
+    const parties = await this.conversations.partySetFor(actor);
+    const mine = await this.db.query.chatParticipants.findMany({
+      where: eq(chatParticipants.conversationId, convo.id),
+      columns: { kind: true, accountId: true, shopId: true },
+    });
+    const isMember = mine.length
+      ? mine.some((side) =>
+          parties.some((p) =>
+            p.kind === 'account'
+              ? side.kind === 'account' && side.accountId === p.id
+              : p.kind === 'shop'
+                ? side.kind === 'shop' && side.shopId === p.id
+                : side.kind === 'support',
+          ),
+        )
+      : actor.role === 'customer'
+        ? convo.buyerId === actor.id
+        : actor.role === 'seller' && convo.shopId === actor.shopId;
+    if (!isMember) return;
     // Threads without a shop or buyer side get their typing indicator once
     // the party rooms land there too; nothing to notify until then.
     const counterpartRoom =
@@ -183,6 +198,9 @@ export class ChatGateway
     online: boolean,
   ): Promise<void> {
     const isCustomer = actor.role === 'customer';
+    // Support has no presence to broadcast - the desk is not "online" the way
+    // a person or a shop is.
+    if (actor.role === 'support') return;
     const convos = await this.db.query.chatConversations.findMany({
       where: isCustomer
         ? eq(chatConversations.buyerId, actor.id)

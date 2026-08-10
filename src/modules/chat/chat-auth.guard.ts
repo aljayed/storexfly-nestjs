@@ -12,9 +12,12 @@ import { ChatTokenService } from './chat-token.service';
 
 const CHAT_ROLE_KEY = 'chatRole';
 
-/** Restrict a chat route to one side, e.g. `@ChatRole('seller')`. */
-export const ChatRole = (role: ChatActor['role']) =>
-  SetMetadata(CHAT_ROLE_KEY, role);
+/**
+ * Restrict a chat route to one or more sides, e.g. `@ChatRole('seller')` or
+ * `@ChatRole('customer', 'seller')` for the two that trade with each other.
+ */
+export const ChatRole = (...roles: ChatActor['role'][]) =>
+  SetMetadata(CHAT_ROLE_KEY, roles);
 
 /** Injects the verified chat participant into a handler. */
 export const CurrentChatActor = createParamDecorator(
@@ -43,10 +46,12 @@ export class ChatAuthGuard implements CanActivate {
     const actor = await this.tokens.verify(token);
 
     const required = this.reflector.getAllAndOverride<
-      ChatActor['role'] | undefined
+      ChatActor['role'][] | undefined
     >(CHAT_ROLE_KEY, [context.getHandler(), context.getClass()]);
-    if (required && actor.role !== required) {
-      throw new ForbiddenException(`This chat route is ${required}-only`);
+    if (required?.length && !required.includes(actor.role)) {
+      throw new ForbiddenException(
+        `This chat route is ${required.join('/')}-only`,
+      );
     }
 
     request.chatActor = actor;
