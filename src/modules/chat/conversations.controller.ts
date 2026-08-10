@@ -3,6 +3,7 @@ import {
   Controller,
   Get,
   HttpCode,
+  NotFoundException,
   Param,
   ParseUUIDPipe,
   Post,
@@ -11,6 +12,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { Throttle } from '@nestjs/throttler';
 import type { Response } from 'express';
 import { Public } from '../../common/decorators/public.decorator';
 import type { ChatActor, CustomerActor, SellerActor } from './chat-actor';
@@ -23,6 +25,7 @@ import {
   SendMessageDto,
   StartConversationDto,
 } from './dto/chat.dto';
+import { HandleLookupService } from './handle-lookup.service';
 import { MessagesService } from './messages.service';
 
 /**
@@ -39,7 +42,24 @@ export class ConversationsController {
   constructor(
     private readonly conversations: ConversationsService,
     private readonly messages: MessagesService,
+    private readonly handles: HandleLookupService,
   ) {}
+
+  /**
+   * Look up "@name" so a chat can be started with whoever holds it.
+   *
+   * Handles are the only public way to find a person here: an address lookup
+   * would let anyone confirm which emails have accounts. A miss reads the same
+   * as an unclaimed name, so this cannot be walked as a directory either.
+   */
+  @Get('handle/:handle')
+  @Throttle({ default: { limit: 30, ttl: 60_000 } })
+  @ApiOperation({ summary: 'Resolve a public handle to someone messageable' })
+  async lookupHandle(@Param('handle') handle: string) {
+    const target = await this.handles.resolve(handle);
+    if (!target) throw new NotFoundException('No one uses that name');
+    return target;
+  }
 
   @Get()
   @ApiOperation({ summary: "List the caller's conversations" })

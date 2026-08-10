@@ -7,6 +7,7 @@ import { ChatRealtimeService } from './chat-realtime.service';
 import { ChatTokenService } from './chat-token.service';
 import { ConversationsController } from './conversations.controller';
 import { ConversationsService } from './conversations.service';
+import { HandleLookupService } from './handle-lookup.service';
 import { MessagesService } from './messages.service';
 import { QuickRepliesController } from './quick-replies.controller';
 import { QuickRepliesService } from './quick-replies.service';
@@ -26,6 +27,7 @@ import { QuickRepliesService } from './quick-replies.service';
     ChatAuthGuard,
     ChatRealtimeService,
     ConversationsService,
+    HandleLookupService,
     BotReplyService,
     MessagesService,
     QuickRepliesService,
