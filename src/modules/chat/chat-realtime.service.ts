@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import type { Server } from 'socket.io';
 import type { ChatActor } from './chat-actor';
+import type { ChatParty } from './chat-parties';
 
 /**
  * Presence bookkeeping + WebSocket fan-out, shared by the gateway and the
@@ -23,9 +24,29 @@ export class ChatRealtimeService {
     this.server = server;
   }
 
-  /** Room key for one side of a conversation. */
+  /**
+   * Room key for one side of a conversation.
+   *
+   * Keyed by party rather than by role: a shop owner is the shop in one thread
+   * and themselves in the next, so a socket that joined only `shop:` would
+   * never hear the messages addressed to the person.
+   */
   static room(side: 'buyer' | 'shop', id: string): string {
     return `${side}:${id}`;
+  }
+
+  /** Room for a participant of a thread. */
+  static partyRoom(party: ChatParty): string {
+    return party.kind === 'shop'
+      ? ChatRealtimeService.room('shop', party.id ?? '')
+      : party.kind === 'account'
+        ? ChatRealtimeService.room('buyer', party.id ?? '')
+        : 'support';
+  }
+
+  /** Every room a viewer should be listening in. */
+  static actorRooms(parties: ChatParty[]): string[] {
+    return [...new Set(parties.map((p) => ChatRealtimeService.partyRoom(p)))];
   }
 
   static actorRoom(actor: ChatActor): string {

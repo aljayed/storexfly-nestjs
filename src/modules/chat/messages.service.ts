@@ -9,6 +9,7 @@ import { DRIZZLE } from '../../database/database.constants';
 import type { DrizzleDB } from '../../database/drizzle.types';
 import {
   chatConversations,
+  chatParticipants,
   chatMessages,
   orders,
   products,
@@ -201,16 +202,11 @@ export class MessagesService {
     });
 
     const message = { ...this.toDto(row), clientRef: dto.clientRef };
-    this.realtime.emitTo(
-      ChatRealtimeService.room('buyer', convo.buyerId),
-      'message.new',
-      { conversationId, message },
-    );
-    this.realtime.emitTo(
-      ChatRealtimeService.room('shop', convo.shopId),
-      'message.new',
-      { conversationId, message },
-    );
+    // To both participants' rooms, whoever they are - the pair is what the
+    // thread has, and buyer/shop is only one shape of it.
+    for (const room of await this.threadRooms(conversationId, convo)) {
+      this.realtime.emitTo(room, 'message.new', { conversationId, message });
+    }
     await this.conversations.broadcastUpdated(conversationId);
 
     // AI auto-reply, when the shop has it switched on. Deliberately not
@@ -287,6 +283,36 @@ export class MessagesService {
    * Flip this actor's pending incoming messages to `delivered` (called when
    * they connect) and notify each author's side.
    */
+  /**
+   * Rooms for both sides of a thread. Falls back to the buyer/shop columns for
+   * threads written before participants existed.
+   */
+  private async threadRooms(
+    conversationId: string,
+    convo: { buyerId: string; shopId: string },
+  ): Promise<string[]> {
+    const sides = await this.db.query.chatParticipants.findMany({
+      where: eq(chatParticipants.conversationId, conversationId),
+      columns: { kind: true, accountId: true, shopId: true },
+    });
+    if (!sides.length) {
+      return [
+        ChatRealtimeService.room('buyer', convo.buyerId),
+        ChatRealtimeService.room('shop', convo.shopId),
+      ];
+    }
+    return [
+      ...new Set(
+        sides.map((s) =>
+          ChatRealtimeService.partyRoom({
+            kind: s.kind,
+            id: s.kind === 'shop' ? s.shopId : s.accountId,
+          }),
+        ),
+      ),
+    ];
+  }
+
   async markDeliveredOnConnect(actor: ChatActor): Promise<void> {
     const counterpart: ChatSenderRole =
       actor.role === 'customer' ? 'seller' : 'customer';

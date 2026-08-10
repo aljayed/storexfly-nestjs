@@ -37,6 +37,12 @@ export interface ConversationDto {
     currency: string;
   };
   customer: { id: string; name: string };
+  /**
+   * The other party, from this viewer's seat. A shop owner is the shop in one
+   * thread and the buyer in the next, so a list cannot label rows by the
+   * viewer's role - it has to name whoever is across from them.
+   */
+  counterpart: { kind: 'shop' | 'account' | 'support'; id: string; name: string };
   origin?: {
     type: 'product' | 'order';
     refId: string;
@@ -513,8 +519,8 @@ export class ConversationsService {
   private async unreadFor(
     conversationIds: string[],
     parties: ChatParty[],
-  ): Promise<Map<string, number>> {
-    const out = new Map<string, number>();
+  ): Promise<Map<string, { unread: number; side: string }>> {
+    const out = new Map<string, { unread: number; side: string }>();
     if (!conversationIds.length) return out;
     const rows = await this.db.query.chatParticipants.findMany({
       where: inArray(chatParticipants.conversationId, conversationIds),
@@ -527,7 +533,7 @@ export class ConversationsService {
             ? row.kind === 'shop' && row.shopId === p.id
             : row.kind === 'support',
       );
-      if (mine) out.set(row.conversationId, row.unread);
+      if (mine) out.set(row.conversationId, { unread: row.unread, side: row.side });
     }
     return out;
   }
@@ -536,8 +542,8 @@ export class ConversationsService {
     row: ConversationWithParties,
     actor: Pick<ChatActor, 'role'>,
     originMap: Map<string, ConversationDto['origin']>,
-    /** This viewer's own unread; absent on threads predating participants. */
-    myUnread?: number,
+    /** This viewer's own side; absent on threads predating participants. */
+    mine?: { unread: number; side: string },
   ): ConversationDto {
     const forCustomer = actor.role === 'customer';
     return {
@@ -551,11 +557,16 @@ export class ConversationsService {
         currency: row.shop.currency,
       },
       customer: { id: row.buyer.id, name: row.buyer.name },
+      counterpart:
+        (mine ? mine.side === 'a' : forCustomer)
+          ? { kind: 'shop', id: row.shop.id, name: row.shop.name }
+          : { kind: 'account', id: row.buyer.id, name: row.buyer.name },
       origin: originMap.get(row.id),
       lastMessage: row.lastMessagePreview ?? undefined,
       // Falls back to the legacy pair only for threads with no participant
       // rows yet, where the viewer can only be the buyer or the shop anyway.
-      unreadCount: myUnread ?? (forCustomer ? row.buyerUnread : row.sellerUnread),
+      unreadCount:
+        mine?.unread ?? (forCustomer ? row.buyerUnread : row.sellerUnread),
       counterpartOnline: forCustomer
         ? this.realtime.isOnline('shop', row.shopId)
         : this.realtime.isOnline('buyer', row.buyerId),

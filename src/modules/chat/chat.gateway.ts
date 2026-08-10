@@ -17,11 +17,17 @@ import type { DrizzleDB } from '../../database/drizzle.types';
 import { chatConversations } from '../../database/schema';
 import type { ChatActor } from './chat-actor';
 import { ChatRealtimeService } from './chat-realtime.service';
+import { ConversationsService } from './conversations.service';
 import { ChatTokenService } from './chat-token.service';
 import { MessagesService } from './messages.service';
 
 interface ChatSocket extends Socket {
-  data: { actor?: ChatActor; eventWindow?: { start: number; count: number } };
+  data: {
+    actor?: ChatActor;
+    /** Every party room this socket joined, so disconnect can leave them. */
+    rooms?: string[];
+    eventWindow?: { start: number; count: number };
+  };
 }
 
 // Per-socket inbound event budget. Every typing/read event costs a DB lookup,
@@ -71,6 +77,7 @@ export class ChatGateway
     private readonly tokens: ChatTokenService,
     private readonly realtime: ChatRealtimeService,
     private readonly messages: MessagesService,
+    private readonly conversations: ConversationsService,
   ) {}
 
   afterInit(server: Server): void {
@@ -83,8 +90,14 @@ export class ChatGateway
       const actor = await this.tokens.verify(token);
       client.data.actor = actor;
 
+      // Join a room per party this viewer speaks as - an owner listens as
+      // their shop *and* as themselves, from one socket.
+      const parties = await this.conversations.partySetFor(actor);
+      const rooms = ChatRealtimeService.actorRooms(parties);
+      client.data.rooms = rooms;
+      await Promise.all(rooms.map((r) => client.join(r)));
+      // Presence is still tracked on the identity's own room.
       const room = ChatRealtimeService.actorRoom(actor);
-      await client.join(room);
       const cameOnline = this.realtime.connected(room, client.id);
 
       // Anything sent while this side was away is now delivered.
