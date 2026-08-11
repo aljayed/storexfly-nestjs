@@ -350,7 +350,7 @@ export class CreateProductDto {
   @ApiPropertyOptional({
     type: [VariantCombinationDto],
     description:
-      'Exact sellable combinations. Empty uses legacy per-option behavior.',
+      'Explicit sellable combinations (a subset is allowed). Empty uses legacy per-option behavior.',
   })
   @IsOptional()
   @IsArray()

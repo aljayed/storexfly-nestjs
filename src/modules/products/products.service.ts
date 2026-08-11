@@ -188,8 +188,9 @@ export class ProductsService {
     }
 
     // An empty array deliberately opts an existing product into the legacy
-    // model. Once exact rows are supplied, every cartesian pick must have a
-    // row; unavailable combinations stay explicit with `available: false`.
+    // model. Exact rows are an explicit sellable subset: a missing Cartesian
+    // pick means the seller does not offer it, while `available: false` keeps
+    // an added row visible for later reactivation.
     if (dtos.length) {
       const optionIds = groups.flatMap((group) =>
         group.options.map((option) => option.id),
@@ -197,15 +198,6 @@ export class ProductsService {
       if (new Set(optionIds).size !== optionIds.length) {
         throw new BadRequestException(
           'Exact variant choices need unique ids across every option group.',
-        );
-      }
-      const expected = groups.reduce(
-        (count, group) => count * group.options.length,
-        1,
-      );
-      if (dtos.length !== expected) {
-        throw new BadRequestException(
-          `Expected ${expected} exact variant combinations, received ${dtos.length}.`,
         );
       }
     }

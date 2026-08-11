@@ -146,15 +146,15 @@ describe('ProductsService exact variant combinations', () => {
     expect(written()?.stock).toBe(30);
   });
 
-  it('rejects a grid that is missing a pairing', async () => {
-    const { service } = serviceFor(current);
-    await expect(
-      service.update('s1', 'p1', {
-        variantCombinations: [
-          { optionIds: { size: 'sm' }, price: 900, stock: 4, available: true },
-        ],
-      }),
-    ).rejects.toThrow(BadRequestException);
+  it('accepts an explicit subset of the possible pairings', async () => {
+    const { service, written } = serviceFor(current);
+    await service.update('s1', 'p1', {
+      variantCombinations: [
+        { optionIds: { size: 'sm' }, price: 900, stock: 4, available: true },
+      ],
+    });
+    expect(written()?.variantCombinations).toHaveLength(1);
+    expect(written()?.stock).toBe(4);
   });
 
   it('rejects a third option group unless the item sells exact rows', async () => {
