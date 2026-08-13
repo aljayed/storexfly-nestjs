@@ -150,7 +150,6 @@ export class AuthService {
     return {
       ok: true,
       retryAfterSeconds: issued.retryAfterSeconds,
-      remainingToday: issued.remainingToday,
       // Never in production, even if SMS is misconfigured there: handing out
       // the code would make the whole check ornamental.
       ...(this.otp.smsEnabled || this.isProduction

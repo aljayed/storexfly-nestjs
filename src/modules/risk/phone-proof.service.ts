@@ -64,7 +64,6 @@ export class PhoneProofService {
     return {
       ok: true,
       retryAfterSeconds: issued.retryAfterSeconds,
-      remainingToday: issued.remainingToday,
       ...(this.otp.smsEnabled || this.isProduction
         ? {}
         : { devCode: issued.code }),

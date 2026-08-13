@@ -21,23 +21,33 @@ interface SendBudget {
   lastSentAt: number;
 }
 
-/** What {@link OtpService.issue} did. */
+/** What {@link OtpService.issue} did. Internal - see {@link PhoneCodeSent} for
+ *  the part of this a client is allowed to see. */
 export interface OtpIssue {
   code: string;
   /** False when a live code was reused instead of a second SMS being paid for. */
   sent: boolean;
   /** Seconds until this number may ask for another code. */
   retryAfterSeconds: number;
-  /** Codes this number has left today, after this call. */
+  /**
+   * Codes this number has left today, after this call. Server-side only: it
+   * must not reach a response body, so keep it out of {@link PhoneCodeSent}.
+   */
   remainingToday: number;
 }
 
-/** The shape both phone-code endpoints answer with. */
+/**
+ * The shape both phone-code endpoints answer with.
+ *
+ * Deliberately no count of codes left: how much allowance remains is the
+ * platform's business, not a number to show someone, and putting it in the
+ * response would publish it to anyone reading the network tab whether or not a
+ * screen renders it. Running out is communicated when it happens, by the 429.
+ */
 export interface PhoneCodeSent {
   ok: true;
   /** How long the client should keep its resend control disabled. */
   retryAfterSeconds: number;
-  remainingToday: number;
   /** Development only, when no SMS gateway is configured. */
   devCode?: string;
 }
@@ -159,8 +169,9 @@ export class OtpService {
           statusCode: HttpStatus.TOO_MANY_REQUESTS,
           error: 'Too Many Requests',
           code: OTP_DAILY_LIMIT,
-          message:
-            'You have used all of today’s verification codes for this number. Please try again tomorrow.',
+          // Says that it stopped and when it resumes, without narrating how
+          // many tries there were or how many are left.
+          message: 'Too many attempts. Please try again tomorrow.',
           retryAfterSeconds: Math.ceil(msUntilNextDay(now) / 1000),
         },
         HttpStatus.TOO_MANY_REQUESTS,
