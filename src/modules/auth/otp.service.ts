@@ -125,10 +125,17 @@ export class OtpService {
   }
 }
 
-/** One segment, brand first - the sender ID is a numeric shortcode, so the
- *  message body is the only thing telling the recipient who is asking. */
+/**
+ * The sender ID is a numeric shortcode, so the body is the only thing telling
+ * the recipient who is asking - hence the brand in the first clause.
+ *
+ * Keep every character in this string ASCII, and mind the apostrophe in
+ * particular: a typographic one (’) falls outside the GSM 7-bit alphabet, which
+ * would push the message to UCS-2, drop the per-segment limit from 160 to 70,
+ * and quietly bill two segments for every OTP the platform sends.
+ */
 function smsBody(code: string): string {
-  return `Hoomri: ${code} is your verification code. It expires in 5 minutes. Never share this code with anyone.`;
+  return `Your Hoomri verification code is ${code}. It expires in 5 minutes. Don't share this code with anyone.`;
 }
 
 /** Length-safe constant-time string compare (codes are short and same-charset). */
