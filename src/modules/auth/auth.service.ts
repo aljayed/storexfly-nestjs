@@ -17,7 +17,7 @@ import { EmailOtpService } from './email-otp.service';
 import type { LoginDto } from './dto/login.dto';
 import type { RegisterDto } from './dto/register.dto';
 import type { SetPasswordDto } from './dto/set-password.dto';
-import { OtpService } from './otp.service';
+import { OtpService, type PhoneCodeSent } from './otp.service';
 import { SessionScopeService } from './session-scope.service';
 import { TokenService } from './token.service';
 
@@ -138,7 +138,7 @@ export class AuthService {
   async startPhoneVerification(
     userId: string,
     phone: string,
-  ): Promise<{ ok: true; devCode?: string }> {
+  ): Promise<PhoneCodeSent> {
     const user = await this.requireUser(userId);
     const owner = await this.users.findByVerifiedPhone(phone);
     if (owner && owner.id !== user.id) {
@@ -146,12 +146,17 @@ export class AuthService {
         'This phone number is already verified on another account',
       );
     }
-    const code = await this.otp.issue(phone, VERIFY_PHONE_SCOPE);
-    // Never in production, even if SMS is misconfigured there: handing out the
-    // code would make the whole check ornamental.
-    return this.otp.smsEnabled || this.isProduction
-      ? { ok: true }
-      : { ok: true, devCode: code };
+    const issued = await this.otp.issue(phone, VERIFY_PHONE_SCOPE);
+    return {
+      ok: true,
+      retryAfterSeconds: issued.retryAfterSeconds,
+      remainingToday: issued.remainingToday,
+      // Never in production, even if SMS is misconfigured there: handing out
+      // the code would make the whole check ornamental.
+      ...(this.otp.smsEnabled || this.isProduction
+        ? {}
+        : { devCode: issued.code }),
+    };
   }
 
   /** Confirms the code and stores the number as verified on the account. */
@@ -279,7 +284,10 @@ export class AuthService {
    * second door, and is what makes the console's password login reachable for
    * an owner who has only ever used Google.
    */
-  async setPassword(userId: string, dto: SetPasswordDto): Promise<UserResponse> {
+  async setPassword(
+    userId: string,
+    dto: SetPasswordDto,
+  ): Promise<UserResponse> {
     const user = await this.requireUser(userId);
     if (user.passwordHash) {
       const ok =

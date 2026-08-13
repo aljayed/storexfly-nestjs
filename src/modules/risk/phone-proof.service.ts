@@ -5,7 +5,7 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
-import { OtpService } from '../auth/otp.service';
+import { OtpService, type PhoneCodeSent } from '../auth/otp.service';
 
 const SCOPE = 'checkout-phone';
 /** Long enough to finish a checkout, short enough that a proof is not reusable
@@ -51,18 +51,24 @@ export class PhoneProofService {
    * flow can be exercised - but never in production, where this endpoint is
    * public and handing out the code would make the whole check ornamental.
    */
-  async start(phone: string): Promise<{ ok: true; devCode?: string }> {
+  async start(phone: string): Promise<PhoneCodeSent> {
     const normalized = normalizePhone(phone);
-    if (!normalized) throw new BadRequestException('Enter a valid phone number');
+    if (!normalized)
+      throw new BadRequestException('Enter a valid phone number');
     if (!this.canDeliver) {
       throw new ServiceUnavailableException(
         'Phone verification is unavailable right now.',
       );
     }
-    const code = await this.otp.issue(normalized, SCOPE);
-    return this.otp.smsEnabled || this.isProduction
-      ? { ok: true }
-      : { ok: true, devCode: code };
+    const issued = await this.otp.issue(normalized, SCOPE);
+    return {
+      ok: true,
+      retryAfterSeconds: issued.retryAfterSeconds,
+      remainingToday: issued.remainingToday,
+      ...(this.otp.smsEnabled || this.isProduction
+        ? {}
+        : { devCode: issued.code }),
+    };
   }
 
   /** True when a code can actually reach the recipient. */
