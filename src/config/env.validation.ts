@@ -135,6 +135,28 @@ export class EnvironmentVariables {
   @IsOptional()
   MAIL_FROM = 'Storexfly <no-reply@storexfly.com>';
 
+  // ── Outbound SMS (MiMSMS, optional) ───────────────────────
+  @IsString()
+  @IsOptional()
+  SMS_BASE_URL = 'https://api.mimsms.com/api';
+
+  @IsString()
+  @IsOptional()
+  SMS_API_KEY = '';
+
+  @IsString()
+  @IsOptional()
+  SMS_USERNAME = '';
+
+  @IsString()
+  @IsOptional()
+  SMS_SENDER_NAME = '';
+
+  @IsInt()
+  @IsOptional()
+  @Transform(({ value }) => parseInt(value, 10))
+  SMS_TIMEOUT_MS = 10000;
+
   // ── Throttling ────────────────────────────────────────────
   @IsInt()
   @IsOptional()

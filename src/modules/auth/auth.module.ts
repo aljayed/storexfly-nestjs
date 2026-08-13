@@ -4,6 +4,7 @@ import { PassportModule } from '@nestjs/passport';
 import { BlockedWordsModule } from '../blocked-words/blocked-words.module';
 import { MailModule } from '../mail/mail.module';
 import { ShopsModule } from '../shops/shops.module';
+import { SmsModule } from '../sms/sms.module';
 import { UsersModule } from '../users/users.module';
 import { AdminAuthController } from './admin-auth.controller';
 import { AdminAuthService } from './admin-auth.service';
@@ -28,6 +29,7 @@ import { PlatformJwtStrategy } from './strategies/platform-jwt.strategy';
     UsersModule,
     ShopsModule,
     MailModule,
+    SmsModule,
     BlockedWordsModule,
   ],
   controllers: [AuthController, AdminAuthController],

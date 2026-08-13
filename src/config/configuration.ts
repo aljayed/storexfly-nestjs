@@ -82,6 +82,22 @@ export const mailConfig = registerAs('mail', () => ({
   },
 }));
 
+// Outbound SMS (MiMSMS, https://apidoc.mimsms.com). Carries the phone OTPs.
+// Leave the credentials blank to disable real sending - SmsService then logs
+// the message in non-production and OtpService hands the code back in the
+// response, so the verification flows stay testable without a gateway.
+export const smsConfig = registerAs('sms', () => ({
+  baseUrl: process.env.SMS_BASE_URL ?? 'https://api.mimsms.com/api',
+  apiKey: process.env.SMS_API_KEY ?? '',
+  userName: process.env.SMS_USERNAME ?? '',
+  // Approved sender ID (a numeric shortcode, or a masking name).
+  senderName: process.env.SMS_SENDER_NAME ?? '',
+  timeoutMs: parseInt(process.env.SMS_TIMEOUT_MS ?? '10000', 10),
+  get enabled() {
+    return Boolean(this.apiKey && this.userName && this.senderName);
+  },
+}));
+
 export const throttleConfig = registerAs('throttle', () => ({
   ttl: parseInt(process.env.THROTTLE_TTL ?? '60000', 10),
   limit: parseInt(process.env.THROTTLE_LIMIT ?? '120', 10),
@@ -115,6 +131,7 @@ export const configurations = [
   platformAdminConfig,
   googleConfig,
   mailConfig,
+  smsConfig,
   throttleConfig,
   storageConfig,
 ];

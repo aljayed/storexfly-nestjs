@@ -43,6 +43,8 @@ export interface AuthResult {
  */
 @Injectable()
 export class AuthService {
+  private readonly isProduction = process.env.NODE_ENV === 'production';
+
   constructor(
     private readonly users: UsersService,
     private readonly tokens: TokenService,
@@ -117,10 +119,9 @@ export class AuthService {
   // A shop may only be opened by an account with one verified email *and*
   // one verified phone number, both unique to that account. Signing up proves
   // neither, so both are proved here - the only place in the product that ever
-  // asks for a code. The SMS side is a stub - {@link OtpService} has no gateway
-  // yet, so while `smsEnabled` is false the issued code comes back in the
-  // response and the wizard shows it. Nothing else about the flow changes when
-  // real SMS lands.
+  // asks for a code. Codes go out over SMS; only a development environment with
+  // no gateway configured hands one back in the response for the wizard to
+  // show, and production never does regardless.
 
   async contactStatus(userId: string): Promise<ContactStatus> {
     const user = await this.requireUser(userId);
@@ -146,7 +147,11 @@ export class AuthService {
       );
     }
     const code = await this.otp.issue(phone, VERIFY_PHONE_SCOPE);
-    return this.otp.smsEnabled ? { ok: true } : { ok: true, devCode: code };
+    // Never in production, even if SMS is misconfigured there: handing out the
+    // code would make the whole check ornamental.
+    return this.otp.smsEnabled || this.isProduction
+      ? { ok: true }
+      : { ok: true, devCode: code };
   }
 
   /** Confirms the code and stores the number as verified on the account. */

@@ -47,7 +47,7 @@ export class PhoneProofService {
   /**
    * Text a code to the number.
    *
-   * While the SMS gateway is a stub the code comes back in the response so the
+   * With no SMS gateway configured the code comes back in the response so the
    * flow can be exercised - but never in production, where this endpoint is
    * public and handing out the code would make the whole check ornamental.
    */
