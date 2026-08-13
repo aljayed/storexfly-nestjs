@@ -58,7 +58,11 @@ import type { OrderStatus, SalesChannel } from '../../database/schema/enums';
 import { CustomersService } from '../customers/customers.service';
 import type { CheckoutCaller } from '../risk/checkout-caller';
 import { PhoneProofService } from '../risk/phone-proof.service';
-import { RiskService, type CheckoutRisk } from '../risk/risk.service';
+import {
+  RISK_WINDOW_HOURS,
+  RiskService,
+  type CheckoutRisk,
+} from '../risk/risk.service';
 import { BkashService } from '../gateways/bkash.service';
 import { CarrybeeService } from '../gateways/carrybee.service';
 import {
@@ -172,6 +176,19 @@ function normalizePhone(raw: string | null | undefined): string {
 }
 
 /**
+ * How far back "already ordered this" looks. Deliberately the same window the
+ * risk gates use, so a buyer meets one consistent idea of "recently" across
+ * checkout rather than two that expire at different moments.
+ *
+ * A rolling window rather than a calendar day on purpose: a day boundary makes
+ * the rule arbitrary either side of midnight - an order at 11pm blocks nothing
+ * an hour later, while one at 1am blocks all day.
+ */
+export function repeatItemWindowStart(now: number = Date.now()): Date {
+  return new Date(now - RISK_WINDOW_HOURS * 60 * 60 * 1000);
+}
+
+/**
  * Units to move for one exact variant selection. New products resolve this to
  * a combination counter; legacy products still resolve it to any per-option
  * counters the seller chose to track.
@@ -265,7 +282,8 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
    * order only becomes 'Paid' when bKash confirms the money.
    */
   /**
-   * What this checkout will be asked for, before the buyer picks how to pay.
+   * Which identity steps this checkout will ask for, so the storefront can say
+   * so before the buyer hits the button rather than after.
    * Advisory only - `checkout` re-runs the same assessment and enforces it.
    */
   async preflight(
@@ -289,10 +307,23 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
     dto: CheckoutDto,
     caller: CheckoutCaller = { ip: null, device: null, accountId: null },
   ): Promise<CheckoutResultResponse> {
+    // Ahead of the identity gates on purpose: being told the order cannot be
+    // placed is worth knowing before being asked to sign in and prove a phone
+    // for it. Re-run under the shop lock below, which is what makes it
+    // race-proof - this pass is for the buyer, that one is for correctness.
+    await this.assertNotOrderedRecently(
+      this.db,
+      dto.shopId,
+      dto.contact,
+      await this.checkoutProductIds(dto),
+    );
+
     /**
-     * Anti-abuse gates, before any of the pricing work. Each one escalates
-     * what the buyer has to do rather than refusing outright, and the codes
-     * are what the storefront switches on to open the right prompt.
+     * Identity gates, before any of the pricing work. Neither one refuses the
+     * order or narrows how it may be paid for - they ask a buyer repeating
+     * inside the risk window to say who they are, and the codes are what the
+     * storefront switches on to open the right prompt. Answer both and the
+     * same order goes through unchanged.
      */
     const subject = {
       phone: dto.contact.phone,
@@ -307,12 +338,13 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
       throw new ForbiddenException({
         code: 'SIGN_IN_REQUIRED',
         message:
-          'Please sign in to confirm this order - another order was just placed from this device.',
+          'Please sign in to confirm this order - another order was just placed with these details.',
       });
     }
     // Only ask for a code that can actually be delivered. With no SMS gateway
-    // configured this step would be a wall with no door - the order still has
-    // to be prepaid, which is the part that discourages a fake one anyway.
+    // configured this step would be a wall with no door, and being signed in
+    // is already the larger part of the proof - so it is skipped rather than
+    // turned into a dead end.
     if (
       risk.requirePhoneVerification &&
       this.phoneProof.canDeliver &&
@@ -338,17 +370,6 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
         'bKash payments are temporarily unavailable - please pick another method.',
       );
     }
-    // Cash on delivery costs a fake buyer nothing, which is exactly why a
-    // repeat order cannot use it - asking for the money is what makes the
-    // pattern stop. Only COD is withheld: a manual mobile-banking transfer is
-    // still the buyer sending money before the parcel moves.
-    if (risk.requirePrepayment && method.kind === 'cod') {
-      throw new ForbiddenException({
-        code: 'PREPAYMENT_REQUIRED',
-        message:
-          'Cash on delivery is not available for this order - please pay online to confirm it.',
-      });
-    }
     // Exactly one of the three order shapes: a single product, a combo, or a
     // cart of products (all from this one shop).
     const shapes = [dto.productId, dto.comboId, dto.items].filter(Boolean);
@@ -373,7 +394,12 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
         throw new ForbiddenException('This shop is currently offline.');
       }
 
-      await this.assertNotOwnShop(tx, shop.ownerId, dto.contact);
+      await this.assertNotOwnShop(
+        tx,
+        shop.ownerId,
+        dto.contact,
+        caller.accountId,
+      );
 
       // Free tier: a shop may take 10 orders as a trial; the order that fills
       // the last slot still goes through, then the shop is deactivated until
@@ -412,6 +438,18 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
         : dto.comboId
           ? await this.buildComboCart(tx, dto, method.kind)
           : await this.buildProductCart(tx, dto, method.kind);
+
+      // The authoritative pass, under the shop lock that serializes checkouts
+      // for this shop - which is what actually stops a double-tapped button
+      // placing two. Reads the priced cart, so it sees a combo's members
+      // however the request named them. Before any stock moves.
+      await this.assertNotOrderedRecently(tx, dto.shopId, dto.contact, [
+        ...new Set(
+          cart.lines
+            .map((l) => l.productId)
+            .filter((id): id is string => id !== null),
+        ),
+      ]);
 
       // A coupon takes money off the item subtotal (never delivery - the
       // seller still owes the courier that). A code that doesn't apply is
@@ -1003,16 +1041,27 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
    * because both are unique per account and both are what the seller would
    * naturally type into their own storefront.
    *
+   * A signed-in caller is matched on their account id as well, which is the
+   * one identifier they cannot type their way around: a seller browsing their
+   * own storefront while logged in is caught whatever contact details they
+   * put in the form.
+   *
    * This is a self-dealing guard, not a security boundary: a seller who wants
-   * to place an order against themselves can use another address. What it
-   * stops is the accidental case, and the obvious inflation of a shop's own
-   * order count and review eligibility.
+   * to place an order against themselves can sign out and use another address.
+   * What it stops is the accidental case, and the obvious inflation of a
+   * shop's own order count and review eligibility.
    */
   private async assertNotOwnShop(
     tx: OrdersTx,
     ownerId: string,
     contact: { email?: string; phone: string },
+    accountId: string | null = null,
   ): Promise<void> {
+    if (accountId && accountId === ownerId) {
+      throw new ForbiddenException(
+        'You cannot place an order in your own shop.',
+      );
+    }
     const [owner] = await tx
       .select({ email: users.email, phone: users.phone })
       .from(users)
@@ -1029,6 +1078,91 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
       throw new ForbiddenException(
         'You cannot place an order in your own shop.',
       );
+    }
+  }
+
+  /**
+   * The products this checkout is about to buy, read straight off the request.
+   *
+   * Exists so the duplicate check can run *before* the identity gates. Almost
+   * every same-item repeat is also a same-contact repeat, so without this the
+   * buyer would be made to sign in and answer an SMS code only to be told the
+   * order was never going to be placed - three prompts to reach a refusal.
+   *
+   * A combo names its members rather than a product, so that one shape needs a
+   * lookup; the other two are already in the request.
+   */
+  private async checkoutProductIds(dto: CheckoutDto): Promise<string[]> {
+    if (dto.items) return dto.items.map((i) => i.productId);
+    if (dto.productId) return [dto.productId];
+    if (dto.comboId) {
+      const combo = await this.db.query.combos.findFirst({
+        where: and(eq(combos.id, dto.comboId), eq(combos.shopId, dto.shopId)),
+        with: { items: { columns: { productId: true } } },
+      });
+      return combo?.items.map((i) => i.productId) ?? [];
+    }
+    return [];
+  }
+
+  /**
+   * One buyer, one order of a given item per {@link RISK_WINDOW_HOURS}.
+   *
+   * Aimed at the duplicate nobody meant to place - a double-tapped button, a
+   * page reopened from history, a buyer who forgot they already ordered this
+   * morning. A second copy of the same thing hours later is far more often a
+   * mistake than an intention, and a seller shipping two is the one who
+   * absorbs it.
+   *
+   * So it is refused rather than swallowed, but with the door left open: the
+   * storefront turns this code into a prompt offering the seller's chat, which
+   * is where a buyer who genuinely wants two says so. The window then lapses
+   * on its own.
+   *
+   * Matched on the contact details, like every other buyer-history question
+   * here - orders carry no account id, and a regular checking out as a guest
+   * is still the same person.
+   */
+  private async assertNotOrderedRecently(
+    executor: OrdersTx | DrizzleDB,
+    shopId: string,
+    contact: { email?: string; phone: string },
+    productIds: string[],
+  ): Promise<void> {
+    if (!productIds.length) return;
+
+    const email = contact.email?.trim().toLowerCase();
+    const phone = normalizePhone(contact.phone);
+    const who = [
+      email ? sql`lower(${orders.email}) = ${email}` : undefined,
+      phone
+        ? sql`regexp_replace(coalesce(${orders.phone}, ''), '\\D', '', 'g') like ${'%' + phone}`
+        : undefined,
+    ].filter(Boolean);
+    if (!who.length) return;
+
+    // A cancelled order is one that never happened, so it must not stand in
+    // the way of ordering the same thing again.
+    const [clash] = await executor
+      .select({ name: orderItems.name })
+      .from(orderItems)
+      .innerJoin(orders, eq(orderItems.orderId, orders.id))
+      .where(
+        and(
+          eq(orders.shopId, shopId),
+          ne(orders.status, 'Cancelled'),
+          gte(orders.placedAt, repeatItemWindowStart()),
+          inArray(orderItems.productId, productIds),
+          or(...who),
+        ),
+      )
+      .limit(1);
+
+    if (clash) {
+      throw new ForbiddenException({
+        code: 'ALREADY_ORDERED_RECENTLY',
+        message: `You have already ordered ${clash.name} recently. To buy it again, please try later or message the seller.`,
+      });
     }
   }
 

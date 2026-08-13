@@ -1,6 +1,7 @@
 import { Global, Module } from '@nestjs/common';
 import { JwtModule } from '@nestjs/jwt';
 import { AuthModule } from '../auth/auth.module';
+import { UsersModule } from '../users/users.module';
 import { PhoneProofService } from './phone-proof.service';
 import { RiskService } from './risk.service';
 
@@ -10,7 +11,7 @@ import { RiskService } from './risk.service';
  */
 @Global()
 @Module({
-  imports: [JwtModule.register({}), AuthModule],
+  imports: [JwtModule.register({}), AuthModule, UsersModule],
   providers: [RiskService, PhoneProofService],
   exports: [RiskService, PhoneProofService],
 })

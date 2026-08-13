@@ -57,20 +57,22 @@ export class OrdersController {
   }
 
   /**
-   * What this checkout will be asked for before it can go through - whether
-   * cash on delivery is available, and whether the buyer has to sign in or
-   * confirm their number first.
+   * Which identity steps this checkout will ask for - whether the buyer has to
+   * sign in, and whether they will be asked to confirm their number.
    *
-   * The storefront calls this while the buyer is still filling the form, so
-   * COD can be withheld before it is picked rather than refused after. The
-   * answer is advisory: checkout re-runs the same checks and is what actually
-   * enforces them.
+   * The storefront calls this while the buyer is still filling the form, so it
+   * can say the steps are coming rather than springing them on the button.
+   * Nothing here withholds a payment method or refuses an order. The answer is
+   * advisory: checkout re-runs the same checks and is what actually enforces
+   * them.
    */
   @Public()
   @Throttle({ default: { limit: 30, ttl: 60_000 } })
   @Post('checkout/preflight')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'What this checkout must satisfy before it is placed' })
+  @ApiOperation({
+    summary: 'What this checkout must satisfy before it is placed',
+  })
   preflight(@Body() dto: CheckoutPreflightDto, @Req() req: Request) {
     return this.orders.preflight(dto, callerFrom(req, this.accountOf(req)));
   }
@@ -98,7 +100,9 @@ export class OrdersController {
   /**
    * Phone verification for a checkout. A guest has no account to mark as
    * verified, so confirming the code hands back a short-lived proof that
-   * `POST /checkout` accepts in its place.
+   * `POST /checkout` accepts in its place. A signed-in caller gets the number
+   * written to their account as well, which is what makes this a once-ever
+   * step rather than one they meet again on their next repeat order.
    */
   @Public()
   @Throttle({ default: { limit: 5, ttl: 60_000 } })
@@ -114,8 +118,8 @@ export class OrdersController {
   @Post('checkout/phone/confirm')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Exchange the code for a checkout phone proof' })
-  confirmPhone(@Body() dto: CheckoutPhoneConfirmDto) {
-    return this.phoneProof.confirm(dto.phone, dto.code);
+  confirmPhone(@Body() dto: CheckoutPhoneConfirmDto, @Req() req: Request) {
+    return this.phoneProof.confirm(dto.phone, dto.code, this.accountOf(req));
   }
 
   /**

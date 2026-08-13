@@ -6,6 +6,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { OtpService, type PhoneCodeSent } from '../auth/otp.service';
+import { UsersService } from '../users/users.service';
 
 const SCOPE = 'checkout-phone';
 /** Long enough to finish a checkout, short enough that a proof is not reusable
@@ -39,6 +40,7 @@ export class PhoneProofService {
   constructor(
     private readonly otp: OtpService,
     private readonly jwt: JwtService,
+    private readonly users: UsersService,
     config: ConfigService,
   ) {
     this.secret = config.getOrThrow<string>('jwt.secret');
@@ -75,11 +77,41 @@ export class PhoneProofService {
     return this.otp.smsEnabled || !this.isProduction;
   }
 
-  /** Exchange a correct code for the proof checkout will accept. */
-  async confirm(phone: string, code: string): Promise<{ proof: string }> {
+  /**
+   * Exchange a correct code for the proof checkout will accept.
+   *
+   * When the caller is signed in, the same answer is also written to their
+   * account - this is an OTP to a number they hold, which is exactly what the
+   * account's own phone verification asks for, so there is no reason to make
+   * them prove it twice. That write is what makes this a once-in-a-lifetime
+   * step: from here on the account is verified and checkout stops asking.
+   *
+   * The proof is returned either way. It is what the order in flight carries,
+   * and it is all a guest gets.
+   */
+  async confirm(
+    phone: string,
+    code: string,
+    accountId?: string | null,
+  ): Promise<{ proof: string }> {
     const normalized = normalizePhone(phone);
     if (!this.otp.verify(normalized, code, SCOPE)) {
       throw new BadRequestException('That code is not right, or it expired');
+    }
+    if (accountId) {
+      // Stored in the same shape the account flow uses, so one number reads as
+      // one number to `findByVerifiedPhone` whichever door proved it.
+      const e164 = `+880${normalized}`;
+      // One number belongs to one account, so a number already verified
+      // elsewhere is not claimed by this one. The order still goes through -
+      // this endpoint exists to let a checkout finish, and refusing here would
+      // put a wall in front of a buyer who just answered a code correctly.
+      // They are simply asked again on their next repeat order, and the
+      // create-shop wizard is where a number is moved between accounts.
+      const owner = await this.users.findByVerifiedPhone(e164);
+      if (!owner || owner.id === accountId) {
+        await this.users.setVerifiedPhone(accountId, e164);
+      }
     }
     const proof = await this.jwt.signAsync(
       { typ: 'phone-proof', phone: normalized } satisfies PhoneProofClaims,

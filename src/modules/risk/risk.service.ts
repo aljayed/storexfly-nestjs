@@ -18,18 +18,22 @@ export const RISK_WINDOW_HOURS = 12;
  * What a checkout has to satisfy before it is allowed through. Every field is
  * false for the ordinary case - the first order from a person in 12 hours, and
  * every order from a buyer who has taken a delivery before.
+ *
+ * Nothing here withholds a payment method or refuses an order. A repeat inside
+ * the window costs the buyer two taps - sign in, then answer a code - and then
+ * they order exactly as they would have. Twelve hours after their last order
+ * they are an ordinary buyer again with no steps at all.
  */
 export interface CheckoutRisk {
-  /** Guest repeating from the same IP *and* device: make them sign in. */
+  /** Repeating inside the window as a guest: attach the order to an account. */
   requireLogin: boolean;
-  /** Same phone or email ordering again inside the window: prove the number. */
-  requirePhoneVerification: boolean;
   /**
-   * Cash on delivery is withheld: this order has to be paid through a
-   * gateway. Fake orders cost the sender nothing precisely because COD costs
-   * nothing up front, so asking for the money is what makes them stop.
+   * Answer an SMS code. Asked once the buyer is signed in, so the two steps
+   * arrive in that order rather than at once, and only of an account that has
+   * never answered one - it is proof of a person, kept for the account's
+   * lifetime, not a check re-run against each delivery number.
    */
-  requirePrepayment: boolean;
+  requirePhoneVerification: boolean;
   /** Why, for the message the buyer sees and for support to read back. */
   reason?: 'repeat_contact' | 'guest_repeat';
 }
@@ -64,9 +68,11 @@ function normalizePhone(raw: string | null | undefined): string {
  * ever used together with the device fingerprint, and only for guests, where
  * there is nothing better to go on.
  *
- * Nothing here refuses an order outright. Each rule escalates what the buyer
- * must do - sign in, prove the number, put money down - so a real customer in
- * a hurry always has a way through.
+ * Nothing here refuses an order, withholds a payment method, or caps how often
+ * anyone may buy. A repeat inside the window only asks the buyer to identify
+ * themselves - sign in, and answer an SMS code once in the account's life -
+ * and the order then proceeds exactly as it would have, cash on delivery
+ * included. A verified account never meets either step again.
  */
 @Injectable()
 export class RiskService {
@@ -145,7 +151,13 @@ export class RiskService {
     const [row] = await this.db
       .select({ n: sql<number>`count(*)::int` })
       .from(riskEvents)
-      .where(and(eq(riskEvents.kind, kind), gte(riskEvents.createdAt, this.since()), where));
+      .where(
+        and(
+          eq(riskEvents.kind, kind),
+          gte(riskEvents.createdAt, this.since()),
+          where,
+        ),
+      );
     return row?.n ?? 0;
   }
 
@@ -161,11 +173,28 @@ export class RiskService {
     return { requireEmailVerification: prior >= 1 };
   }
 
+  /**
+   * True when this account has proved a phone number by OTP at some point -
+   * at checkout, or in the create-shop wizard, which write the same field.
+   *
+   * Deliberately about the account rather than the number in front of it: the
+   * code step is a once-in-a-lifetime proof that a real person is behind the
+   * account, not a per-order check on the delivery number. A verified buyer
+   * ordering a gift to someone else's phone is still that same verified buyer,
+   * and asking them again would be asking a question already answered.
+   */
+  private async accountPhoneVerified(accountId: string): Promise<boolean> {
+    const account = await this.db.query.users.findFirst({
+      where: eq(users.id, accountId),
+      columns: { phoneVerified: true },
+    });
+    return !!account?.phoneVerified;
+  }
+
   async assessCheckout(subject: CheckoutSubject): Promise<CheckoutRisk> {
     const none: CheckoutRisk = {
       requireLogin: false,
       requirePhoneVerification: false,
-      requirePrepayment: false,
     };
     if (await this.isTrusted(subject)) return none;
 
@@ -197,25 +226,33 @@ export class RiskService {
           )
         : 0;
 
-    if (repeatContact >= 1) {
-      return {
-        requireLogin: false,
-        requirePhoneVerification: true,
-        requirePrepayment: true,
-        reason: 'repeat_contact',
-      };
+    const reason =
+      repeatContact >= 1
+        ? 'repeat_contact'
+        : repeatGuest >= 1
+          ? 'guest_repeat'
+          : undefined;
+    if (!reason) return none;
+
+    // Two steps, in this order. A guest is asked to sign in first - the code
+    // step means little against an account that does not exist yet, and it is
+    // the account that carries the proof forward to their next order.
+    if (!subject.accountId) {
+      return { requireLogin: true, requirePhoneVerification: true, reason };
     }
-    if (repeatGuest >= 1) {
-      return { ...none, requireLogin: true, reason: 'guest_repeat' };
-    }
-    return none;
+    // Signed in, so the code is all that is left - and only for an account
+    // that has never answered one. Once it has, this returns clean forever.
+    return {
+      requireLogin: false,
+      requirePhoneVerification: !(await this.accountPhoneVerified(
+        subject.accountId,
+      )),
+      reason,
+    };
   }
 
   /** Record an attempt so the next one can see it. */
-  async record(
-    kind: RiskEventKind,
-    subject: CheckoutSubject,
-  ): Promise<void> {
+  async record(kind: RiskEventKind, subject: CheckoutSubject): Promise<void> {
     await this.db.insert(riskEvents).values({
       kind,
       phoneHash: this.hash(normalizePhone(subject.phone)),
