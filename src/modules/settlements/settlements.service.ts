@@ -4,7 +4,19 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { and, asc, desc, eq, gte, inArray, lt, sql } from 'drizzle-orm';
+import {
+  and,
+  asc,
+  desc,
+  eq,
+  gte,
+  inArray,
+  isNotNull,
+  lt,
+  ne,
+  or,
+  sql,
+} from 'drizzle-orm';
 import { centsToDollars } from '../../common/utils/money.util';
 import { DRIZZLE } from '../../database/database.constants';
 import type { DrizzleDB } from '../../database/drizzle.types';
@@ -50,6 +62,28 @@ import type {
   PlatformSettlementTotalResponse,
 } from './dto/platform-settlement.response';
 
+/** Split protected COD into the platform-held advance and door-collected
+ * balance. Keeping both buckets makes sales totals reconcile without ever
+ * paying the seller the COD portion from platform funds. */
+function addOrderForSettlement(
+  bucket: Buckets,
+  order: {
+    paymentMethod: string | null;
+    totalCents: number;
+    advanceCents: number;
+    pay: string;
+  },
+): void {
+  if (order.advanceCents > 0) {
+    addOrder(bucket, order.paymentMethod, order.advanceCents, 1);
+    if (order.pay === 'Paid') {
+      addOrder(bucket, 'cod', order.totalCents - order.advanceCents, 0);
+    }
+    return;
+  }
+  addOrder(bucket, order.paymentMethod, order.totalCents, 1);
+}
+
 /**
  * Monthly payout accounting for prepaid (online) orders.
  *
@@ -77,8 +111,19 @@ export class SettlementsService {
       this.methods.listEnabled(),
       this.methods.getBanner(),
       this.db.query.orders.findMany({
-        where: and(eq(orders.shopId, shopId), eq(orders.pay, 'Paid')),
-        columns: { totalCents: true, paymentMethod: true, placedAt: true },
+        where: and(
+          eq(orders.shopId, shopId),
+          or(eq(orders.pay, 'Paid'), isNotNull(orders.advancePaidAt)),
+          ne(orders.status, 'Cancelled'),
+          ne(orders.pay, 'Refunded'),
+        ),
+        columns: {
+          totalCents: true,
+          paymentMethod: true,
+          advanceCents: true,
+          pay: true,
+          placedAt: true,
+        },
       }),
       this.db.query.settlements.findMany({
         where: eq(settlements.shopId, shopId),
@@ -89,7 +134,7 @@ export class SettlementsService {
     for (const r of rows) {
       const period = periodOf(r.placedAt);
       const b = byPeriod.get(period) ?? emptyBuckets();
-      addOrder(b, r.paymentMethod, r.totalCents, 1);
+      addOrderForSettlement(b, r);
       byPeriod.set(period, b);
     }
     const paidByPeriod = new Map(paidRows.map((s) => [s.period, s]));
@@ -116,22 +161,22 @@ export class SettlementsService {
 
     const [catalog, grouped, paidRows, firstOrder] = await Promise.all([
       this.methods.byCode(),
-      this.db
-        .select({
-          shopId: orders.shopId,
-          method: orders.paymentMethod,
-          count: sql<number>`count(*)::int`,
-          cents: sql<number>`coalesce(sum(${orders.totalCents}), 0)::int`,
-        })
-        .from(orders)
-        .where(
-          and(
-            eq(orders.pay, 'Paid'),
-            gte(orders.placedAt, from),
-            lt(orders.placedAt, end),
-          ),
-        )
-        .groupBy(orders.shopId, orders.paymentMethod),
+      this.db.query.orders.findMany({
+        where: and(
+          or(eq(orders.pay, 'Paid'), isNotNull(orders.advancePaidAt)),
+          ne(orders.status, 'Cancelled'),
+          ne(orders.pay, 'Refunded'),
+          gte(orders.placedAt, from),
+          lt(orders.placedAt, end),
+        ),
+        columns: {
+          shopId: true,
+          paymentMethod: true,
+          totalCents: true,
+          advanceCents: true,
+          pay: true,
+        },
+      }),
       this.db.query.settlements.findMany({
         where: eq(settlements.period, selected),
       }),
@@ -143,10 +188,10 @@ export class SettlementsService {
     ]);
 
     const byShop = new Map<string, Buckets>();
-    for (const g of grouped) {
-      const b = byShop.get(g.shopId) ?? emptyBuckets();
-      addOrder(b, g.method, g.cents, g.count);
-      byShop.set(g.shopId, b);
+    for (const order of grouped) {
+      const b = byShop.get(order.shopId) ?? emptyBuckets();
+      addOrderForSettlement(b, order);
+      byShop.set(order.shopId, b);
     }
     const paidByShop = new Map(paidRows.map((s) => [s.shopId, s]));
 
@@ -322,14 +367,21 @@ export class SettlementsService {
     const rows = await this.db.query.orders.findMany({
       where: and(
         eq(orders.shopId, shopId),
-        eq(orders.pay, 'Paid'),
+        or(eq(orders.pay, 'Paid'), isNotNull(orders.advancePaidAt)),
+        ne(orders.status, 'Cancelled'),
+        ne(orders.pay, 'Refunded'),
         gte(orders.placedAt, from),
         lt(orders.placedAt, end),
       ),
-      columns: { totalCents: true, paymentMethod: true },
+      columns: {
+        totalCents: true,
+        paymentMethod: true,
+        advanceCents: true,
+        pay: true,
+      },
     });
     const b = emptyBuckets();
-    for (const r of rows) addOrder(b, r.paymentMethod, r.totalCents, 1);
+    for (const r of rows) addOrderForSettlement(b, r);
     return b;
   }
 

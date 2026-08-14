@@ -71,7 +71,12 @@ export class PaymentsService implements OnModuleInit, OnModuleDestroy {
       shop:
         (order as { shop?: { handle: string } } | undefined)?.shop?.handle ??
         '',
-      total: order ? String(order.totalCents / 100) : '',
+      total: order ? String(attempt.amountCents / 100) : '',
+      due:
+        order?.advanceCents && order.advanceCents > 0
+          ? String((order.totalCents - order.advanceCents) / 100)
+          : '',
+      partial: order?.advanceCents && order.advanceCents > 0 ? '1' : '',
     };
 
     // Replays of an already-decided attempt just re-show the result page.

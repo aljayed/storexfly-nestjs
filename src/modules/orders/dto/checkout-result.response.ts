@@ -21,6 +21,10 @@ export class CheckoutResultResponse {
       "'Due' = pay on delivery / seller confirms receipt; 'Pending' = finish paying at `paymentUrl`.",
   })
   payStatus!: string;
+  @ApiProperty({ description: 'Amount collected now (currency units)' })
+  amountDueNow!: number;
+  @ApiProperty({ description: 'Balance to collect on delivery' })
+  codDue!: number;
   @ApiPropertyOptional({
     description: 'bKash hosted-checkout URL to redirect the buyer to.',
   })

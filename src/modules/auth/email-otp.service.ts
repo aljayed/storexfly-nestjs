@@ -23,6 +23,12 @@ interface PendingEntry {
 export interface OtpDispatch {
   sent: boolean;
   retryAfterSeconds: number;
+  /**
+   * The code itself. Returned so a caller with no mail server configured can
+   * surface it locally, the way the phone OTP service does - callers must
+   * never pass it to a client in production.
+   */
+  code: string;
 }
 
 /**
@@ -56,7 +62,18 @@ export class EmailOtpService {
     scope: string,
     email: string,
     payload: T,
-    mail?: { subject?: string; heading?: string; intro?: string },
+    /**
+     * `linkUrl` adds a one-tap alternative to typing the code. The caller owns
+     * the token inside it - this service stays unaware of what the link means,
+     * so a flow that has no link simply omits it.
+     */
+    mail?: {
+      subject?: string;
+      heading?: string;
+      intro?: string;
+      linkUrl?: string;
+      linkLabel?: string;
+    },
   ): Promise<OtpDispatch> {
     const key = this.key(scope, email);
     const now = Date.now();
@@ -69,6 +86,7 @@ export class EmailOtpService {
         return {
           sent: false,
           retryAfterSeconds: Math.ceil((this.resendCooldownMs - waited) / 1000),
+          code: live.code,
         };
       }
       // Hourly ceiling, so repeated "resend" taps cannot mail-bomb an address
@@ -80,6 +98,7 @@ export class EmailOtpService {
           retryAfterSeconds: Math.ceil(
             (this.sendWindowMs - (now - live.windowStart)) / 1000,
           ),
+          code: live.code,
         };
       }
     }
@@ -112,15 +131,15 @@ export class EmailOtpService {
       .send({
         to: email,
         subject: mail?.subject ?? 'Your Hoomri verification code',
-        text: textBody(code, intro),
-        html: htmlBody(code, heading, intro),
+        text: textBody(code, intro, mail?.linkUrl),
+        html: htmlBody(code, heading, intro, mail?.linkUrl, mail?.linkLabel),
       })
       .catch((err: unknown) => {
         this.logger.error(
           `Could not email the ${scope} code to ${email}: ${String(err)}`,
         );
       });
-    return { sent: true, retryAfterSeconds: this.resendCooldownMs / 1000 };
+    return { sent: true, retryAfterSeconds: this.resendCooldownMs / 1000, code };
   }
 
   /** Returns the stored payload if the code matches and is unexpired; consumes the entry on success. */
@@ -149,9 +168,10 @@ export class EmailOtpService {
   }
 }
 
-function textBody(code: string, intro: string): string {
+function textBody(code: string, intro: string, linkUrl?: string): string {
   return [
     `${intro} ${code}`,
+    ...(linkUrl ? ['', 'Or confirm it in one tap:', linkUrl] : []),
     '',
     'This code expires in 10 minutes.',
     '',
@@ -159,7 +179,23 @@ function textBody(code: string, intro: string): string {
   ].join('\n');
 }
 
-function htmlBody(code: string, heading: string, intro: string): string {
+function htmlBody(
+  code: string,
+  heading: string,
+  intro: string,
+  linkUrl?: string,
+  linkLabel?: string,
+): string {
+  // The code comes first: it is the path that works when the mail client
+  // strips links, and the one that keeps the buyer on the page they started on.
+  const link = linkUrl
+    ? `
+      <p style="margin:0 0 6px;color:#87827a;font-size:13px">Or confirm it in one tap:</p>
+      <p style="margin:0 0 28px">
+        <a href="${linkUrl}" style="display:inline-block;padding:12px 22px;border-radius:10px;background:#1a1814;color:#fff;font-weight:700;font-size:14px;text-decoration:none">${linkLabel ?? 'Verify my email'}</a>
+      </p>
+      <p style="margin:0 0 28px;color:#b8b3a9;font-size:11px;word-break:break-all">${linkUrl}</p>`
+    : '';
   return `
     <div style="font-family:system-ui,sans-serif;max-width:480px;margin:0 auto;color:#1a1814">
       <h2 style="font-weight:800">${heading}</h2>
@@ -167,6 +203,7 @@ function htmlBody(code: string, heading: string, intro: string): string {
       <p style="margin:28px 0">
         <span style="font-size:32px;font-weight:800;letter-spacing:6px">${code}</span>
       </p>
+      ${link}
       <p style="color:#87827a;font-size:13px">
         This code expires in 10 minutes. If you didn't request this, you can
         safely ignore this email.

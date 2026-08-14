@@ -17,16 +17,6 @@ const trim = ({ value }: { value: unknown }) =>
   typeof value === 'string' ? value.trim() : value;
 
 export class BuyerRegisterDto {
-  /**
-   * Emailed code, required only when a second account is being opened from
-   * one address inside 12 hours (see RiskService.assessSignup).
-   */
-  @ApiPropertyOptional({ example: '123456' })
-  @IsOptional()
-  @IsString()
-  @MaxLength(8)
-  emailCode?: string;
-
   @ApiProperty({ example: 'Arif Hossain' })
   @IsString()
   @Transform(trim)

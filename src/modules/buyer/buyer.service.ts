@@ -1,5 +1,6 @@
 import {
   ConflictException,
+  HttpStatus,
   Logger,
   ForbiddenException,
   Inject,
@@ -47,8 +48,6 @@ import type {
 // hashes to the one `users` table, so they must not disagree on strength.
 const BCRYPT_ROUNDS = 12;
 const EMAIL_VERIFY_OTP_SCOPE = 'buyer-email-verify';
-/** Codes issued when a second account is opened from one address. */
-const SIGNUP_OTP_SCOPE = 'buyer-signup-verify';
 
 /** Reduce any BD phone format to the bare 10-digit national number, so numbers
  *  captured as "+8801712…", "01712…" or "1712…" all compare equal. */
@@ -137,40 +136,13 @@ export class BuyerService {
     await this.assertAvailable(dto.name, dto.email, phone);
 
     /**
-     * The first account from an address in 12 hours is created on the spot,
-     * as it always was - a shopper mid-purchase is never sent to their inbox.
-     * The next one has to answer a code first, so a script cannot mint
-     * accounts faster than it can read email.
+     * Created on the spot, every time - the same deal the seller signup gives.
+     * A shopper mid-purchase is never sent to their inbox for a code, so the
+     * second account from an address is no longer gated on one either. Signups
+     * are still recorded below, so the risk trail survives even though nothing
+     * blocks on it here.
      */
     const email = dto.email.trim().toLowerCase();
-    const { requireEmailVerification } = await this.risk.assessSignup(ip);
-    if (requireEmailVerification) {
-      const proved = dto.emailCode
-        ? this.emailOtp.verify<true>(SIGNUP_OTP_SCOPE, email, dto.emailCode)
-        : null;
-      if (!proved) {
-        // Issue (or re-issue) the code and tell the client to collect it. A
-        // mail outage must not turn this into a 500: the code is stored either
-        // way, and the caller still needs to be told what to do next.
-        // Storing the code and posting the email are separate now, so this
-        // returns straight away and a mail outage only loses the email.
-        const { retryAfterSeconds } = await this.emailOtp.start(
-          SIGNUP_OTP_SCOPE,
-          email,
-          true,
-          {
-            heading: 'Confirm your email',
-            intro: 'Use this code to finish creating your Hoomri account:',
-          },
-        );
-        throw new ForbiddenException({
-          code: 'EMAIL_VERIFICATION_REQUIRED',
-          message:
-            'Please confirm the code we emailed you to finish creating this account.',
-          retryAfterSeconds,
-        });
-      }
-    }
 
     const passwordHash = await bcrypt.hash(dto.password, BCRYPT_ROUNDS);
     const [row] = await this.db
@@ -238,13 +210,35 @@ export class BuyerService {
     return { linked: true };
   }
 
+  /**
+   * Answers *why* it refused, the same way the seller login does. A shopper
+   * signing in with an address that has no account should be offered one built
+   * from what they already typed, and the storefront can only do that if it is
+   * told which half failed. Naming an unregistered address reveals nothing
+   * `register` doesn't already answer with its EMAIL_TAKEN 409, so the pair of
+   * requests gives away no more than one of them did. A wrong password stays
+   * deliberately vague - that is the answer worth protecting.
+   */
   async login(dto: BuyerLoginDto): Promise<BuyerAuthResponse> {
     const row = await this.findByEmail(dto.email);
-    if (
-      !row ||
-      !row.passwordHash ||
-      !(await bcrypt.compare(dto.password, row.passwordHash))
-    ) {
+    if (!row) {
+      throw new UnauthorizedException({
+        statusCode: HttpStatus.UNAUTHORIZED,
+        error: 'AccountNotFound',
+        message: 'No account uses this email address.',
+      });
+    }
+    if (!row.passwordHash) {
+      // The account exists but was made through Google, so offering to create
+      // one would only 409 and there is no password to check. Point at the
+      // door that actually opens.
+      throw new UnauthorizedException({
+        statusCode: HttpStatus.UNAUTHORIZED,
+        error: 'PasswordNotSet',
+        message: 'This account signs in with Google.',
+      });
+    }
+    if (!(await bcrypt.compare(dto.password, row.passwordHash))) {
       throw new UnauthorizedException('Invalid email or password');
     }
     return this.issue(row);

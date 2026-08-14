@@ -58,6 +58,7 @@ import type { OrderStatus, SalesChannel } from '../../database/schema/enums';
 import { CustomersService } from '../customers/customers.service';
 import type { CheckoutCaller } from '../risk/checkout-caller';
 import { PhoneProofService } from '../risk/phone-proof.service';
+import { EmailProofService } from '../risk/email-proof.service';
 import {
   RISK_WINDOW_HOURS,
   RiskService,
@@ -241,6 +242,7 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
     private readonly customers: CustomersService,
     private readonly risk: RiskService,
     private readonly phoneProof: PhoneProofService,
+    private readonly emailProof: EmailProofService,
     private readonly paymentMethods: PaymentMethodsService,
     private readonly notifications: NotificationsService,
     private readonly bkash: BkashService,
@@ -370,6 +372,47 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
         'bKash payments are temporarily unavailable - please pick another method.',
       );
     }
+    const usesCodProtection = dto.paymentPlan !== undefined;
+    const wantsCodAdvance = dto.paymentPlan === 'cod_advance';
+    const checkoutKind = usesCodProtection ? 'cod' : method.kind;
+    if (usesCodProtection && method.kind === 'cod') {
+      throw new BadRequestException(
+        'Choose bKash or SSLCommerz for the 15% advance payment.',
+      );
+    }
+
+    /**
+     * Money is about to change hands, so the address the receipt, the payment
+     * trail and any refund conversation depend on has to be one the buyer can
+     * actually open. Applies to the 15% advance exactly as it does to paying
+     * in full - both take money now - and never to plain Cash on Delivery,
+     * where nothing is collected until the parcel is in their hands.
+     *
+     * A signed-in buyer whose account email is already verified has answered
+     * this once and is not asked again; everyone else answers a code or
+     * follows the emailed link, and carries the proof back on the retry.
+     */
+    if (method.kind !== 'cod') {
+      const orderEmail = dto.contact.email?.trim();
+      if (!orderEmail) {
+        throw new ForbiddenException({
+          code: 'EMAIL_VERIFICATION_REQUIRED',
+          message: 'Add your email address to pay online.',
+        });
+      }
+      if (
+        !(await this.emailProof.satisfies(
+          orderEmail,
+          dto.emailProof,
+          caller.accountId,
+        ))
+      ) {
+        throw new ForbiddenException({
+          code: 'EMAIL_VERIFICATION_REQUIRED',
+          message: 'Please confirm your email address to pay online.',
+        });
+      }
+    }
     // Exactly one of the three order shapes: a single product, a combo, or a
     // cart of products (all from this one shop).
     const shapes = [dto.productId, dto.comboId, dto.items].filter(Boolean);
@@ -385,13 +428,29 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
       // Lock the shop row: all concurrent checkouts for this shop queue here,
       // which makes the "#NNNN" reference and stock math race-free.
       const [shop] = await tx
-        .select({ live: shops.live, plan: shops.plan, ownerId: shops.ownerId })
+        .select({
+          live: shops.live,
+          plan: shops.plan,
+          ownerId: shops.ownerId,
+          codAdvanceEnabled: shops.codAdvanceEnabled,
+          paymentMethods: shops.paymentMethods,
+        })
         .from(shops)
         .where(eq(shops.id, dto.shopId))
         .for('update');
       // A switched-off shop is closed to buyers - no orders either.
       if (!shop?.live) {
         throw new ForbiddenException('This shop is currently offline.');
+      }
+      if (!shop.paymentMethods.includes(checkoutKind)) {
+        throw new BadRequestException(
+          'That payment method is not enabled for this shop - please pick another.',
+        );
+      }
+      if (usesCodProtection && !shop.codAdvanceEnabled) {
+        throw new BadRequestException(
+          'This shop does not currently offer 15% advance payment.',
+        );
       }
 
       await this.assertNotOwnShop(
@@ -433,11 +492,14 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
       }
 
       // Build the priced line items + stock deductions for the picked flow.
+      // A partial payment is still the product's COD track; bKash/card only
+      // collects the advance. Validate product availability against COD rather
+      // than requiring sellers to enable full online payment too.
       const cart = dto.items
-        ? await this.buildItemsCart(tx, dto, method.kind)
+        ? await this.buildItemsCart(tx, dto, checkoutKind)
         : dto.comboId
-          ? await this.buildComboCart(tx, dto, method.kind)
-          : await this.buildProductCart(tx, dto, method.kind);
+          ? await this.buildComboCart(tx, dto, checkoutKind)
+          : await this.buildProductCart(tx, dto, checkoutKind);
 
       // The authoritative pass, under the shop lock that serializes checkouts
       // for this shop - which is what actually stops a double-tapped button
@@ -457,6 +519,9 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
       // shows the exact discount before the buyer commits, so a race here
       // (the code expiring mid-checkout) should still place the order.
       const applied = await this.applyCoupon(tx, dto, cart);
+      const advanceCents = wantsCodAdvance
+        ? Math.max(1, Math.round((cart.totalCents * 15) / 100))
+        : 0;
 
       const placedAt = new Date();
       const reference = await this.nextReference(tx, dto.shopId);
@@ -505,6 +570,7 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
           pay: payStatus,
           paymentMethod: dto.paymentMethod,
           mobileBankApp: dto.mobileBankApp,
+          advanceCents,
           channel: 'Store',
           couponCode: applied?.coupon.code ?? null,
           discountCents: applied?.discountCents ?? 0,
@@ -591,8 +657,9 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
     // pending order is voided again - stock and customer stats roll back.
     if (method.gateway === 'bkash') {
       try {
+        const amountDueNow = order.advanceCents || order.totalCents;
         const created = await this.bkash.createPayment({
-          amountCents: order.totalCents,
+          amountCents: amountDueNow,
           invoiceNumber: `${order.reference.replace('#', '')}-${order.id.slice(0, 8)}`,
           payerReference: dto.contact.phone.replace(/\D/g, ''),
           callbackUrl: this.bkashCallbackUrl(),
@@ -601,7 +668,7 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
           orderId: order.id,
           provider: 'bkash',
           paymentId: created.paymentId,
-          amountCents: order.totalCents,
+          amountCents: amountDueNow,
           payerReference: dto.contact.phone.replace(/\D/g, '').slice(0, 40),
         });
         return this.checkoutResult(order, dto, {
@@ -785,12 +852,22 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
 
     const order = await this.db.transaction(async (tx) => {
       const [shop] = await tx
-        .select({ live: shops.live, plan: shops.plan, ownerId: shops.ownerId })
+        .select({
+          live: shops.live,
+          plan: shops.plan,
+          ownerId: shops.ownerId,
+          paymentMethods: shops.paymentMethods,
+        })
         .from(shops)
         .where(eq(shops.id, offer.shopId))
         .for('update');
       if (!shop?.live) {
         throw new ForbiddenException('This shop is currently offline.');
+      }
+      if (!shop.paymentMethods.includes(method.kind)) {
+        throw new BadRequestException(
+          'That payment method is not enabled for this shop - please pick another.',
+        );
       }
       if (shop.ownerId === args.buyer.id) {
         throw new ForbiddenException(
@@ -837,11 +914,6 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
         if ((product.variantCombinations ?? []).length) {
           throw new ConflictException(
             `“${product.name}” now has buyer-selectable variants - ask the seller for a new offer.`,
-          );
-        }
-        if (!product.paymentMethods.includes(method.kind)) {
-          throw new BadRequestException(
-            `“${product.name}” cannot be paid with that method - please pick another.`,
           );
         }
         unitsByProduct.set(
@@ -1021,6 +1093,10 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
       qty: order.qty,
       eta: 'Within 2-3 days',
       payStatus: order.pay,
+      amountDueNow: (order.advanceCents || order.totalCents) / 100,
+      codDue: order.advanceCents
+        ? (order.totalCents - order.advanceCents) / 100
+        : 0,
       ...extra,
     };
   }
@@ -1190,7 +1266,7 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
   private priceProductPick(
     product: ProductRow,
     pick: { qty: number; variant?: Record<string, string>; packId?: string },
-    payKind: string | null,
+    _payKind: string | null,
   ): {
     line: CheckoutCart['lines'][number];
     units: number;
@@ -1204,18 +1280,6 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
         `“${product.name}” cannot be ordered online - please contact the seller.`,
       );
     }
-    // Sellers toggle payment *kinds* per product (COD / mobile banking /
-    // card); the picked method must belong to an allowed kind. `null` means
-    // no method has been chosen yet (a coupon preview) - nothing to check.
-    if (
-      payKind !== null &&
-      !product.paymentMethods.includes(payKind as never)
-    ) {
-      throw new BadRequestException(
-        `“${product.name}” cannot be paid with that method - please pick another.`,
-      );
-    }
-
     // One option per variant group is mandatory once a product defines groups.
     const parts: string[] = [];
     const variantPick: Record<string, string> = {};
@@ -1581,7 +1645,7 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
   private async buildComboCart(
     tx: OrdersTx,
     dto: CheckoutDto,
-    payKind: string | null,
+    _payKind: string | null,
   ): Promise<CheckoutCart> {
     const combo = await tx.query.combos.findFirst({
       where: and(eq(combos.id, dto.comboId!), eq(combos.shopId, dto.shopId)),
@@ -1604,15 +1668,6 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
         (product.variantCombinations ?? []).length
       ) {
         throw new ConflictException('This combo offer is no longer available.');
-      }
-      // A member that disallows the picked payment kind restricts the combo.
-      if (
-        payKind !== null &&
-        !product.paymentMethods.includes(payKind as never)
-      ) {
-        throw new BadRequestException(
-          'This combo cannot be paid with that method - please pick another.',
-        );
       }
       const units = item.qty * sets;
       if (product.stock < units) {
@@ -1907,6 +1962,11 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
     if (order.status === 'Cancelled') {
       throw new ConflictException('This order was cancelled.');
     }
+    if (order.advancePaidAt && order.status !== 'Delivered') {
+      throw new ConflictException(
+        'The remaining balance is due on delivery and cannot be confirmed yet.',
+      );
+    }
     const method = order.paymentMethod
       ? (await this.paymentMethods.byCode()).get(order.paymentMethod)
       : undefined;
@@ -1915,9 +1975,17 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
         'This order is collected by the payment gateway and confirms automatically.',
       );
     }
+    // Protected COD has two receipts: the advance, then the balance. The first
+    // confirmation records only the advance and intentionally leaves the
+    // order Due for the cash collected at delivery.
+    const confirmsAdvance = order.advanceCents > 0 && !order.advancePaidAt;
     const [row] = await this.db
       .update(orders)
-      .set({ pay: 'Paid' })
+      .set(
+        confirmsAdvance
+          ? { advancePaidAt: new Date() }
+          : { pay: 'Paid' as const },
+      )
       .where(eq(orders.id, order.id))
       .returning();
     await this.notifications.orderEvent(
@@ -1925,7 +1993,9 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
       row,
       'payment_confirmed',
       `Payment received for order ${row.reference}`,
-      'The seller confirmed your payment. Thank you!',
+      confirmsAdvance
+        ? 'The seller confirmed your advance payment. Pay the remaining balance when your order arrives.'
+        : 'The seller confirmed your payment. Thank you!',
     );
     const items = await this.db.query.orderItems.findMany({
       where: eq(orderItems.orderId, order.id),
@@ -1972,6 +2042,11 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
     if (order.pay !== 'Due') {
       throw new ConflictException(
         'Only unpaid (due) orders can have their amount changed for buyer approval.',
+      );
+    }
+    if (order.advancePaidAt) {
+      throw new ConflictException(
+        'The amount cannot be changed after an advance payment has been received.',
       );
     }
     if (order.courierConsignmentId) {
@@ -2763,9 +2838,18 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
 
   /** Called by the payments flow when the gateway confirms the money. */
   async confirmGatewayPayment(orderId: string): Promise<OrderRow | null> {
+    const order = await this.db.query.orders.findFirst({
+      where: eq(orders.id, orderId),
+    });
+    if (!order || order.pay !== 'Pending') return null;
+    const isAdvance = order.advanceCents > 0;
     const [row] = await this.db
       .update(orders)
-      .set({ pay: 'Paid' })
+      .set(
+        isAdvance
+          ? { pay: 'Due' as const, advancePaidAt: new Date() }
+          : { pay: 'Paid' as const },
+      )
       .where(and(eq(orders.id, orderId), eq(orders.pay, 'Pending')))
       .returning();
     if (row) {
@@ -2774,7 +2858,9 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
         row,
         'payment_confirmed',
         `Order ${row.reference} confirmed`,
-        'Your bKash payment was received and your order is now with the seller.',
+        isAdvance
+          ? 'Your 15% advance was received. Pay the remaining balance when your order arrives.'
+          : 'Your bKash payment was received and your order is now with the seller.',
       );
     }
     return row ?? null;
@@ -2819,6 +2905,11 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
    * walk to Delivered with nothing verifiable behind it.
    */
   private async assertHandoverAllowed(order: OrderRow): Promise<void> {
+    if (order.advanceCents > 0 && !order.advancePaidAt) {
+      throw new BadRequestException(
+        'Confirm the 15% advance payment before handing over this order.',
+      );
+    }
     if (order.courierConsignmentId) return;
     if (!(await this.courierSettings.courierRequired())) return;
     throw new BadRequestException(
@@ -2854,6 +2945,11 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
     if (!order.phone) {
       throw new BadRequestException('This order has no delivery phone number.');
     }
+    if (order.advanceCents > 0 && !order.advancePaidAt) {
+      throw new BadRequestException(
+        'Confirm the 15% advance payment before booking a courier.',
+      );
+    }
     const address = [
       order.address?.line,
       order.address?.area,
@@ -2875,7 +2971,10 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
       recipientName: order.customerName,
       recipientPhone: order.phone,
       recipientAddress: address,
-      codAmountCents: order.pay === 'Due' ? order.totalCents : 0,
+      codAmountCents:
+        order.pay === 'Due'
+          ? order.totalCents - order.advanceCents
+          : 0,
       note: `Order ${order.reference}`,
     };
     let booked: {
@@ -3300,6 +3399,7 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
   }
 
   private async isCodOrder(order: OrderRow): Promise<boolean> {
+    if (order.advanceCents > 0) return true;
     if (!order.paymentMethod) return false;
     const method = (await this.paymentMethods.byCode()).get(
       order.paymentMethod,

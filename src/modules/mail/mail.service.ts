@@ -40,6 +40,11 @@ export class MailService implements OnModuleInit {
     });
   }
 
+  /** True when a message can actually reach an inbox. */
+  get canDeliver(): boolean {
+    return this.transporter !== null;
+  }
+
   async send(options: {
     to: string;
     subject: string;

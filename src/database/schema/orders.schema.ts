@@ -58,6 +58,11 @@ export const orders = pgTable(
     // an operator-added slug, …); null for orders recorded manually.
     paymentMethod: varchar('payment_method', { length: 40 }),
     mobileBankApp: mobileBankAppEnum('mobile_bank_app'),
+    // The part of this order intentionally paid before delivery. Zero means a
+    // normal full-payment or full-COD order. `advancePaidAt` distinguishes a
+    // requested direct transfer from one the seller has actually confirmed.
+    advanceCents: integer('advance_cents').notNull().default(0),
+    advancePaidAt: timestamp('advance_paid_at', { withTimezone: true }),
     channel: salesChannelEnum('channel').notNull().default('Store'),
     address: jsonb('address').$type<DeliveryAddressValue>(),
     // ── Shop coupon the buyer redeemed (null = none) ───────────────

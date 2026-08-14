@@ -7,6 +7,7 @@ import {
   IsEmail,
   IsEnum,
   IsInt,
+  IsIn,
   IsNotEmptyObject,
   IsObject,
   IsOptional,
@@ -118,6 +119,13 @@ export class CheckoutDto {
   @MaxLength(1000)
   phoneProof?: string;
 
+  /** Proof the order's email address was confirmed - see EmailProofService. */
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(1000)
+  emailProof?: string;
+
   @ApiPropertyOptional({
     description:
       'The product being ordered. Exactly one of productId/comboId/items.',
@@ -196,6 +204,16 @@ export class CheckoutDto {
   @IsString()
   @MaxLength(40)
   paymentMethod!: string;
+
+  @ApiPropertyOptional({
+    enum: ['full', 'cod_advance'],
+    description:
+      'Use cod_advance to pay 15% online and leave the balance for delivery. ' +
+      'Only available when the shop has enabled COD advance protection.',
+  })
+  @IsOptional()
+  @IsIn(['full', 'cod_advance'])
+  paymentPlan?: 'full' | 'cod_advance';
 
   @ApiPropertyOptional({ enum: mobileBankAppEnum.enumValues })
   @IsOptional()
@@ -313,4 +331,28 @@ export class CheckoutPhoneConfirmDto extends CheckoutPhoneStartDto {
   @IsString()
   @MaxLength(8)
   code!: string;
+}
+
+/** POST /checkout/email/start */
+export class CheckoutEmailStartDto {
+  @ApiProperty({ example: 'arif@gmail.com' })
+  @IsEmail({}, { message: 'Enter a valid email address' })
+  @MaxLength(320)
+  email!: string;
+}
+
+/** POST /checkout/email/confirm */
+export class CheckoutEmailConfirmDto extends CheckoutEmailStartDto {
+  @ApiProperty({ example: '123456' })
+  @IsString()
+  @MaxLength(8)
+  code!: string;
+}
+
+/** POST /checkout/email/link - the emailed one-tap confirmation. */
+export class CheckoutEmailLinkDto {
+  @ApiProperty()
+  @IsString()
+  @MaxLength(200)
+  token!: string;
 }

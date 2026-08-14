@@ -27,6 +27,12 @@ export class ShopResponse {
   @ApiProperty({ example: '#fbeede' }) brandSoft!: string;
   @ApiProperty() ownerId!: string;
   @ApiProperty() live!: boolean;
+  @ApiProperty({ enum: ['mbank', 'card', 'cod'], isArray: true })
+  paymentMethods!: string[];
+  @ApiProperty({
+    description: 'Require a 15% online advance for Cash on Delivery orders',
+  })
+  codAdvanceEnabled!: boolean;
   @ApiProperty({ enum: ['free', 'paid'] }) plan!: string;
   @ApiPropertyOptional({
     type: [String],
@@ -75,6 +81,8 @@ export class ShopResponse {
       brandSoft: row.brandSoft,
       ownerId: row.ownerId,
       live: row.live,
+      paymentMethods: row.paymentMethods,
+      codAdvanceEnabled: row.codAdvanceEnabled,
       plan: row.plan,
       bannerImages: row.bannerImages ?? undefined,
       floatingImages: row.floatingImages ?? undefined,

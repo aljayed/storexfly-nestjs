@@ -8,7 +8,17 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { and, count, desc, eq, ne, notInArray, sql } from 'drizzle-orm';
+import {
+  and,
+  count,
+  desc,
+  eq,
+  isNotNull,
+  ne,
+  notInArray,
+  or,
+  sql,
+} from 'drizzle-orm';
 import { BRAND_SWATCHES } from '../../common/constants/brand-swatches';
 import { contactComplete } from '../../common/utils/contact-verification.util';
 import { centsToDollars } from '../../common/utils/money.util';
@@ -398,6 +408,7 @@ export class ShopsService {
     id: string,
     dto: UpdateShopDto,
   ): Promise<ShopResponse> {
+    const current = await this.requireById(id);
     if (dto.name) {
       await this.blockedWords.assertClean(dto.name);
     }
@@ -417,6 +428,16 @@ export class ShopsService {
     }
     if (dto.botChatEnabled !== undefined) {
       patch.botChatEnabled = dto.botChatEnabled;
+    }
+    if (dto.paymentMethods !== undefined) {
+      patch.paymentMethods = dto.paymentMethods;
+      // COD protection cannot remain active after COD itself is removed.
+      if (!dto.paymentMethods.includes('cod')) patch.codAdvanceEnabled = false;
+    }
+    if (dto.codAdvanceEnabled !== undefined) {
+      const effectiveMethods = dto.paymentMethods ?? current.paymentMethods;
+      patch.codAdvanceEnabled =
+        effectiveMethods.includes('cod') && dto.codAdvanceEnabled;
     }
     // Pickup address. Empty clears, same as the support contacts.
     if (dto.pickupContactName !== undefined) {
@@ -809,8 +830,19 @@ export class ShopsService {
     const [methodRows, orderRows, paidRows] = await Promise.all([
       this.db.query.paymentMethods.findMany(),
       this.db.query.orders.findMany({
-        where: and(eq(orders.shopId, shopId), eq(orders.pay, 'Paid')),
-        columns: { totalCents: true, paymentMethod: true, placedAt: true },
+        where: and(
+          eq(orders.shopId, shopId),
+          or(eq(orders.pay, 'Paid'), isNotNull(orders.advancePaidAt)),
+          ne(orders.status, 'Cancelled'),
+          ne(orders.pay, 'Refunded'),
+        ),
+        columns: {
+          totalCents: true,
+          paymentMethod: true,
+          advanceCents: true,
+          pay: true,
+          placedAt: true,
+        },
       }),
       this.db.query.settlements.findMany({
         where: eq(settlements.shopId, shopId),
@@ -822,7 +854,14 @@ export class ShopsService {
     for (const r of orderRows) {
       const period = periodOf(r.placedAt);
       const b = byPeriod.get(period) ?? emptyBuckets();
-      addOrder(b, r.paymentMethod, r.totalCents, 1);
+      if (r.advanceCents > 0) {
+        addOrder(b, r.paymentMethod, r.advanceCents, 1);
+        if (r.pay === 'Paid') {
+          addOrder(b, 'cod', r.totalCents - r.advanceCents, 0);
+        }
+      } else {
+        addOrder(b, r.paymentMethod, r.totalCents, 1);
+      }
       byPeriod.set(period, b);
     }
     const alreadyPaid = new Set(paidRows.map((p) => p.period));

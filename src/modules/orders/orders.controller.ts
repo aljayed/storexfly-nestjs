@@ -24,8 +24,12 @@ import { ShopScopeGuard } from '../../common/guards/shop-scope.guard';
 import { BookCourierDto } from './dto/book-courier.dto';
 import { callerFrom } from '../risk/checkout-caller';
 import { PhoneProofService } from '../risk/phone-proof.service';
+import { EmailProofService } from '../risk/email-proof.service';
 import {
   CheckoutDto,
+  CheckoutEmailConfirmDto,
+  CheckoutEmailLinkDto,
+  CheckoutEmailStartDto,
   CheckoutPhoneConfirmDto,
   CheckoutPhoneStartDto,
   CheckoutPreflightDto,
@@ -43,6 +47,7 @@ export class OrdersController {
     private readonly orders: OrdersService,
     private readonly jwt: JwtService,
     private readonly phoneProof: PhoneProofService,
+    private readonly emailProof: EmailProofService,
     private readonly config: ConfigService,
   ) {}
 
@@ -120,6 +125,56 @@ export class OrdersController {
   @ApiOperation({ summary: 'Exchange the code for a checkout phone proof' })
   confirmPhone(@Body() dto: CheckoutPhoneConfirmDto, @Req() req: Request) {
     return this.phoneProof.confirm(dto.phone, dto.code, this.accountOf(req));
+  }
+
+  /**
+   * Email confirmation before money is taken. Two doors to the same room: the
+   * six digits, or the link - because the inbox is often on a different device
+   * from the checkout.
+   */
+  @Public()
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
+  @Post('checkout/email/start')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Email a code and a one-tap link for a checkout' })
+  startEmail(@Body() dto: CheckoutEmailStartDto, @Req() req: Request) {
+    return this.emailProof.start(dto.email, this.accountOf(req));
+  }
+
+  @Public()
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  @Post('checkout/email/confirm')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Exchange the code for a checkout email proof' })
+  confirmEmail(@Body() dto: CheckoutEmailConfirmDto, @Req() req: Request) {
+    return this.emailProof.confirmCode(dto.email, dto.code, this.accountOf(req));
+  }
+
+  /**
+   * Deliberately takes nothing but the token: the link may be opened in a
+   * different browser, on a different device, with no session at all. Holding
+   * the token is the proof, because it only ever existed in that inbox.
+   */
+  @Public()
+  @Throttle({ default: { limit: 20, ttl: 60_000 } })
+  @Post('checkout/email/link')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Confirm an email from the emailed link' })
+  confirmEmailLink(@Body() dto: CheckoutEmailLinkDto) {
+    return this.emailProof.confirmLink(dto.token);
+  }
+
+  /**
+   * The waiting tab asks "has the link been followed yet?". This is what makes
+   * confirming from a phone finish the checkout sitting on a laptop - see
+   * EmailProofService.collect for why `pendingId` is safe to poll with.
+   */
+  @Public()
+  @Throttle({ default: { limit: 120, ttl: 60_000 } })
+  @Get('checkout/email/poll')
+  @ApiOperation({ summary: 'Collect the proof once the emailed link is used' })
+  pollEmail(@Query('pendingId') pendingId: string) {
+    return this.emailProof.collect(pendingId ?? '');
   }
 
   /**

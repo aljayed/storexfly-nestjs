@@ -87,6 +87,12 @@ export class OrderResponse {
   @ApiProperty({ enum: ['Paid', 'Refunded'] }) pay!: string;
   @ApiPropertyOptional({ example: 'cod', description: 'Payment-method code' })
   paymentMethod?: string;
+  @ApiProperty({ description: 'Advance amount for protected COD orders' })
+  advance!: number;
+  @ApiProperty({ description: 'Whether the advance has been confirmed' })
+  advancePaid!: boolean;
+  @ApiProperty({ description: 'Balance expected on delivery' })
+  codDue!: number;
   @ApiProperty({ enum: ['Store', 'Instagram', 'WhatsApp'] }) channel!: string;
   @ApiPropertyOptional() address?: DeliveryAddressValue;
   @ApiProperty({ description: 'ISO order date' }) date!: string;
@@ -165,6 +171,11 @@ export class OrderResponse {
       status: row.status,
       pay: row.pay,
       paymentMethod: row.paymentMethod ?? undefined,
+      advance: centsToDollars(row.advanceCents),
+      advancePaid: !!row.advancePaidAt,
+      codDue: centsToDollars(
+        row.advanceCents > 0 ? row.totalCents - row.advanceCents : 0,
+      ),
       channel: row.channel,
       address: row.address ?? undefined,
       date: row.placedAt.toISOString(),

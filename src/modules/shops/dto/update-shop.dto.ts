@@ -2,6 +2,7 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform, Type } from 'class-transformer';
 import {
   ArrayMaxSize,
+  ArrayMinSize,
   IsArray,
   IsBoolean,
   IsEmail,
@@ -30,6 +31,7 @@ import {
 } from '../../../common/constants/currencies';
 import {
   brandSwatchEnum,
+  paymentMethodEnum,
   shopCategoryEnum,
   shopLanguageEnum,
 } from '../../../database/schema/enums';
@@ -169,6 +171,24 @@ export class UpdateShopDto {
   @IsOptional()
   @IsBoolean()
   botChatEnabled?: boolean;
+
+  @ApiPropertyOptional({
+    enum: paymentMethodEnum.enumValues,
+    isArray: true,
+    description: 'Payment methods offered across every item in this shop',
+  })
+  @IsOptional()
+  @IsArray()
+  @ArrayMinSize(1)
+  @IsEnum(paymentMethodEnum.enumValues, { each: true })
+  paymentMethods?: (typeof paymentMethodEnum.enumValues)[number][];
+
+  @ApiPropertyOptional({
+    description: 'Require a 15% online advance for Cash on Delivery orders',
+  })
+  @IsOptional()
+  @IsBoolean()
+  codAdvanceEnabled?: boolean;
 
   // Storefront hero banner images as data URLs (or hosted URLs). Replaces the
   // whole set; an empty array clears all banners. Capped to keep the row small.

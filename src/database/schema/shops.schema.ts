@@ -14,6 +14,7 @@ import type { TrustBadge } from '../../common/constants/trust-badges';
 import {
   brandSwatchEnum,
   kycStatusEnum,
+  paymentMethodEnum,
   shopCategoryEnum,
   shopLanguageEnum,
   shopPlanEnum,
@@ -113,6 +114,17 @@ export const shops = pgTable(
     // Off by default - the agent writes as the shop's staff, so opting an
     // existing seller in without asking would put words in their mouth.
     botChatEnabled: boolean('bot_chat_enabled').notNull().default(false),
+    // Checkout methods apply to the whole shop. Keeping this beside the other
+    // storefront settings makes a seller's choice consistent across products,
+    // carts, combos and chat offers.
+    paymentMethods: paymentMethodEnum('payment_methods')
+      .array()
+      .notNull()
+      .default(['mbank', 'card', 'cod']),
+    // Require an online 15% advance whenever a buyer chooses the COD track.
+    // The balance is still collected at the door; this merely verifies intent
+    // before stock is reserved and a parcel is dispatched.
+    codAdvanceEnabled: boolean('cod_advance_enabled').notNull().default(false),
     // Bank/wallet account monthly settlements are transferred to.
     payoutBank: jsonb('payout_bank').$type<PayoutBank>(),
     // ── Business verification (trade-license KYC) ──────────────────
