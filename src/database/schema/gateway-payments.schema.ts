@@ -11,9 +11,14 @@ import { orders } from './orders.schema';
 
 /**
  * One attempt to collect an order's money through a hosted gateway (bKash
- * Tokenized Checkout). The order sits in pay='Pending' while a row here is
- * 'created'; executing the payment flips both to success. Stale attempts are
- * expired by a sweep, which cancels + restocks the pending order.
+ * Tokenized Checkout, or SSLCommerz). The order sits in pay='Pending' while a
+ * row here is 'created'; capturing the payment flips both to success. Stale
+ * attempts are expired by a sweep, which cancels + restocks the pending order.
+ *
+ * `paymentId` is whichever id identifies the attempt to that gateway on the
+ * way back: bKash mints it (`paymentID`), SSLCommerz takes ours (`tran_id`).
+ * Either way it is what the return leg looks the attempt up by, so it is
+ * unique per attempt for both.
  */
 export const gatewayPayments = pgTable(
   'gateway_payments',
@@ -23,12 +28,14 @@ export const gatewayPayments = pgTable(
       .notNull()
       .references(() => orders.id, { onDelete: 'cascade' }),
     provider: varchar('provider', { length: 20 }).notNull().default('bkash'),
-    // The gateway's own id for the attempt (bKash `paymentID`).
+    // The id the attempt is known by at the gateway - bKash's `paymentID`,
+    // or the `tran_id` we mint for an SSLCommerz session.
     paymentId: varchar('payment_id', { length: 80 }).notNull(),
     status: varchar('status', { length: 20 }).notNull().default('created'),
     amountCents: integer('amount_cents').notNull(),
-    // Gateway transaction id on success (bKash `trxID`) - the buyer's receipt
-    // reference and the reconciliation key against the merchant statement.
+    // Gateway transaction id on success (bKash `trxID`, SSLCommerz
+    // `bank_tran_id`) - the buyer's receipt reference, the reconciliation key
+    // against the merchant statement, and what a refund is filed against.
     trxId: varchar('trx_id', { length: 80 }),
     payerReference: varchar('payer_reference', { length: 40 }),
     createdAt: timestamp('created_at', { withTimezone: true })

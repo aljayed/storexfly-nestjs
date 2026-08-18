@@ -16,6 +16,13 @@ export interface BkashConfig {
   password: string;
 }
 
+export interface SslcommerzConfig {
+  enabled: boolean;
+  sandbox: boolean;
+  storeId: string;
+  storePassword: string;
+}
+
 /** What the platform console sees: everything except the secret values. */
 export interface GatewaySettingsView {
   bkash: {
@@ -27,13 +34,20 @@ export interface GatewaySettingsView {
     hasPassword: boolean;
     configured: boolean;
   };
+  sslcommerz: {
+    enabled: boolean;
+    sandbox: boolean;
+    storeId: string | null;
+    hasPassword: boolean;
+    configured: boolean;
+  };
 }
 
 /**
- * bKash merchant credentials, stored on the platform-settings singleton and
- * managed from the platform-admin console. Secrets are write-only through
- * the API: reads expose only whether one is set. (Couriers have their own
- * platform-held credentials - see CourierSettingsService.)
+ * bKash and SSLCommerz merchant credentials, stored on the platform-settings
+ * singleton and managed from the platform-admin console. Secrets are
+ * write-only through the API: reads expose only whether one is set. (Couriers
+ * have their own platform-held credentials - see CourierSettingsService.)
  */
 @Injectable()
 export class GatewaySettingsService {
@@ -77,6 +91,28 @@ export class GatewaySettingsService {
     };
   }
 
+  /**
+   * SSLCommerz store credentials, or null when checkout must not offer it.
+   * Store id + store password are the entire credential set - the same pair
+   * signs the session request and the validation call on the way back.
+   */
+  async sslcommerzConfig(): Promise<SslcommerzConfig | null> {
+    const row = await this.row();
+    if (
+      !row?.sslcommerzEnabled ||
+      !row.sslcommerzStoreId ||
+      !row.sslcommerzStorePassword
+    ) {
+      return null;
+    }
+    return {
+      enabled: true,
+      sandbox: row.sslcommerzSandbox,
+      storeId: row.sslcommerzStoreId,
+      storePassword: row.sslcommerzStorePassword,
+    };
+  }
+
   async view(): Promise<GatewaySettingsView> {
     const row = await this.row();
     return {
@@ -93,6 +129,13 @@ export class GatewaySettingsService {
           row.bkashUsername &&
           row.bkashPassword
         ),
+      },
+      sslcommerz: {
+        enabled: row?.sslcommerzEnabled ?? false,
+        sandbox: row?.sslcommerzSandbox ?? true,
+        storeId: row?.sslcommerzStoreId ?? null,
+        hasPassword: !!row?.sslcommerzStorePassword,
+        configured: !!(row?.sslcommerzStoreId && row.sslcommerzStorePassword),
       },
     };
   }
@@ -123,6 +166,34 @@ export class GatewaySettingsService {
         }),
         ...(patch.password !== undefined && {
           bkashPassword: patch.password.trim() || null,
+        }),
+      })
+      .where(eq(platformSettings.id, row.id));
+    return this.view();
+  }
+
+  /** Patch SSLCommerz settings; an omitted password keeps the stored one. */
+  async updateSslcommerz(patch: {
+    enabled?: boolean;
+    sandbox?: boolean;
+    storeId?: string;
+    storePassword?: string;
+  }): Promise<GatewaySettingsView> {
+    const row = await this.requireRow();
+    await this.db
+      .update(platformSettings)
+      .set({
+        ...(patch.enabled !== undefined && {
+          sslcommerzEnabled: patch.enabled,
+        }),
+        ...(patch.sandbox !== undefined && {
+          sslcommerzSandbox: patch.sandbox,
+        }),
+        ...(patch.storeId !== undefined && {
+          sslcommerzStoreId: patch.storeId.trim() || null,
+        }),
+        ...(patch.storePassword !== undefined && {
+          sslcommerzStorePassword: patch.storePassword.trim() || null,
         }),
       })
       .where(eq(platformSettings.id, row.id));

@@ -31,6 +31,7 @@ import { PlatformJwtAuthGuard } from '../../common/guards/platform-jwt-auth.guar
 import {
   PaymentMethodsService,
   type OnlineMethodKind,
+  type PaymentGatewayChoice,
 } from './payment-methods.service';
 
 export class PaymentMethodResponse {
@@ -51,11 +52,11 @@ export class PaymentMethodResponse {
   @ApiProperty({ description: 'true only for the built-in COD method' })
   locked!: boolean;
   @ApiProperty({
-    enum: ['none', 'bkash'],
+    enum: ['none', 'bkash', 'sslcommerz'],
     description:
-      "'bkash' = platform-collected via the gateway (fee + payout); 'none' = direct/COD",
+      "'bkash'/'sslcommerz' = platform-collected via that gateway (fee + payout); 'none' = direct/COD",
   })
-  gateway!: 'none' | 'bkash';
+  gateway!: PaymentGatewayChoice;
 }
 
 export class PaymentConfigResponse {
@@ -111,10 +112,10 @@ export class UpdatePaymentMethodDto {
   @Max(25)
   feePercent?: number;
 
-  @ApiPropertyOptional({ enum: ['none', 'bkash'] })
+  @ApiPropertyOptional({ enum: ['none', 'bkash', 'sslcommerz'] })
   @IsOptional()
-  @IsIn(['none', 'bkash'])
-  gateway?: 'none' | 'bkash';
+  @IsIn(['none', 'bkash', 'sslcommerz'])
+  gateway?: PaymentGatewayChoice;
 }
 
 export class UpdateSettlementBannerDto {

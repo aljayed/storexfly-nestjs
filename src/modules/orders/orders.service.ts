@@ -75,6 +75,7 @@ import {
 import { CourierSettingsService } from '../gateways/courier-settings.service';
 import { ShopCourierStoresService } from '../gateways/shop-courier-stores.service';
 import { PathaoService } from '../gateways/pathao.service';
+import { SslcommerzService } from '../gateways/sslcommerz.service';
 import { SteadfastService } from '../gateways/steadfast.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { MessagesService } from '../chat/messages.service';
@@ -85,7 +86,7 @@ import {
   type CouponBasis,
 } from '../shop-coupons/shop-coupons.service';
 import type { CouponQuoteResponse } from '../shop-coupons/dto/shop-coupon.response';
-import type { ShopCouponRow } from '../../database/schema';
+import type { PaymentMethodRow, ShopCouponRow } from '../../database/schema';
 import type { CheckoutDto, CouponQuoteDto } from './dto/checkout.dto';
 import { BuyerOrderDetailResponse } from './dto/buyer-order-detail.response';
 import { CheckoutResultResponse } from './dto/checkout-result.response';
@@ -246,6 +247,7 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
     private readonly paymentMethods: PaymentMethodsService,
     private readonly notifications: NotificationsService,
     private readonly bkash: BkashService,
+    private readonly sslcommerz: SslcommerzService,
     private readonly carrybee: CarrybeeService,
     private readonly steadfast: SteadfastService,
     private readonly pathao: PathaoService,
@@ -280,8 +282,10 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
    *
    * Payment truth: COD and direct-transfer methods create the order as
    * 'Due' (money not yet verified in hand); a gateway method creates it as
-   * 'Pending' and returns a `paymentUrl` to the bKash hosted checkout - the
-   * order only becomes 'Paid' when bKash confirms the money.
+   * 'Pending' and returns a `paymentUrl` to the hosted checkout (bKash or
+   * SSLCommerz) - the order only becomes 'Paid' when that gateway confirms
+   * the money. With the 15% pre-payment plan the gateway collects only the
+   * advance and the order lands on 'Due' for the balance.
    */
   /**
    * Which identity steps this checkout will ask for, so the storefront can say
@@ -367,11 +371,7 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
         'That payment method is not available - please pick another.',
       );
     }
-    if (method.gateway === 'bkash' && !(await this.bkash.isConfigured())) {
-      throw new BadRequestException(
-        'bKash payments are temporarily unavailable - please pick another method.',
-      );
-    }
+    await this.assertGatewayAvailable(method);
     const usesCodProtection = dto.paymentPlan !== undefined;
     const wantsCodAdvance = dto.paymentPlan === 'cod_advance';
     const checkoutKind = usesCodProtection ? 'cod' : method.kind;
@@ -653,27 +653,19 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
     void this.risk.record('order', subject).catch(() => undefined);
 
     // Hosted-gateway leg runs after the commit (never hold a DB transaction
-    // across an external HTTP call). If bKash cannot open a payment the
+    // across an external HTTP call). If the gateway cannot open a payment the
     // pending order is voided again - stock and customer stats roll back.
-    if (method.gateway === 'bkash') {
+    //
+    // The amount is the advance when the buyer picked the 15% pre-payment and
+    // the full total otherwise, so the same branch serves both plans.
+    if (method.gateway !== 'none') {
       try {
-        const amountDueNow = order.advanceCents || order.totalCents;
-        const created = await this.bkash.createPayment({
-          amountCents: amountDueNow,
-          invoiceNumber: `${order.reference.replace('#', '')}-${order.id.slice(0, 8)}`,
-          payerReference: dto.contact.phone.replace(/\D/g, ''),
-          callbackUrl: this.bkashCallbackUrl(),
-        });
-        await this.db.insert(gatewayPayments).values({
-          orderId: order.id,
-          provider: 'bkash',
-          paymentId: created.paymentId,
-          amountCents: amountDueNow,
-          payerReference: dto.contact.phone.replace(/\D/g, '').slice(0, 40),
-        });
-        return this.checkoutResult(order, dto, {
-          paymentUrl: created.bkashUrl,
-        });
+        const paymentUrl = await this.openGatewayPayment(
+          order,
+          method.gateway,
+          order.advanceCents || order.totalCents,
+        );
+        return this.checkoutResult(order, dto, { paymentUrl });
       } catch (err) {
         await this.voidPendingOrder(order.id);
         throw err;
@@ -836,11 +828,7 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
         'That payment method is not available - please pick another.',
       );
     }
-    if (method.gateway === 'bkash' && !(await this.bkash.isConfigured())) {
-      throw new BadRequestException(
-        'bKash payments are temporarily unavailable - please pick another method.',
-      );
-    }
+    await this.assertGatewayAvailable(method);
     const phone = args.phone?.trim() || args.buyer.phone || '';
     if (!phone) {
       throw new BadRequestException(
@@ -1055,23 +1043,16 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
       return row;
     });
 
-    // Hosted-gateway leg runs after the commit, exactly as in `checkout`.
-    if (method.gateway === 'bkash') {
+    // Hosted-gateway leg runs after the commit, exactly as in `checkout`. An
+    // accepted offer is always paid in full - there is no advance plan here.
+    if (method.gateway !== 'none') {
       try {
-        const created = await this.bkash.createPayment({
-          amountCents: order.totalCents,
-          invoiceNumber: `${order.reference.replace('#', '')}-${order.id.slice(0, 8)}`,
-          payerReference: phone.replace(/\D/g, ''),
-          callbackUrl: this.bkashCallbackUrl(),
-        });
-        await this.db.insert(gatewayPayments).values({
-          orderId: order.id,
-          provider: 'bkash',
-          paymentId: created.paymentId,
-          amountCents: order.totalCents,
-          payerReference: phone.replace(/\D/g, '').slice(0, 40),
-        });
-        return { order, paymentUrl: created.bkashUrl };
+        const paymentUrl = await this.openGatewayPayment(
+          order,
+          method.gateway,
+          order.totalCents,
+        );
+        return { order, paymentUrl };
       } catch (err) {
         await this.voidPendingOrder(order.id);
         throw err;
@@ -1101,11 +1082,107 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
     };
   }
 
-  private bkashCallbackUrl(): string {
+  /**
+   * Refuse a gateway method the platform cannot actually collect through, so
+   * a half-configured console never strands a buyer on a dead payment page.
+   * Both messages name the route the buyer chose, not the plumbing behind it.
+   */
+  private async assertGatewayAvailable(
+    method: PaymentMethodRow,
+  ): Promise<void> {
+    if (method.gateway === 'bkash' && !(await this.bkash.isConfigured())) {
+      throw new BadRequestException(
+        'bKash payments are temporarily unavailable - please pick another method.',
+      );
+    }
+    if (
+      method.gateway === 'sslcommerz' &&
+      !(await this.sslcommerz.isConfigured())
+    ) {
+      throw new BadRequestException(
+        'Card payments are temporarily unavailable - please pick another method.',
+      );
+    }
+  }
+
+  /**
+   * Open a hosted payment for a committed-but-pending order and return the
+   * page to send the buyer to, recording the attempt so the return leg can
+   * find it. `amountCents` is what is collected now - the full total, or just
+   * the advance on a 15% pre-payment order.
+   *
+   * Everything the gateway needs about the buyer is read off the order row
+   * rather than the request, so both checkout paths (storefront and accepted
+   * chat offer) hand over exactly what was actually recorded.
+   *
+   * Throws on refusal; the caller voids the pending order.
+   */
+  private async openGatewayPayment(
+    order: OrderRow,
+    gateway: 'bkash' | 'sslcommerz',
+    amountCents: number,
+  ): Promise<string> {
+    const digits = (order.phone ?? '').replace(/\D/g, '');
+    const invoice = `${order.reference.replace('#', '')}-${order.id.slice(0, 8)}`;
+
+    if (gateway === 'bkash') {
+      const created = await this.bkash.createPayment({
+        amountCents,
+        invoiceNumber: invoice,
+        payerReference: digits,
+        callbackUrl: this.paymentsUrl('bkash/callback'),
+      });
+      await this.db.insert(gatewayPayments).values({
+        orderId: order.id,
+        provider: 'bkash',
+        paymentId: created.paymentId,
+        amountCents,
+        payerReference: digits.slice(0, 40),
+      });
+      return created.bkashUrl;
+    }
+
+    // SSLCommerz takes an id we mint (max 30 chars) instead of handing one
+    // back. The invoice prefix keeps it readable next to the order it paid
+    // for in the merchant panel; the suffix keeps a retried attempt on the
+    // same order distinct, which is what the return leg looks up by.
+    const tranId = `${invoice}-${Date.now().toString(36)}`
+      .slice(0, 30)
+      .toUpperCase();
+    const address = order.address;
+    const session = await this.sslcommerz.createSession({
+      amountCents,
+      tranId,
+      productName: `Order ${order.reference}`,
+      customer: {
+        name: order.customerName,
+        email: order.email,
+        phone: order.phone ?? '',
+        address: address?.line ?? '',
+        city: address?.area ?? '',
+        postcode: address?.pincode ?? '',
+      },
+      successUrl: this.paymentsUrl('sslcommerz/success'),
+      failUrl: this.paymentsUrl('sslcommerz/fail'),
+      cancelUrl: this.paymentsUrl('sslcommerz/cancel'),
+      ipnUrl: this.paymentsUrl('sslcommerz/ipn'),
+    });
+    await this.db.insert(gatewayPayments).values({
+      orderId: order.id,
+      provider: 'sslcommerz',
+      paymentId: tranId,
+      amountCents,
+      payerReference: digits.slice(0, 40),
+    });
+    return session.gatewayUrl;
+  }
+
+  /** Absolute URL of a /payments route - gateways redirect browsers to it. */
+  private paymentsUrl(path: string): string {
     const apiUrl =
       this.config.get<string>('app.apiUrl') ?? 'http://localhost:3000';
     const prefix = this.config.get<string>('app.apiPrefix') ?? 'api';
-    return `${apiUrl.replace(/\/$/, '')}/${prefix}/payments/bkash/callback`;
+    return `${apiUrl.replace(/\/$/, '')}/${prefix}/payments/${path}`;
   }
 
   /**
@@ -1768,7 +1845,7 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
    * shop-wide aggregates (one grouped query) so tab counts and KPI cards
    * stay correct regardless of the active page or filter. Orders whose
    * gateway payment is still in flight (pay = 'Pending') are hidden - they
-   * only enter the pipeline once bKash confirms the money.
+   * only enter the pipeline once the gateway confirms the money.
    */
   async list(
     shopId: string,
@@ -2820,8 +2897,8 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
-   * Void an order whose gateway payment never completed (bKash create
-   * failed, the buyer cancelled on the hosted page, or the attempt expired).
+   * Void an order whose gateway payment never completed (the gateway refused
+   * to open one, the buyer cancelled on the hosted page, or it expired).
    * Idempotent: only acts while the order is still pending.
    */
   async voidPendingOrder(orderId: string): Promise<void> {
@@ -2860,7 +2937,7 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
         `Order ${row.reference} confirmed`,
         isAdvance
           ? 'Your 15% advance was received. Pay the remaining balance when your order arrives.'
-          : 'Your bKash payment was received and your order is now with the seller.',
+          : 'Your payment was received and your order is now with the seller.',
       );
     }
     return row ?? null;
@@ -2972,9 +3049,7 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
       recipientPhone: order.phone,
       recipientAddress: address,
       codAmountCents:
-        order.pay === 'Due'
-          ? order.totalCents - order.advanceCents
-          : 0,
+        order.pay === 'Due' ? order.totalCents - order.advanceCents : 0,
       note: `Order ${order.reference}`,
     };
     let booked: {

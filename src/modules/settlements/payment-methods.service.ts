@@ -19,6 +19,12 @@ import { CARD_FEE_BP, MBANK_FEE_BP } from './settlement.constants';
 /** Online (fee-carrying) method kinds an operator can add. */
 export type OnlineMethodKind = 'mbank' | 'card';
 
+/**
+ * Which gateway collects a method's money. 'none' is trust-based - COD, or a
+ * direct transfer to the seller's own number that the platform never holds.
+ */
+export type PaymentGatewayChoice = 'none' | 'bkash' | 'sslcommerz';
+
 export interface PaymentMethodView {
   id: string;
   code: string;
@@ -27,8 +33,8 @@ export interface PaymentMethodView {
   subtitle: string | null;
   feePercent: number;
   locked: boolean;
-  /** 'bkash' = platform-collected via the gateway; 'none' = direct/COD. */
-  gateway: 'none' | 'bkash';
+  /** Anything but 'none' = platform-collected via that gateway. */
+  gateway: PaymentGatewayChoice;
 }
 
 /**
@@ -92,7 +98,7 @@ export class PaymentMethodsService {
       title?: string;
       subtitle?: string | null;
       feePercent?: number;
-      gateway?: 'none' | 'bkash';
+      gateway?: PaymentGatewayChoice;
     },
   ): Promise<PaymentMethodView> {
     const row = await this.requireById(id);

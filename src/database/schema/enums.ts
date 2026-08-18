@@ -143,7 +143,14 @@ export const shopPlanEnum = pgEnum('shop_plan', ['free', 'paid']);
 
 // Which payment gateway (if any) collects a checkout method's money. 'none'
 // = trust-based (COD, or a direct wallet transfer the platform never holds).
-export const paymentGatewayEnum = pgEnum('payment_gateway', ['none', 'bkash']);
+// 'bkash' is the wallet's own hosted checkout; 'sslcommerz' is the aggregator
+// that fronts cards, net banking and every other MFS wallet behind one page.
+// Enum values are append-only in Postgres, so new gateways go at the end.
+export const paymentGatewayEnum = pgEnum('payment_gateway', [
+  'none',
+  'bkash',
+  'sslcommerz',
+]);
 
 export const paymentMethodEnum = pgEnum('payment_method', [
   'mbank',

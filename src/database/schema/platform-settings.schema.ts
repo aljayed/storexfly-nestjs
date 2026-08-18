@@ -24,8 +24,9 @@ export type CourierProvider = (typeof COURIER_PROVIDERS)[number];
  * rebrand without a code change.
  *
  * Also holds the platform's own gateway and courier merchant credentials: one
- * bKash account and one courier account serve every shop, which is what keeps
- * the money and the parcel trail inside the platform.
+ * bKash account, one SSLCommerz store and one courier account serve every
+ * shop, which is what keeps the money and the parcel trail inside the
+ * platform.
  *
  * Singleton: the app seeds one row at boot and always reads/updates the first.
  */
@@ -66,6 +67,17 @@ export const platformSettings = pgTable('platform_settings', {
   bkashAppSecret: text('bkash_app_secret'),
   bkashUsername: text('bkash_username'),
   bkashPassword: text('bkash_password'),
+  // ── SSLCommerz merchant credentials (hosted checkout v4) ──────
+  // The aggregator behind the card route, and the fallback wallet route: one
+  // hosted page fronts Visa/Mastercard, net banking and every MFS wallet, so
+  // a single store account covers what would otherwise be a dozen
+  // integrations. Store id + store password are the whole credential set -
+  // the password is write-only through the API, exactly like bKash's secrets.
+  // Sandbox mode targets sandbox.sslcommerz.com.
+  sslcommerzEnabled: boolean('sslcommerz_enabled').notNull().default(false),
+  sslcommerzSandbox: boolean('sslcommerz_sandbox').notNull().default(true),
+  sslcommerzStoreId: text('sslcommerz_store_id'),
+  sslcommerzStorePassword: text('sslcommerz_store_password'),
   // ── Couriers (platform-held merchant accounts) ──────────────────
   // Every parcel on the platform is booked on the operator's own courier
   // account, never a seller's: the courier is the one party in the flow a

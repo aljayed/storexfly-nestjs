@@ -26,7 +26,8 @@ export class CheckoutResultResponse {
   @ApiProperty({ description: 'Balance to collect on delivery' })
   codDue!: number;
   @ApiPropertyOptional({
-    description: 'bKash hosted-checkout URL to redirect the buyer to.',
+    description:
+      'Hosted-checkout URL to redirect the buyer to (bKash or SSLCommerz).',
   })
   paymentUrl?: string;
 }

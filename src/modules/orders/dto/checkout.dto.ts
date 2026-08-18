@@ -209,7 +209,8 @@ export class CheckoutDto {
     enum: ['full', 'cod_advance'],
     description:
       'Use cod_advance to pay 15% online and leave the balance for delivery. ' +
-      'Only available when the shop has enabled COD advance protection.',
+      'Only available when the shop has enabled COD advance protection, and ' +
+      'only with a gateway method (bKash or SSLCommerz) - never with plain COD.',
   })
   @IsOptional()
   @IsIn(['full', 'cod_advance'])

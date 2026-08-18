@@ -42,10 +42,30 @@ export class UpdateBkashSettingsDto {
   password?: string;
 }
 
+export class UpdateSslcommerzSettingsDto {
+  @ApiPropertyOptional() @IsOptional() @IsBoolean() enabled?: boolean;
+  @ApiPropertyOptional({ description: 'true = sandbox.sslcommerz.com' })
+  @IsOptional()
+  @IsBoolean()
+  sandbox?: boolean;
+  @ApiPropertyOptional({ description: 'Merchant panel store id' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  storeId?: string;
+  @ApiPropertyOptional({
+    description: 'Write-only; omit to keep the stored value',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  storePassword?: string;
+}
+
 /**
- * Operator console: bKash merchant credentials. Secrets are write-only -
- * reads only reveal whether one is stored. (Couriers have their own screen -
- * see PlatformCouriersController.)
+ * Operator console: bKash and SSLCommerz merchant credentials. Secrets are
+ * write-only - reads only reveal whether one is stored. (Couriers have their
+ * own screen - see PlatformCouriersController.)
  */
 @ApiTags('platform-admin')
 @Public()
@@ -67,5 +87,11 @@ export class PlatformGatewaysController {
   @ApiOperation({ summary: 'Platform: update bKash merchant credentials' })
   updateBkash(@Body() dto: UpdateBkashSettingsDto) {
     return this.settings.updateBkash(dto);
+  }
+
+  @Patch('sslcommerz')
+  @ApiOperation({ summary: 'Platform: update SSLCommerz store credentials' })
+  updateSslcommerz(@Body() dto: UpdateSslcommerzSettingsDto) {
+    return this.settings.updateSslcommerz(dto);
   }
 }

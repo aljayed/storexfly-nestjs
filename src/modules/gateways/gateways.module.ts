@@ -5,13 +5,15 @@ import { CourierSettingsService } from './courier-settings.service';
 import { GatewaySettingsService } from './gateway-settings.service';
 import { PathaoService } from './pathao.service';
 import { ShopCourierStoresService } from './shop-courier-stores.service';
+import { SslcommerzService } from './sslcommerz.service';
 import { SteadfastService } from './steadfast.service';
 
 /**
- * External money/logistics integrations: bKash Tokenized Checkout plus the
- * CarryBee, Steadfast and Pathao couriers. Every one of them runs on the
- * platform's own merchant credentials (see CourierSettingsService), so a shop
- * cannot route money or parcels around the platform. What is per-shop is
+ * External money/logistics integrations: the bKash and SSLCommerz hosted
+ * checkouts plus the CarryBee, Steadfast and Pathao couriers. Every one of
+ * them runs on the platform's own merchant credentials (see
+ * GatewaySettingsService, CourierSettingsService), so a shop cannot route
+ * money or parcels around the platform. What is per-shop is
  * where the rider collects: ShopCourierStoresService registers a pickup store
  * for each seller under that one account.
  *
@@ -23,6 +25,7 @@ import { SteadfastService } from './steadfast.service';
     GatewaySettingsService,
     CourierSettingsService,
     BkashService,
+    SslcommerzService,
     CarrybeeService,
     SteadfastService,
     PathaoService,
@@ -32,6 +35,7 @@ import { SteadfastService } from './steadfast.service';
     GatewaySettingsService,
     CourierSettingsService,
     BkashService,
+    SslcommerzService,
     CarrybeeService,
     SteadfastService,
     PathaoService,
