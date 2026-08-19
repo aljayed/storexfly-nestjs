@@ -114,17 +114,49 @@ export class ShopsService {
     private readonly courierStores: ShopCourierStoresService,
   ) {}
 
-  /** Live handle availability check for the onboarding wizard. */
-  async checkHandle(handle: string): Promise<{ available: boolean }> {
+  /**
+   * Live handle availability check for the onboarding wizard.
+   *
+   * `ownerId` is the account asking. Their own username counts as available
+   * to them - taking your storefront's name from your own handle is the
+   * expected thing to do, and only a stranger holding it is a conflict.
+   */
+  async checkHandle(
+    handle: string,
+    ownerId?: string,
+  ): Promise<{ available: boolean }> {
     const normalized = handleize(handle);
     if (!normalized) {
       return { available: false };
     }
-    const existing = await this.db.query.shops.findFirst({
-      where: eq(shops.handle, normalized),
-      columns: { id: true },
-    });
-    return { available: !existing };
+    return { available: !(await this.handleTakenByOther(normalized, ownerId)) };
+  }
+
+  /**
+   * Whether a handle belongs to someone other than this account.
+   *
+   * Shops and accounts share one namespace - chat resolves "@name" against
+   * both - so checking only `shops` let a storefront take a username somebody
+   * already publishes under, which is an impersonation route. Your own
+   * username is not a conflict with yourself.
+   */
+  private async handleTakenByOther(
+    handle: string,
+    ownerId?: string,
+  ): Promise<boolean> {
+    const [byShop, byAccount] = await Promise.all([
+      this.db.query.shops.findFirst({
+        where: eq(shops.handle, handle),
+        columns: { ownerId: true },
+      }),
+      this.db.query.users.findFirst({
+        where: eq(users.handle, handle),
+        columns: { id: true },
+      }),
+    ]);
+    if (byShop && byShop.ownerId !== ownerId) return true;
+    if (byAccount && byAccount.id !== ownerId) return true;
+    return false;
   }
 
   async create(ownerId: string, dto: CreateShopDto): Promise<ShopResponse> {
@@ -152,11 +184,7 @@ export class ShopsService {
     const handle = handleize(dto.handle);
     await this.blockedWords.assertClean(dto.name);
     await this.blockedWords.assertClean(handle);
-    const taken = await this.db.query.shops.findFirst({
-      where: eq(shops.handle, handle),
-      columns: { id: true },
-    });
-    if (taken) {
+    if (await this.handleTakenByOther(handle, ownerId)) {
       throw new ForbiddenException('That handle is already taken');
     }
     const swatch = BRAND_SWATCHES[dto.brandId];

@@ -18,6 +18,7 @@ import {
   sql,
   type SQL,
 } from 'drizzle-orm';
+import { ordersOwnedBy } from '../../common/utils/order-owner.util';
 import { DRIZZLE } from '../../database/database.constants';
 import type { DrizzleDB } from '../../database/drizzle.types';
 import {
@@ -524,6 +525,7 @@ export class MessagesService {
       // Only the product and order cards need a shop; text and attachments
       // work in any thread, including ones that have no storefront side.
       shopId: string | null;
+      buyerId: string | null;
       buyer: { email: string | null } | null;
       shop: { currency: string; handle: string } | null;
     },
@@ -577,19 +579,19 @@ export class MessagesService {
         }
         // An order belongs to a shop and a buyer; a thread missing either has
         // no order to reference.
-        if (!convo.shopId || !convo.shop || !convo.buyer) {
+        if (!convo.shopId || !convo.shop || !convo.buyer || !convo.buyerId) {
           throw new BadRequestException(
             'This conversation has no order to reference',
           );
         }
         const orderBuyer = convo.buyer;
-        // The order must belong to this shop AND to this conversation's buyer
-        // (matched by checkout email), whichever side references it.
+        // The order must belong to this shop AND to this conversation's
+        // buyer - by account, whichever side references it.
         const o = await this.db.query.orders.findFirst({
           where: and(
             eq(orders.id, dto.orderId),
             eq(orders.shopId, convo.shopId),
-            sql`lower(${orders.email}) = ${(orderBuyer.email ?? '').toLowerCase()}`,
+            ordersOwnedBy(convo.buyerId, orderBuyer.email),
           ),
           with: { items: true },
         });

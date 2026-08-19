@@ -42,7 +42,6 @@ import type { DrizzleDB } from '../../database/drizzle.types';
 import {
   combos,
   courierWebhookEvents,
-  gatewayPayments,
   subscriptions,
   orderAmountAdjustments,
   orderItems,
@@ -323,6 +322,7 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
       dto.shopId,
       dto.contact,
       await this.checkoutProductIds(dto),
+      caller.accountId,
     );
 
     /**
@@ -506,13 +506,19 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
       // for this shop - which is what actually stops a double-tapped button
       // placing two. Reads the priced cart, so it sees a combo's members
       // however the request named them. Before any stock moves.
-      await this.assertNotOrderedRecently(tx, dto.shopId, dto.contact, [
-        ...new Set(
-          cart.lines
-            .map((l) => l.productId)
-            .filter((id): id is string => id !== null),
-        ),
-      ]);
+      await this.assertNotOrderedRecently(
+        tx,
+        dto.shopId,
+        dto.contact,
+        [
+          ...new Set(
+            cart.lines
+              .map((l) => l.productId)
+              .filter((id): id is string => id !== null),
+          ),
+        ],
+        caller.accountId,
+      );
 
       // A coupon takes money off the item subtotal (never delivery - the
       // seller still owes the courier that). A code that doesn't apply is
@@ -561,6 +567,10 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
           reference,
           shopId: dto.shopId,
           customerId,
+          // Who placed it, when they were signed in. This is what makes the
+          // order theirs for good - the email below records what they typed,
+          // not who they are.
+          userId: caller.accountId,
           customerName: dto.contact.name,
           email: dto.contact.email ?? `${dto.contact.phone}@phone.local`,
           phone: dto.contact.phone,
@@ -976,6 +986,8 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
           reference,
           shopId: offer.shopId,
           customerId,
+          // An offer is only ever accepted by a signed-in buyer.
+          userId: args.buyer.id,
           customerName: args.buyer.name,
           email,
           phone,
@@ -1233,12 +1245,16 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
     shopId: string,
     contact: { email?: string; phone: string },
     productIds: string[],
+    accountId: string | null = null,
   ): Promise<void> {
     if (!productIds.length) return;
 
     const email = contact.email?.trim().toLowerCase();
     const phone = normalizePhone(contact.phone);
     const who = [
+      // The account, when there is one: changing the email on the form is
+      // otherwise a way straight past this check.
+      accountId ? eq(orders.userId, accountId) : undefined,
       email ? sql`lower(${orders.email}) = ${email}` : undefined,
       phone
         ? sql`regexp_replace(coalesce(${orders.phone}, ''), '\\D', '', 'g') like ${'%' + phone}`
@@ -2208,8 +2224,11 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
   /** The verified account id that owns an order (or null), used to address the
    *  chat thread and confirm ownership - same match rule as the reprice gate. */
   private async resolveOrderAccountId(
-    order: Pick<OrderRow, 'email' | 'phone'>,
+    order: Pick<OrderRow, 'userId' | 'email' | 'phone'>,
   ): Promise<string | null> {
+    // Placed while signed in, or claimed since - then there is nothing to
+    // work out, and no chance of the contact details having moved on.
+    if (order.userId) return order.userId;
     const phone = normalizePhone(order.phone);
     const email = order.email.toLowerCase();
     const candidates = await this.db.query.users.findMany({

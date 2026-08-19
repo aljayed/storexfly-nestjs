@@ -8,6 +8,7 @@ import { BRAND_SWATCHES } from '../common/constants/brand-swatches';
 import { dollarsToCents } from '../common/utils/money.util';
 import { handleize } from '../common/utils/slug.util';
 import * as schema from './schema';
+import { generatePublicId } from '../common/utils/public-id.util';
 import type {
   CustomerSegment,
   OrderStatus,
@@ -503,6 +504,7 @@ async function seed(): Promise<void> {
     const [owner] = await db
       .insert(schema.users)
       .values({
+        publicId: generatePublicId(),
         name: 'Maya Rahman',
         email: 'maya@mango-shop.com',
         passwordHash,

@@ -561,6 +561,13 @@
       "when": 1792800000000,
       "tag": "0082_mail_accounts",
       "breakpoints": true
+    },
+    {
+      "idx": 83,
+      "version": "7",
+      "when": 1792886400000,
+      "tag": "0083_account_identity",
+      "breakpoints": true
     }
   ]
 }

@@ -17,6 +17,7 @@ import {
 } from './enums';
 import { shops } from './shops.schema';
 import { customers } from './customers.schema';
+import { users } from './users.schema';
 import { products } from './products.schema';
 import { orderAmountAdjustments } from './order-amount-adjustments.schema';
 
@@ -43,6 +44,19 @@ export const orders = pgTable(
       .notNull()
       .references(() => shops.id, { onDelete: 'cascade' }),
     customerId: uuid('customer_id').references(() => customers.id, {
+      onDelete: 'set null',
+    }),
+    /**
+     * The account that placed this, when one was signed in - or was linked to
+     * it afterwards by claiming. Null for a genuine guest checkout.
+     *
+     * This is what "my orders" means. It used to be answered by matching the
+     * email stored below, which quietly made an email address the buyer's
+     * identity: changing it lost their order history, their verified-purchase
+     * reviews and their chat threads in one go. The email stays as a record of
+     * what they typed at checkout; who they *are* is this.
+     */
+    userId: uuid('user_id').references(() => users.id, {
       onDelete: 'set null',
     }),
     customerName: varchar('customer_name', { length: 160 }).notNull(),
@@ -112,6 +126,7 @@ export const orders = pgTable(
     index('orders_shop_status_idx').on(table.shopId, table.status),
     index('orders_shop_channel_idx').on(table.shopId, table.channel),
     index('orders_customer_idx').on(table.customerId),
+    index('orders_user_idx').on(table.userId, table.placedAt),
   ],
 );
 

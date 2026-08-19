@@ -36,7 +36,11 @@ export interface BuyerGeoValue {
 
 /**
  * Platform accounts - the single human identity for both shopping and selling.
- * Anyone can buy; you become a seller by owning a shop. `passwordHash` is null
+ * Anyone can buy; you become a seller by owning a shop.
+ *
+ * Identity is `id`/`publicId`, never the email. Email, phone and handle are
+ * all things a person may change, and everything that has to survive those
+ * changes - orders, reviews, chat threads - points at the account itself. `passwordHash` is null
  * for accounts that only ever used a social/phone login. The `address*`/`geo`/
  * `lastPayMethod`/`phoneVerified` fields are the storefront-shopper profile
  * (saved checkout autofill), folded in when buyer & seller accounts unified.
@@ -45,6 +49,16 @@ export const users = pgTable(
   'users',
   {
     id: uuid('id').primaryKey().defaultRandom(),
+    /**
+     * The account's permanent public identity - "HM7K3PQR9X".
+     *
+     * Everything else a person is known by can change: they can move email,
+     * change phone, take a new username. This cannot, and nothing is keyed on
+     * it changing, so it is what a support conversation quotes and what the
+     * account is still recognisably itself by afterwards. Assigned at signup
+     * and never reissued.
+     */
+    publicId: varchar('public_id', { length: 16 }).notNull(),
     name: varchar('name', { length: 160 }).notNull(),
     email: varchar('email', { length: 320 }),
     phone: varchar('phone', { length: 24 }),
@@ -85,6 +99,7 @@ export const users = pgTable(
       .$onUpdate(() => new Date()),
   },
   (table) => [
+    uniqueIndex('users_public_id_unique_idx').on(table.publicId),
     uniqueIndex('users_email_unique_idx').on(table.email),
     uniqueIndex('users_google_id_unique_idx').on(table.googleId),
     index('users_phone_idx').on(table.phone),

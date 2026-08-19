@@ -1,5 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { and, eq } from 'drizzle-orm';
+import { generatePublicId } from '../../common/utils/public-id.util';
 import { DRIZZLE } from '../../database/database.constants';
 import type { DrizzleDB } from '../../database/drizzle.types';
 import { users, type NewUserRow, type UserRow } from '../../database/schema';
@@ -74,9 +75,13 @@ export class UsersService {
     await this.db.update(users).set({ passwordHash }).where(eq(users.id, id));
   }
 
-  async create(data: NewUserRow): Promise<UserRow> {
+  async create(data: Omit<NewUserRow, 'publicId'>): Promise<UserRow> {
     const normalized: NewUserRow = {
       ...data,
+      // Stamped here rather than by callers: this is the funnel every
+      // non-checkout account comes through, and an id assigned in one place
+      // cannot be assigned inconsistently in three.
+      publicId: generatePublicId(),
       email: data.email ? data.email.toLowerCase() : data.email,
     };
     const [row] = await this.db.insert(users).values(normalized).returning();

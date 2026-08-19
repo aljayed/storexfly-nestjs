@@ -99,6 +99,7 @@ export class BuyerAuthResponse {
       token,
       buyer: {
         id: row.id,
+        publicId: row.publicId,
         name: row.name,
         email: row.email ?? '',
         phone: row.phone,

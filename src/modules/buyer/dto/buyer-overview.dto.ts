@@ -91,6 +91,13 @@ export class UpdateBuyerProfileDto {
 /** The buyer's account + saved checkout details (GET /buyer/auth/me, PATCH). */
 export interface BuyerProfile {
   id: string;
+  /**
+   * The account's permanent public id ("HM7K3PQR"). Email, phone and handle
+   * are all things this account may change; this is the one that does not,
+   * so it is what support quotes and what the person recognises their own
+   * account by afterwards.
+   */
+  publicId: string;
   name: string;
   email: string;
   phone: string | null;
@@ -103,8 +110,8 @@ export interface BuyerProfile {
   emailVerified: boolean;
   /** Public username ("@rafiq"), null until the account claims one. */
   handle: string | null;
-  /** True when the handle is the account's shop handle rather than a username
-   *  it picked: a seller is known by their storefront on both sides. */
+  /** True when this handle is standing in from the account's shop because it
+   *  has not picked a username of its own. Setting one replaces it. */
   handleFromShop: boolean;
 }
 

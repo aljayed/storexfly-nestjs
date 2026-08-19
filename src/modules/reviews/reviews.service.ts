@@ -6,6 +6,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { and, eq, sql } from 'drizzle-orm';
+import { ordersOwnedBy } from '../../common/utils/order-owner.util';
 import { DRIZZLE } from '../../database/database.constants';
 import type { DrizzleDB } from '../../database/drizzle.types';
 import {
@@ -53,7 +54,8 @@ export class ReviewsService {
   /** True if an order under this buyer's email includes the product. */
   private async hasPurchased(
     productId: string,
-    email: string,
+    accountId: string,
+    email?: string | null,
   ): Promise<boolean> {
     const [row] = await this.db
       .select({ id: orders.id })
@@ -62,7 +64,9 @@ export class ReviewsService {
       .where(
         and(
           eq(orderItems.productId, productId),
-          sql`lower(${orders.email}) = ${email.toLowerCase()}`,
+          // Keyed on the account, so a reviewer who changed their email does
+          // not silently lose the purchase that entitles them to review.
+          ordersOwnedBy(accountId, email),
         ),
       )
       .limit(1);
@@ -71,7 +75,10 @@ export class ReviewsService {
 
   private async existingReview(productId: string, buyerId: string) {
     return this.db.query.reviews.findFirst({
-      where: and(eq(reviews.productId, productId), eq(reviews.buyerId, buyerId)),
+      where: and(
+        eq(reviews.productId, productId),
+        eq(reviews.buyerId, buyerId),
+      ),
     });
   }
 
@@ -100,7 +107,7 @@ export class ReviewsService {
   ): Promise<ReviewEligibilityResponse> {
     const product = await this.resolveProduct(handle, slug);
     const [purchased, existing] = await Promise.all([
-      this.hasPurchased(product.id, buyer.email ?? ''),
+      this.hasPurchased(product.id, buyer.id, buyer.email),
       this.existingReview(product.id, buyer.id),
     ]);
     return {
@@ -118,7 +125,7 @@ export class ReviewsService {
   ): Promise<ReviewResponse> {
     const product = await this.resolveProduct(handle, slug);
 
-    if (!(await this.hasPurchased(product.id, buyer.email ?? ''))) {
+    if (!(await this.hasPurchased(product.id, buyer.id, buyer.email))) {
       throw new ForbiddenException(
         'Only buyers who purchased this product can review it.',
       );

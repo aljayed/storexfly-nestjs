@@ -123,9 +123,11 @@ export class RiskService {
     }
     if (!emails.size && !phone) return false;
 
-    // Orders carry no account id - history is matched on the contact details,
-    // the same link the profile screen and verified-purchase reviews use.
+    // Contact details still count - reusing them is what the check is for -
+    // but a signed-in buyer is matched on their account too, so changing the
+    // address on the form is not a way straight past it.
     const matches = [
+      subject.accountId ? eq(orders.userId, subject.accountId) : undefined,
       emails.size
         ? sql`lower(${orders.email}) in (${sql.join(
             [...emails].map((e) => sql`${e}`),

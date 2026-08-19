@@ -6,6 +6,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { and, desc, eq, gt, ilike, inArray, not, or, sql } from 'drizzle-orm';
+import { ordersOwnedBy } from '../../common/utils/order-owner.util';
 import { DRIZZLE } from '../../database/database.constants';
 import type { DrizzleDB } from '../../database/drizzle.types';
 import {
@@ -319,7 +320,8 @@ export class ConversationsService {
         where: and(
           eq(orders.id, dto.origin.refId),
           eq(orders.shopId, dto.shopId),
-          sql`lower(${orders.email}) = ${actor.email.toLowerCase()}`,
+          // Theirs by account, not by whatever address is on the order.
+          ordersOwnedBy(actor.id, actor.email),
         ),
         columns: { id: true },
       });
@@ -415,7 +417,9 @@ export class ConversationsService {
     const recent = await this.db.query.orders.findMany({
       where: and(
         eq(orders.shopId, actor.shopId),
-        sql`lower(${orders.email}) = ${buyerEmail}`,
+        // The shopper's orders, by account - so the panel keeps showing their
+        // history after they change the address they ordered with.
+        ordersOwnedBy(convo.buyerId, buyerEmail),
       ),
       orderBy: [desc(orders.placedAt)],
       limit: 5,

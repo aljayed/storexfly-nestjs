@@ -8,7 +8,7 @@ import {
   NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
-import { and, desc, eq, sql } from 'drizzle-orm';
+import { and, desc, eq, isNull } from 'drizzle-orm';
 import * as bcrypt from 'bcryptjs';
 import { DRIZZLE } from '../../database/database.constants';
 import type { DrizzleDB } from '../../database/drizzle.types';
@@ -22,6 +22,8 @@ import {
   type UserRow,
 } from '../../database/schema';
 import { centsToDollars } from '../../common/utils/money.util';
+import { ordersOwnedBy } from '../../common/utils/order-owner.util';
+import { generatePublicId } from '../../common/utils/public-id.util';
 import { productLines } from '../../common/utils/order-line.util';
 import { BlockedWordsService } from '../blocked-words/blocked-words.service';
 import { RiskService } from '../risk/risk.service';
@@ -146,6 +148,7 @@ export class BuyerService {
     const [row] = await this.db
       .insert(users)
       .values({
+        publicId: generatePublicId(),
         name: dto.name,
         email: dto.email.trim().toLowerCase(),
         passwordHash,
@@ -185,28 +188,38 @@ export class BuyerService {
     });
     if (!order) throw new NotFoundException('Order not found');
 
-    // Already linked (email already matches, case-insensitively) - idempotent.
-    if (
-      account.email &&
-      order.email.toLowerCase() === account.email.toLowerCase()
-    ) {
-      return { linked: true };
+    // Already this account's, however it got that way - idempotent.
+    if (order.userId === accountId) return { linked: true };
+    // Somebody else's. Not ours to move, even if the address matches.
+    if (order.userId) {
+      throw new ForbiddenException(
+        'This order is already linked to another account',
+      );
     }
 
-    if (
-      !account.email ||
-      !account.phone ||
-      normalizePhone(order.phone) !== normalizePhone(account.phone)
-    ) {
+    // The claim is proved by the phone on the order, which is the detail the
+    // buyer had to give the courier - or it is already theirs by the address
+    // they placed it with.
+    const sameEmail =
+      !!account.email &&
+      order.email.toLowerCase() === account.email.toLowerCase();
+    const samePhone =
+      !!account.phone &&
+      normalizePhone(order.phone) === normalizePhone(account.phone);
+    if (!sameEmail && !samePhone) {
       throw new ForbiddenException(
         'This order cannot be linked to your account',
       );
     }
 
+    // Point the order at the account rather than rewriting its email. The
+    // email is a record of what the buyer typed at checkout; overwriting it
+    // to express ownership lost that, and broke again the moment they changed
+    // their address.
     await this.db
       .update(orders)
-      .set({ email: account.email })
-      .where(eq(orders.id, order.id));
+      .set({ userId: accountId })
+      .where(and(eq(orders.id, order.id), isNull(orders.userId)));
     return { linked: true };
   }
 
@@ -252,6 +265,7 @@ export class BuyerService {
     const { handle, fromShop } = await this.publicHandle(row);
     return {
       id: row.id,
+      publicId: row.publicId,
       name: row.name,
       email: row.email ?? '',
       phone: row.phone,
@@ -382,22 +396,38 @@ export class BuyerService {
    * they are standing on, and it does not change because they also buy from
    * other shops. Only accounts without a shop carry a username of their own.
    */
+  /**
+   * The name this account is publicly known by.
+   *
+   * Its own handle wins. A shop's handle stands in only when the account has
+   * never set one - which keeps a seller recognisable by their storefront
+   * without making that the only name they are allowed. It used to be the
+   * other way round, so owning a shop silently overrode a personal username
+   * and made it unsettable.
+   */
   private async publicHandle(
     account: UserRow,
   ): Promise<{ handle: string | null; fromShop: boolean }> {
+    if (account.handle) return { handle: account.handle, fromShop: false };
     const shop = await this.db.query.shops.findFirst({
       where: eq(shops.ownerId, account.id),
       columns: { handle: true },
     });
     return shop
       ? { handle: shop.handle, fromShop: true }
-      : { handle: account.handle, fromShop: false };
+      : { handle: null, fromShop: false };
   }
 
   /**
    * Claim (or change) the account's username. Gated on a verified email so a
    * name can always be traced back to a reachable account - that is what stops
    * handle-squatting with throwaway signups.
+   *
+   * Sellers may set one too. Owning a shop used to refuse this outright, on
+   * the reasoning that a seller already has a public name; but a person and
+   * their storefront are not the same thing, and the handle is the account's
+   * to change however many shops it owns. Reusing your own shop's handle is
+   * allowed - see {@link handleTaken}.
    */
   async setHandle(accountId: string, raw: string): Promise<BuyerProfile> {
     const account = await this.findById(accountId);
@@ -407,11 +437,6 @@ export class BuyerService {
         'Verify your email before setting a username',
       );
     }
-    // A seller already has a public name - the one over their shop.
-    if ((await this.publicHandle(account)).fromShop) {
-      throw new ConflictException('shop_handle');
-    }
-
     const handle = normalizeHandle(raw);
     const shape = checkHandleShape(handle);
     if (shape) throw new ConflictException(shape);
@@ -464,12 +489,10 @@ export class BuyerService {
     const account = await this.findById(accountId);
     if (!account) throw new UnauthorizedException('Account no longer exists');
 
-    // Orders are matched to an account by the address they were placed with,
-    // so payments follow the same rule via the order they paid for - one
-    // definition of "this buyer's", shared by both tabs.
-    const mine = account.email
-      ? sql`lower(${orders.email}) = ${account.email.toLowerCase()}`
-      : sql`false`;
+    // One definition of "this account's orders", shared by the Orders tab,
+    // the Payments tab and everything else that asks - see ordersOwnedBy.
+    // It is keyed on the account, so changing email keeps the history.
+    const mine = ordersOwnedBy(accountId, account.email);
 
     const [orderRows, reviewRows, paymentRows] = await Promise.all([
       this.db.query.orders.findMany({

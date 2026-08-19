@@ -41,11 +41,17 @@ import { ShopsService } from './shops.service';
 export class ShopsController {
   constructor(private readonly shops: ShopsService) {}
 
-  @Public()
+  // Authenticated, unlike the other lookups here: the answer depends on who
+  // is asking. Your own username is available *to you* - naming a storefront
+  // after yourself is the expected thing - and only a stranger holding it is
+  // a conflict. The wizard is behind a sign-in anyway.
   @Get('check-handle')
   @ApiOperation({ summary: 'Live handle-availability check (onboarding)' })
-  checkHandle(@Query() query: CheckHandleQuery) {
-    return this.shops.checkHandle(query.handle);
+  checkHandle(
+    @CurrentUser() user: SellerPrincipal,
+    @Query() query: CheckHandleQuery,
+  ) {
+    return this.shops.checkHandle(query.handle, user.id);
   }
 
   // Declared before `:handle` so "categories" never resolves as a shop.
