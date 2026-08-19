@@ -77,6 +77,18 @@ export const mailConfig = registerAs('mail', () => ({
   user: process.env.MAIL_USER ?? '',
   pass: process.env.MAIL_PASS ?? '',
   from: process.env.MAIL_FROM ?? 'Storexfly <no-reply@storexfly.com>',
+  // ── Staff mailbox management (platform-admin console) ───────────
+  // The mailserver's flat account file, bind-mounted into this container.
+  // Unset (the normal case in development) means the console reports mailbox
+  // management as unavailable rather than failing every call.
+  accountsFile: process.env.MAIL_ACCOUNTS_FILE ?? '',
+  // The one domain the console may create staff mailboxes on. Defaults to
+  // whatever MAIL_FROM sends as, which is always the platform's own domain.
+  domain:
+    process.env.MAIL_DOMAIN ??
+    (/<?([^<>@\s]+)@([^<>\s]+?)>?$/.exec(
+      process.env.MAIL_FROM ?? '',
+    )?.[2] ?? ''),
   get enabled() {
     return Boolean(this.host && this.user && this.pass);
   },
