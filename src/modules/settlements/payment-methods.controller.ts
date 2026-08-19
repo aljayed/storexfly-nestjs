@@ -18,6 +18,7 @@ import {
   ApiTags,
 } from '@nestjs/swagger';
 import {
+  IsBoolean,
   IsIn,
   IsNumber,
   IsOptional,
@@ -51,6 +52,11 @@ export class PaymentMethodResponse {
   feePercent!: number;
   @ApiProperty({ description: 'true only for the built-in COD method' })
   locked!: boolean;
+  @ApiProperty({
+    description:
+      'Off = offered nowhere: gone from checkout and every payment picker',
+  })
+  enabled!: boolean;
   @ApiProperty({
     enum: ['none', 'bkash', 'sslcommerz'],
     description:
@@ -116,6 +122,15 @@ export class UpdatePaymentMethodDto {
   @IsOptional()
   @IsIn(['none', 'bkash', 'sslcommerz'])
   gateway?: PaymentGatewayChoice;
+
+  @ApiPropertyOptional({
+    description:
+      'Switch the method on or off everywhere at once. Refused for Cash on ' +
+      'Delivery, which every shop falls back on.',
+  })
+  @IsOptional()
+  @IsBoolean()
+  enabled?: boolean;
 }
 
 export class UpdateSettlementBannerDto {
@@ -146,6 +161,22 @@ export class PaymentMethodsController {
   async list(): Promise<PaymentConfigResponse> {
     const [methods, banner] = await Promise.all([
       this.methods.listEnabled(),
+      this.methods.getBanner(),
+    ]);
+    return { methods, banner };
+  }
+
+  @Get('all')
+  @Public()
+  @UseGuards(PlatformJwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'Platform admin: every payment method, switched-off ones included',
+  })
+  @ApiOkResponse({ type: PaymentConfigResponse })
+  async listAll(): Promise<PaymentConfigResponse> {
+    const [methods, banner] = await Promise.all([
+      this.methods.listAll(),
       this.methods.getBanner(),
     ]);
     return { methods, banner };

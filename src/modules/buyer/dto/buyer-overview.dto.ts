@@ -147,10 +147,40 @@ export interface BuyerOverviewReview {
   shopName: string;
 }
 
+/**
+ * One payment this buyer made through a gateway. Every charge is its own row,
+ * so an order paid for twice appears twice - the money left their account
+ * twice, and a history that quietly merged them would be hiding it.
+ */
+export interface BuyerOverviewPayment {
+  id: string;
+  /** The order it paid for, as the buyer knows it ("#1043"). */
+  orderReference: string;
+  shopName: string;
+  shopHandle: string;
+  /** What was charged, in whole currency units. */
+  amount: number;
+  currency: string;
+  /** 'bkash' | 'sslcommerz' - which gateway collected it. */
+  gateway: string;
+  /** How they paid, as the gateway named it ('BKASH-BKash', 'VISA-…'). */
+  instrument: string | null;
+  /** The gateway's own reference - what a receipt or a refund quotes. */
+  transactionId: string;
+  paidAt: string;
+}
+
 /** GET /buyer/profile - everything the profile screen renders, in one payload. */
 export interface BuyerOverview {
   buyer: BuyerProfile & { memberSince: string };
-  stats: { orders: number; reviews: number; totalSpent: number };
+  stats: {
+    orders: number;
+    reviews: number;
+    totalSpent: number;
+    /** How many gateway charges this buyer has made, duplicates included. */
+    payments: number;
+  };
   orders: BuyerOverviewOrder[];
   reviews: BuyerOverviewReview[];
+  payments: BuyerOverviewPayment[];
 }

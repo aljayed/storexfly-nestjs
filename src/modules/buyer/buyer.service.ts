@@ -14,6 +14,7 @@ import { DRIZZLE } from '../../database/database.constants';
 import type { DrizzleDB } from '../../database/drizzle.types';
 import {
   orders,
+  paymentTransactions,
   reviews,
   shops,
   users,
@@ -52,10 +53,7 @@ const EMAIL_VERIFY_OTP_SCOPE = 'buyer-email-verify';
 /** Reduce any BD phone format to the bare 10-digit national number, so numbers
  *  captured as "+8801712…", "01712…" or "1712…" all compare equal. */
 function normalizePhone(raw: string | null | undefined): string {
-  return (raw ?? '')
-    .replace(/\D/g, '')
-    .replace(/^880/, '')
-    .replace(/^0+/, '');
+  return (raw ?? '').replace(/\D/g, '').replace(/^880/, '').replace(/^0+/, '');
 }
 
 /**
@@ -160,7 +158,9 @@ export class BuyerService {
         geo: dto.geo ?? null,
       })
       .returning();
-    void this.risk.record('signup', { ip, email, phone }).catch(() => undefined);
+    void this.risk
+      .record('signup', { ip, email, phone })
+      .catch(() => undefined);
     return this.issue(row);
   }
 
@@ -285,7 +285,9 @@ export class BuyerService {
     }
     // `retryAfterSeconds` is how long before another email will actually be
     // sent, so the screen can count down instead of pretending each tap worked.
-    const { retryAfterSeconds } = await this.emailOtp.start<{ accountId: string }>(
+    const { retryAfterSeconds } = await this.emailOtp.start<{
+      accountId: string;
+    }>(
       EMAIL_VERIFY_OTP_SCOPE,
       account.email,
       { accountId: account.id },
@@ -336,7 +338,8 @@ export class BuyerService {
   ): Promise<BuyerProfile> {
     const patch: Partial<NewUserRow> = {};
     if (dto.name !== undefined) patch.name = dto.name;
-    if (dto.phone !== undefined) patch.phone = normalizePhone(dto.phone) || null;
+    if (dto.phone !== undefined)
+      patch.phone = normalizePhone(dto.phone) || null;
     if (dto.address !== undefined) patch.addressLine = dto.address || null;
     if (dto.city !== undefined) patch.addressCity = dto.city || null;
     if (dto.pincode !== undefined) patch.addressPincode = dto.pincode || null;
@@ -400,7 +403,9 @@ export class BuyerService {
     const account = await this.findById(accountId);
     if (!account) throw new UnauthorizedException('Account no longer exists');
     if (!account.emailVerified) {
-      throw new ForbiddenException('Verify your email before setting a username');
+      throw new ForbiddenException(
+        'Verify your email before setting a username',
+      );
     }
     // A seller already has a public name - the one over their shop.
     if ((await this.publicHandle(account)).fromShop) {
@@ -459,12 +464,17 @@ export class BuyerService {
     const account = await this.findById(accountId);
     if (!account) throw new UnauthorizedException('Account no longer exists');
 
-    const [orderRows, reviewRows] = await Promise.all([
+    // Orders are matched to an account by the address they were placed with,
+    // so payments follow the same rule via the order they paid for - one
+    // definition of "this buyer's", shared by both tabs.
+    const mine = account.email
+      ? sql`lower(${orders.email}) = ${account.email.toLowerCase()}`
+      : sql`false`;
+
+    const [orderRows, reviewRows, paymentRows] = await Promise.all([
       this.db.query.orders.findMany({
         // No email → match nothing (a phone-only account has no order history yet).
-        where: account.email
-          ? sql`lower(${orders.email}) = ${account.email.toLowerCase()}`
-          : sql`false`,
+        where: mine,
         orderBy: [desc(orders.placedAt)],
         with: {
           shop: { columns: { name: true, handle: true } },
@@ -482,6 +492,26 @@ export class BuyerService {
           },
         },
       }),
+      this.db
+        .select({
+          id: paymentTransactions.id,
+          amountCents: paymentTransactions.amountCents,
+          currency: paymentTransactions.currency,
+          gateway: paymentTransactions.provider,
+          instrument: paymentTransactions.instrument,
+          transactionId: paymentTransactions.gatewayTxnId,
+          paidAt: paymentTransactions.capturedAt,
+          orderReference: orders.reference,
+          shopName: shops.name,
+          shopHandle: shops.handle,
+        })
+        .from(paymentTransactions)
+        // An inner join on purpose: this is the buyer's history, and a
+        // seller's credit-pack payment is not part of it.
+        .innerJoin(orders, eq(paymentTransactions.orderId, orders.id))
+        .leftJoin(shops, eq(orders.shopId, shops.id))
+        .where(mine)
+        .orderBy(desc(paymentTransactions.capturedAt)),
     ]);
 
     const totalSpentCents = orderRows
@@ -497,6 +527,7 @@ export class BuyerService {
         orders: orderRows.length,
         reviews: reviewRows.length,
         totalSpent: centsToDollars(totalSpentCents),
+        payments: paymentRows.length,
       },
       orders: orderRows.map((o) => {
         const pending = o.adjustments.find((a) => a.status === 'pending');
@@ -532,6 +563,18 @@ export class BuyerService {
         productSlug: r.product?.slug ?? '',
         shopHandle: r.product?.shop?.handle ?? '',
         shopName: r.product?.shop?.name ?? '',
+      })),
+      payments: paymentRows.map((p) => ({
+        id: p.id,
+        orderReference: p.orderReference,
+        shopName: p.shopName ?? 'Shop',
+        shopHandle: p.shopHandle ?? '',
+        amount: centsToDollars(p.amountCents),
+        currency: p.currency,
+        gateway: p.gateway,
+        instrument: p.instrument,
+        transactionId: p.transactionId,
+        paidAt: p.paidAt.toISOString(),
       })),
     };
   }

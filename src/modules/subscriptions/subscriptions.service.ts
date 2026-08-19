@@ -27,8 +27,15 @@ import {
   type ShopRow,
   type SubscriptionRow,
 } from '../../database/schema';
-import { BillingSettingsService } from '../billing/billing-settings.service';
+import {
+  BillingSettingsService,
+  type CreditPackView,
+} from '../billing/billing-settings.service';
 import { CouponsService } from '../coupons/coupons.service';
+import {
+  GatewayCheckoutService,
+  type CollectingGateway,
+} from '../gateways/gateway-checkout.service';
 import { ReferralsService } from '../referrals/referrals.service';
 import {
   FreeTierUsageResponse,
@@ -36,6 +43,16 @@ import {
 } from './dto/subscription.response';
 
 export { PLATFORM_CURRENCY };
+
+/**
+ * What buying a credit pack returns. `paymentUrl` set means the seller has
+ * to finish on the gateway's page and nothing has been granted yet;
+ * `subscription` is the state as it stands either way.
+ */
+export interface BuyCreditsResult {
+  paymentUrl: string | null;
+  subscription: SubscriptionResponse;
+}
 
 /**
  * Where a shop stands with the platform right now, for the flows that need
@@ -113,6 +130,7 @@ export class SubscriptionsService implements OnModuleInit, OnModuleDestroy {
     private readonly coupons: CouponsService,
     private readonly billing: BillingSettingsService,
     private readonly referrals: ReferralsService,
+    private readonly gatewayCheckout: GatewayCheckoutService,
   ) {}
 
   onModuleInit(): void {
@@ -215,16 +233,23 @@ export class SubscriptionsService implements OnModuleInit, OnModuleDestroy {
    * credit, so a pack is only sellable while the balance plus what it grants
    * stays inside that. Selling credit down opens the room back up.
    *
-   * An optional coupon discounts the purchase - this is where the launch
-   * 50%-off code is redeemed. An invalid code fails the whole purchase with a
-   * 400 rather than silently charging full price.
+   * An optional coupon discounts the purchase. An invalid code fails the
+   * whole purchase with a 400 rather than silently charging full price; a
+   * valid one is only *redeemed* once the money lands, so abandoning the
+   * payment page does not burn the seller's one use of it.
+   *
+   * Returns a `paymentUrl` to send the seller to the gateway. Credit is not
+   * granted here - see {@link grantPurchasedCredit}. The exception is a
+   * purchase a coupon has made free, which has nothing to collect and is
+   * granted on the spot.
    */
   async buyCredits(
     shopId: string,
     packCode: string,
     couponCode?: string,
     refSlug?: string,
-  ): Promise<SubscriptionResponse> {
+    gateway?: CollectingGateway,
+  ): Promise<BuyCreditsResult> {
     const sub = await this.settle(await this.requireByShop(shopId));
     if (sub.status === 'cancelled') {
       throw new ForbiddenException(
@@ -263,8 +288,160 @@ export class SubscriptionsService implements OnModuleInit, OnModuleDestroy {
       discountCents = check.discountCents;
     }
 
-    // Dummy gateway: the charge always lands. Guarded on the granted total so
-    // a double-submitted purchase grants the credit once.
+    const amountDueCents = Math.max(0, pack.priceCents - discountCents);
+
+    // A coupon can take the price to nothing, and there is no sense sending
+    // someone to a payment page to pay zero - grant it on the spot.
+    if (amountDueCents === 0) {
+      const granted = await this.applyCreditPurchase({
+        sub,
+        pack,
+        amountCents: 0,
+        discountCents,
+        couponCode: coupon?.code ?? null,
+        refSlug: refSlug ?? null,
+        gateway: null,
+        paymentTransactionId: null,
+      });
+      return {
+        paymentUrl: null,
+        subscription: await this.toResponseFor(granted),
+      };
+    }
+
+    // Everything else is real money, collected on the platform's own gateway
+    // account. Nothing is granted here: the session records what was bought,
+    // and the credit lands only once the money does (PaymentsService).
+    const available = await this.gatewayCheckout.available();
+    if (!available.length) {
+      throw new BadRequestException(
+        'Online payment is not available right now - please try again shortly.',
+      );
+    }
+    const chosen =
+      gateway && available.includes(gateway) ? gateway : available[0];
+    if (gateway && !available.includes(gateway)) {
+      throw new BadRequestException(
+        `${this.gatewayCheckout.label(gateway)} is not available right now - please pick another method.`,
+      );
+    }
+
+    const shop = await this.db.query.shops.findFirst({
+      where: eq(shops.id, sub.shopId),
+      columns: {
+        name: true,
+        supportPhone: true,
+        pickupPhone: true,
+        pickupAddress: true,
+      },
+      with: { owner: { columns: { name: true, email: true, phone: true } } },
+    });
+    const owner = (
+      shop as
+        | { owner?: { name: string; email: string; phone: string | null } }
+        | undefined
+    )?.owner;
+
+    const { paymentUrl } = await this.gatewayCheckout.open({
+      purpose: 'credit_pack',
+      gateway: chosen,
+      amountCents: amountDueCents,
+      reference: 'CREDIT',
+      entityId: sub.shopId,
+      productName: `${pack.name} sales credit`,
+      shopId: sub.shopId,
+      packCode: pack.code,
+      couponCode: coupon?.code,
+      discountCents,
+      refSlug,
+      customer: {
+        name: owner?.name ?? shop?.name ?? 'Seller',
+        email: owner?.email ?? '',
+        phone: owner?.phone ?? shop?.pickupPhone ?? shop?.supportPhone ?? '',
+        address: shop?.pickupAddress ?? shop?.name ?? 'N/A',
+        city: 'Dhaka',
+        postcode: '1000',
+      },
+    });
+    return { paymentUrl, subscription: await this.toResponseFor(sub) };
+  }
+
+  /** The shop owner's account id - who a credit-pack payment belongs to. */
+  async ownerIdForShop(shopId: string): Promise<string | null> {
+    const sub = await this.db.query.subscriptions.findFirst({
+      where: eq(subscriptions.shopId, shopId),
+      columns: { ownerId: true },
+    });
+    return sub?.ownerId ?? null;
+  }
+
+  /**
+   * Hand over the credit a seller has now actually paid for. Called by the
+   * payments flow when the gateway confirms, never from the buy endpoint -
+   * which is the whole point of routing credit through a hosted checkout:
+   * an abandoned or failed purchase grants nothing.
+   */
+  async grantPurchasedCredit(
+    attempt: {
+      shopId: string | null;
+      packCode: string | null;
+      amountCents: number;
+      discountCents: number;
+      couponCode: string | null;
+      refSlug: string | null;
+      provider: string;
+    },
+    charge: { transactionId: string | null; gatewayTxnId: string },
+  ): Promise<void> {
+    if (!attempt.shopId || !attempt.packCode) {
+      this.logger.error(
+        'A credit-pack payment settled without a shop or pack on the session',
+      );
+      return;
+    }
+    const sub = await this.db.query.subscriptions.findFirst({
+      where: eq(subscriptions.shopId, attempt.shopId),
+    });
+    const pack = await this.billing.packByCode(attempt.packCode);
+    if (!sub || !pack) {
+      this.logger.error(
+        `Cannot grant credit for shop ${attempt.shopId}: ${!sub ? 'no subscription' : 'pack ' + attempt.packCode + ' is gone'}`,
+      );
+      return;
+    }
+    await this.applyCreditPurchase({
+      sub,
+      pack,
+      amountCents: attempt.amountCents,
+      discountCents: attempt.discountCents,
+      couponCode: attempt.couponCode,
+      refSlug: attempt.refSlug,
+      gateway: attempt.provider,
+      paymentTransactionId: charge.transactionId,
+      gatewayTxnId: charge.gatewayTxnId,
+    });
+  }
+
+  /**
+   * Grant a pack's credit and write the ledger row. The one place credit is
+   * ever created, so the free-coupon path and the paid path cannot drift.
+   *
+   * The ledger keeps the pack's *name* as well as its code: a seller reading
+   * their own history recognises "Growth", not "credit-200k", and the
+   * catalogue row can be renamed or retired underneath them.
+   */
+  private async applyCreditPurchase(input: {
+    sub: SubscriptionRow;
+    pack: CreditPackView;
+    amountCents: number;
+    discountCents: number;
+    couponCode: string | null;
+    refSlug: string | null;
+    gateway: string | null;
+    paymentTransactionId: string | null;
+    gatewayTxnId?: string | null;
+  }): Promise<SubscriptionRow> {
+    const { sub, pack } = input;
     const [updated] = await this.db
       .update(subscriptions)
       .set({
@@ -285,6 +462,18 @@ export class SubscriptionsService implements OnModuleInit, OnModuleDestroy {
       );
     }
 
+    // The coupon is only redeemed now, when the money is in - a seller who
+    // abandoned the payment page has not spent their one use of it.
+    let couponId: string | undefined;
+    if (input.couponCode) {
+      const check = await this.coupons.check(
+        input.couponCode,
+        sub.ownerId,
+        pack.priceCents,
+      );
+      if (check.ok) couponId = check.coupon.id;
+    }
+
     await this.db.insert(subscriptionPayments).values({
       userId: sub.ownerId,
       subscriptionId: sub.id,
@@ -292,19 +481,24 @@ export class SubscriptionsService implements OnModuleInit, OnModuleDestroy {
       type: 'credit_pack',
       method: 'manual',
       planCode: pack.code,
-      amountCents: Math.max(0, pack.priceCents - discountCents),
+      planName: pack.name,
+      amountCents: input.amountCents,
       salesCreditCents: pack.salesCreditCents,
       currency: sub.currency,
-      couponId: coupon?.id,
-      couponCode: coupon?.code,
-      discountCents,
+      couponId,
+      couponCode: input.couponCode ?? undefined,
+      discountCents: input.discountCents,
+      gateway: input.gateway,
+      paymentTransactionId: input.paymentTransactionId,
+      gatewayTxnId: input.gatewayTxnId ?? null,
     });
-    if (coupon) {
-      await this.coupons.markRedeemed(coupon.id);
+
+    if (couponId) {
+      await this.coupons.markRedeemed(couponId);
       // Attribution only - recordSignup never throws and only counts when the
       // slug still maps to the coupon that was actually redeemed.
-      if (refSlug?.trim()) {
-        await this.referrals.recordSignup(refSlug, coupon.id);
+      if (input.refSlug?.trim()) {
+        await this.referrals.recordSignup(input.refSlug, couponId);
       }
     }
 
@@ -312,12 +506,19 @@ export class SubscriptionsService implements OnModuleInit, OnModuleDestroy {
     await this.db
       .update(shops)
       .set({ plan: 'paid', live: true })
-      .where(eq(shops.id, shopId));
+      .where(eq(shops.id, sub.shopId));
 
     this.logger.log(
-      `Shop ${shopId} bought ${pack.code}: ${pack.salesCreditCents / 100} BDT of selling for ${(pack.priceCents - discountCents) / 100} BDT`,
+      `Shop ${sub.shopId} bought ${pack.code}: ${pack.salesCreditCents / 100} BDT of selling for ${input.amountCents / 100} BDT${input.gateway ? ` via ${input.gateway}` : ' (free)'}`,
     );
-    return this.toResponse(await this.settle(updated));
+    return updated;
+  }
+
+  /** Re-settle and shape one subscription for the API. */
+  private async toResponseFor(
+    sub: SubscriptionRow,
+  ): Promise<SubscriptionResponse> {
+    return this.toResponse(await this.settle(sub));
   }
 
   // ── Switching tracks ───────────────────────────────────────────

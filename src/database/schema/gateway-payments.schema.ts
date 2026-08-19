@@ -8,6 +8,7 @@ import {
   varchar,
 } from 'drizzle-orm/pg-core';
 import { orders } from './orders.schema';
+import { shops } from './shops.schema';
 
 /**
  * One attempt to collect an order's money through a hosted gateway (bKash
@@ -19,14 +20,37 @@ import { orders } from './orders.schema';
  * way back: bKash mints it (`paymentID`), SSLCommerz takes ours (`tran_id`).
  * Either way it is what the return leg looks the attempt up by, so it is
  * unique per attempt for both.
+ *
+ * An attempt is a *session*, not money. A gateway will happily settle the
+ * same session more than once - a buyer who retries after a failed redirect
+ * really is charged twice - so what actually moved is recorded per
+ * transaction in `payment_transactions`, and this row only ever tracks
+ * whether the session reached a decision.
+ *
+ * `purpose` says what the session is collecting for. 'order' is a buyer
+ * paying a shop, and carries `orderId`. 'credit_pack' is a seller paying the
+ * platform for sales credit, and carries the shop plus what was being bought
+ * - held here rather than granted up front so an abandoned checkout grants
+ * nothing.
  */
 export const gatewayPayments = pgTable(
   'gateway_payments',
   {
     id: uuid('id').primaryKey().defaultRandom(),
-    orderId: uuid('order_id')
-      .notNull()
-      .references(() => orders.id, { onDelete: 'cascade' }),
+    // Which kind of thing this session is paying for.
+    purpose: varchar('purpose', { length: 20 }).notNull().default('order'),
+    // purpose='order': the order being paid. Null on a credit-pack purchase.
+    orderId: uuid('order_id').references(() => orders.id, {
+      onDelete: 'cascade',
+    }),
+    // purpose='credit_pack': the shop buying, and the pack it picked. The
+    // coupon is held rather than redeemed until the money actually lands.
+    shopId: uuid('shop_id').references(() => shops.id, { onDelete: 'cascade' }),
+    packCode: varchar('pack_code', { length: 32 }),
+    couponCode: varchar('coupon_code', { length: 40 }),
+    discountCents: integer('discount_cents').notNull().default(0),
+    /** Referral link the seller arrived through, credited once they pay. */
+    refSlug: varchar('ref_slug', { length: 60 }),
     provider: varchar('provider', { length: 20 }).notNull().default('bkash'),
     // The id the attempt is known by at the gateway - bKash's `paymentID`,
     // or the `tran_id` we mint for an SSLCommerz session.
@@ -48,6 +72,7 @@ export const gatewayPayments = pgTable(
   },
   (table) => [
     index('gateway_payments_order_idx').on(table.orderId),
+    index('gateway_payments_shop_idx').on(table.shopId),
     index('gateway_payments_payment_idx').on(table.paymentId),
     index('gateway_payments_status_idx').on(table.status, table.createdAt),
   ],

@@ -64,7 +64,10 @@ import {
   RiskService,
   type CheckoutRisk,
 } from '../risk/risk.service';
-import { BkashService } from '../gateways/bkash.service';
+import {
+  GatewayCheckoutService,
+  type CollectingGateway,
+} from '../gateways/gateway-checkout.service';
 import { CarrybeeService } from '../gateways/carrybee.service';
 import {
   CARRYBEE_EVENTS,
@@ -75,7 +78,6 @@ import {
 import { CourierSettingsService } from '../gateways/courier-settings.service';
 import { ShopCourierStoresService } from '../gateways/shop-courier-stores.service';
 import { PathaoService } from '../gateways/pathao.service';
-import { SslcommerzService } from '../gateways/sslcommerz.service';
 import { SteadfastService } from '../gateways/steadfast.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { MessagesService } from '../chat/messages.service';
@@ -246,8 +248,7 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
     private readonly emailProof: EmailProofService,
     private readonly paymentMethods: PaymentMethodsService,
     private readonly notifications: NotificationsService,
-    private readonly bkash: BkashService,
-    private readonly sslcommerz: SslcommerzService,
+    private readonly gatewayCheckout: GatewayCheckoutService,
     private readonly carrybee: CarrybeeService,
     private readonly steadfast: SteadfastService,
     private readonly pathao: PathaoService,
@@ -1085,31 +1086,24 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
   /**
    * Refuse a gateway method the platform cannot actually collect through, so
    * a half-configured console never strands a buyer on a dead payment page.
-   * Both messages name the route the buyer chose, not the plumbing behind it.
+   * The message names the route the buyer chose, not the plumbing behind it.
    */
   private async assertGatewayAvailable(
     method: PaymentMethodRow,
   ): Promise<void> {
-    if (method.gateway === 'bkash' && !(await this.bkash.isConfigured())) {
-      throw new BadRequestException(
-        'bKash payments are temporarily unavailable - please pick another method.',
-      );
-    }
-    if (
-      method.gateway === 'sslcommerz' &&
-      !(await this.sslcommerz.isConfigured())
-    ) {
-      throw new BadRequestException(
-        'Card payments are temporarily unavailable - please pick another method.',
-      );
-    }
+    if (method.gateway === 'none') return;
+    if (await this.gatewayCheckout.isConfigured(method.gateway)) return;
+    throw new BadRequestException(
+      method.gateway === 'bkash'
+        ? 'bKash payments are temporarily unavailable - please pick another method.'
+        : 'Card payments are temporarily unavailable - please pick another method.',
+    );
   }
 
   /**
    * Open a hosted payment for a committed-but-pending order and return the
-   * page to send the buyer to, recording the attempt so the return leg can
-   * find it. `amountCents` is what is collected now - the full total, or just
-   * the advance on a 15% pre-payment order.
+   * page to send the buyer to. `amountCents` is what is collected now - the
+   * full total, or just the advance on a 15% pre-payment order.
    *
    * Everything the gateway needs about the buyer is read off the order row
    * rather than the request, so both checkout paths (storefront and accepted
@@ -1119,41 +1113,18 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
    */
   private async openGatewayPayment(
     order: OrderRow,
-    gateway: 'bkash' | 'sslcommerz',
+    gateway: CollectingGateway,
     amountCents: number,
   ): Promise<string> {
-    const digits = (order.phone ?? '').replace(/\D/g, '');
-    const invoice = `${order.reference.replace('#', '')}-${order.id.slice(0, 8)}`;
-
-    if (gateway === 'bkash') {
-      const created = await this.bkash.createPayment({
-        amountCents,
-        invoiceNumber: invoice,
-        payerReference: digits,
-        callbackUrl: this.paymentsUrl('bkash/callback'),
-      });
-      await this.db.insert(gatewayPayments).values({
-        orderId: order.id,
-        provider: 'bkash',
-        paymentId: created.paymentId,
-        amountCents,
-        payerReference: digits.slice(0, 40),
-      });
-      return created.bkashUrl;
-    }
-
-    // SSLCommerz takes an id we mint (max 30 chars) instead of handing one
-    // back. The invoice prefix keeps it readable next to the order it paid
-    // for in the merchant panel; the suffix keeps a retried attempt on the
-    // same order distinct, which is what the return leg looks up by.
-    const tranId = `${invoice}-${Date.now().toString(36)}`
-      .slice(0, 30)
-      .toUpperCase();
     const address = order.address;
-    const session = await this.sslcommerz.createSession({
+    const { paymentUrl } = await this.gatewayCheckout.open({
+      purpose: 'order',
+      gateway,
       amountCents,
-      tranId,
+      reference: order.reference,
+      entityId: order.id,
       productName: `Order ${order.reference}`,
+      orderId: order.id,
       customer: {
         name: order.customerName,
         email: order.email,
@@ -1162,27 +1133,8 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
         city: address?.area ?? '',
         postcode: address?.pincode ?? '',
       },
-      successUrl: this.paymentsUrl('sslcommerz/success'),
-      failUrl: this.paymentsUrl('sslcommerz/fail'),
-      cancelUrl: this.paymentsUrl('sslcommerz/cancel'),
-      ipnUrl: this.paymentsUrl('sslcommerz/ipn'),
     });
-    await this.db.insert(gatewayPayments).values({
-      orderId: order.id,
-      provider: 'sslcommerz',
-      paymentId: tranId,
-      amountCents,
-      payerReference: digits.slice(0, 40),
-    });
-    return session.gatewayUrl;
-  }
-
-  /** Absolute URL of a /payments route - gateways redirect browsers to it. */
-  private paymentsUrl(path: string): string {
-    const apiUrl =
-      this.config.get<string>('app.apiUrl') ?? 'http://localhost:3000';
-    const prefix = this.config.get<string>('app.apiPrefix') ?? 'api';
-    return `${apiUrl.replace(/\/$/, '')}/${prefix}/payments/${path}`;
+    return paymentUrl;
   }
 
   /**

@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsOptional, IsString, Length } from 'class-validator';
+import { IsIn, IsOptional, IsString, Length } from 'class-validator';
 
 export class BuyCreditsDto {
   @ApiProperty({
@@ -27,4 +27,14 @@ export class BuyCreditsDto {
   @IsString()
   @Length(1, 60)
   refSlug?: string;
+
+  @ApiPropertyOptional({
+    enum: ['sslcommerz', 'bkash'],
+    description:
+      'Which gateway to pay on. Omitted, the first available one is used. ' +
+      'Ignored when a coupon makes the pack free.',
+  })
+  @IsOptional()
+  @IsIn(['sslcommerz', 'bkash'])
+  gateway?: 'sslcommerz' | 'bkash';
 }

@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { BkashService } from './bkash.service';
 import { CarrybeeService } from './carrybee.service';
 import { CourierSettingsService } from './courier-settings.service';
+import { GatewayCheckoutService } from './gateway-checkout.service';
 import { GatewaySettingsService } from './gateway-settings.service';
 import { PathaoService } from './pathao.service';
 import { ShopCourierStoresService } from './shop-courier-stores.service';
@@ -26,6 +27,7 @@ import { SteadfastService } from './steadfast.service';
     CourierSettingsService,
     BkashService,
     SslcommerzService,
+    GatewayCheckoutService,
     CarrybeeService,
     SteadfastService,
     PathaoService,
@@ -36,6 +38,7 @@ import { SteadfastService } from './steadfast.service';
     CourierSettingsService,
     BkashService,
     SslcommerzService,
+    GatewayCheckoutService,
     CarrybeeService,
     SteadfastService,
     PathaoService,

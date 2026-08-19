@@ -17,6 +17,7 @@ import {
   subscriptionStatusEnum,
 } from './enums';
 import { coupons } from './coupons.schema';
+import { paymentTransactions } from './payment-transactions.schema';
 import { shops } from './shops.schema';
 import { users } from './users.schema';
 
@@ -156,6 +157,29 @@ export const subscriptionPayments = pgTable(
      * the plan-ladder era; retired rows still carry their plan here.)
      */
     planCode: varchar('plan_code', { length: 32 }),
+    /**
+     * The pack's shelf name at purchase time ("Growth", "Starter"). The code
+     * alone is not something a seller reading their own history recognises,
+     * and the catalogue row it came from can be renamed or retired.
+     */
+    planName: varchar('plan_name', { length: 60 }),
+    /**
+     * The gateway charge that paid for this, when one did. Null on rows the
+     * platform wrote itself - an auto-debited commission bill, or a purchase
+     * a 100%-off coupon made free.
+     */
+    paymentTransactionId: uuid('payment_transaction_id').references(
+      () => paymentTransactions.id,
+      { onDelete: 'set null' },
+    ),
+    /** Which gateway collected it ('bkash', 'sslcommerz'); null = no gateway. */
+    gateway: varchar('gateway', { length: 20 }),
+    /**
+     * That charge's reference at the gateway, denormalized for the same
+     * reason the pack code and coupon are: this is the number a seller
+     * quotes when querying a payment, and it should still read years later.
+     */
+    gatewayTxnId: varchar('gateway_txn_id', { length: 80 }),
     // The amount actually charged, after any coupon discount.
     amountCents: integer('amount_cents').notNull(),
     /** credit_pack only: how much selling this purchase paid for, in paisa. */

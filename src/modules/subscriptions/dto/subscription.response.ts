@@ -54,6 +54,12 @@ export class SubscriptionPaymentResponse {
   })
   planCode?: string;
   @ApiPropertyOptional({
+    example: 'Growth',
+    description:
+      "The pack's shelf name at purchase time - what the seller recognises",
+  })
+  planName?: string;
+  @ApiPropertyOptional({
     example: 100000,
     description: 'credit_pack: the selling this purchase paid for, in ৳',
   })
@@ -67,6 +73,16 @@ export class SubscriptionPaymentResponse {
   @ApiPropertyOptional({ example: 949.5 }) discount?: number;
   @ApiPropertyOptional() periodStart?: string;
   @ApiPropertyOptional() periodEnd?: string;
+  @ApiPropertyOptional({
+    enum: ['bkash', 'sslcommerz'],
+    description: 'Which gateway collected it; absent when no money moved',
+  })
+  gateway?: string;
+  @ApiPropertyOptional({
+    example: '260818213901oXx8qw6dRAwmXip',
+    description: "The charge's reference at the gateway - what a receipt quotes",
+  })
+  transactionId?: string;
   @ApiProperty() paidAt!: string;
 
   static fromRow(row: SubscriptionPaymentRow): SubscriptionPaymentResponse {
@@ -77,6 +93,7 @@ export class SubscriptionPaymentResponse {
       amount: row.amountCents / 100,
       currency: row.currency,
       planCode: row.planCode ?? undefined,
+      planName: row.planName ?? undefined,
       salesCredit:
         row.salesCreditCents === null ? undefined : row.salesCreditCents / 100,
       billableSales:
@@ -87,6 +104,8 @@ export class SubscriptionPaymentResponse {
       discount: row.discountCents ? row.discountCents / 100 : undefined,
       periodStart: row.periodStart?.toISOString(),
       periodEnd: row.periodEnd?.toISOString(),
+      gateway: row.gateway ?? undefined,
+      transactionId: row.gatewayTxnId ?? undefined,
       paidAt: row.paidAt.toISOString(),
     };
   }

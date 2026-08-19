@@ -32,6 +32,7 @@ import {
   SubscriptionResponse,
 } from './dto/subscription.response';
 import { BillingSettingsService } from '../billing/billing-settings.service';
+import { GatewayCheckoutService } from '../gateways/gateway-checkout.service';
 import { SubscriptionsService } from './subscriptions.service';
 
 @ApiTags('subscriptions')
@@ -41,6 +42,7 @@ export class SubscriptionsController {
     private readonly subscriptions: SubscriptionsService,
     private readonly coupons: CouponsService,
     private readonly billing: BillingSettingsService,
+    private readonly gatewayCheckout: GatewayCheckoutService,
   ) {}
 
   // ── Public pricing ────────────────────────────────────────────
@@ -102,15 +104,35 @@ export class SubscriptionsController {
   @RequirePerm('subscription.manage')
   @ApiBearerAuth()
   @Post('shops/:shopId/subscription/credits')
-  @ApiOperation({ summary: 'Admin: buy a sales-credit pack (dummy gateway)' })
-  @ApiOkResponse({ type: SubscriptionResponse })
+  @ApiOperation({
+    summary:
+      'Admin: buy a sales-credit pack. Returns a paymentUrl to finish on the ' +
+      'gateway; credit is granted only once the money lands.',
+  })
   buyCredits(@Param('shopId') shopId: string, @Body() dto: BuyCreditsDto) {
     return this.subscriptions.buyCredits(
       shopId,
       dto.packCode,
       dto.couponCode,
       dto.refSlug,
+      dto.gateway,
     );
+  }
+
+  @Public()
+  @UseGuards(AdminJwtAuthGuard, ShopScopeGuard, RolesGuard)
+  @RequirePerm('subscription.manage')
+  @ApiBearerAuth()
+  @Get('shops/:shopId/subscription/gateways')
+  @ApiOperation({
+    summary: 'Admin: which gateways can collect a credit-pack payment now',
+  })
+  creditGateways() {
+    return this.gatewayCheckout
+      .available()
+      .then((gateways) =>
+        gateways.map((g) => ({ gateway: g, label: this.gatewayCheckout.label(g) })),
+      );
   }
 
   @Public()

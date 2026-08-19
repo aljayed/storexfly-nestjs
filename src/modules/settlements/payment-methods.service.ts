@@ -35,6 +35,13 @@ export interface PaymentMethodView {
   locked: boolean;
   /** Anything but 'none' = platform-collected via that gateway. */
   gateway: PaymentGatewayChoice;
+  /**
+   * Off = the method exists but is offered nowhere: it vanishes from
+   * checkout, from the product-level payment toggles and from anywhere a
+   * buyer could pick it. Orders that already used it keep settling on its
+   * fee rate, which is why disabling is not deleting.
+   */
+  enabled: boolean;
 }
 
 /**
@@ -53,6 +60,15 @@ export class PaymentMethodsService {
   async listEnabled(): Promise<PaymentMethodView[]> {
     const rows = await this.ensureSeeded();
     return rows.filter((m) => m.enabled).map(view);
+  }
+
+  /**
+   * Operator-facing catalog: every method, switched off ones included. The
+   * console is the one place that has to see a disabled method - it is what
+   * you switch back on.
+   */
+  async listAll(): Promise<PaymentMethodView[]> {
+    return (await this.ensureSeeded()).map(view);
   }
 
   /** Every method (disabled included), keyed by code - for settlement math. */
@@ -99,6 +115,7 @@ export class PaymentMethodsService {
       subtitle?: string | null;
       feePercent?: number;
       gateway?: PaymentGatewayChoice;
+      enabled?: boolean;
     },
   ): Promise<PaymentMethodView> {
     const row = await this.requireById(id);
@@ -116,6 +133,17 @@ export class PaymentMethodsService {
         throw new BadRequestException('Cash on Delivery is always free.');
       }
       set.feeBp = row.locked ? 0 : toBp(patch.feePercent);
+    }
+    if (patch.enabled !== undefined) {
+      // COD is the floor under every shop: there is always one way to buy
+      // that needs no gateway, no card and no wallet. Switching it off would
+      // leave a shop with no configured gateway unable to sell at all.
+      if (row.locked && !patch.enabled) {
+        throw new BadRequestException(
+          'Cash on Delivery is built in and cannot be switched off.',
+        );
+      }
+      set.enabled = patch.enabled;
     }
     if (patch.gateway !== undefined) {
       if (row.kind === 'cod' && patch.gateway !== 'none') {
@@ -275,5 +303,6 @@ function view(m: PaymentMethodRow): PaymentMethodView {
     feePercent: m.feeBp / 100,
     locked: m.locked,
     gateway: m.gateway,
+    enabled: m.enabled,
   };
 }
