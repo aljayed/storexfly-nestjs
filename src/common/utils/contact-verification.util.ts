@@ -1,4 +1,5 @@
 import type { UserRow } from '../../database/schema';
+import type { ChangeAllowance } from './identity-change.util';
 
 /**
  * What the console needs to render the "verify your contact details" step:
@@ -11,6 +12,9 @@ export interface ContactStatus {
   phoneVerified: boolean;
   /** True when the account may create a shop. */
   complete: boolean;
+  /** How many times this account may still move to a different verified
+   *  number, and when the next one becomes possible - two per fortnight. */
+  phoneChange: ChangeAllowance;
 }
 
 /**

@@ -10,6 +10,10 @@ import {
 } from 'class-validator';
 import type { UserRow } from '../../../database/schema';
 import { BuyerGeoDto, type BuyerProfile } from './buyer-overview.dto';
+import {
+  handleChangeAllowance,
+  phoneChangeAllowance,
+} from '../../../common/utils/identity-change.util';
 
 const lower = ({ value }: { value: unknown }) =>
   typeof value === 'string' ? value.trim().toLowerCase() : value;
@@ -109,8 +113,11 @@ export class BuyerAuthResponse {
         geo: row.geo,
         lastPayMethod: row.lastPayMethod,
         emailVerified: row.emailVerified,
+        phoneVerified: row.phoneVerified,
         handle: row.handle,
         handleFromShop: false,
+        handleChange: handleChangeAllowance(row.handleChangedAt),
+        phoneChange: phoneChangeAllowance(row.phoneChanges),
       },
     };
   }

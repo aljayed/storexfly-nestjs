@@ -9,6 +9,11 @@ import {
   contactComplete,
   type ContactStatus,
 } from '../../common/utils/contact-verification.util';
+import {
+  formatDay,
+  phoneChangeAllowance,
+  recordPhoneChange,
+} from '../../common/utils/identity-change.util';
 import type { UserRow } from '../../database/schema';
 import { BlockedWordsService } from '../blocked-words/blocked-words.service';
 import { UserResponse } from '../users/dto/user.response';
@@ -25,6 +30,19 @@ const BCRYPT_ROUNDS = 12;
 /** OTP scopes for proving contact details on an *existing* account. */
 const VERIFY_PHONE_SCOPE = 'account-phone';
 const VERIFY_EMAIL_SCOPE = 'account-email';
+
+/**
+ * Whether two numbers are the same number. They reach this from different
+ * doors in different shapes - "+8801712…" from the verify form, "1712…" off
+ * the account row - and a literal comparison would read a re-verification of
+ * the number already on file as a change, and spend the allowance on it.
+ */
+function samePhone(a: string | null | undefined, b: string | null | undefined) {
+  const bare = (raw: string | null | undefined) =>
+    (raw ?? '').replace(/\D/g, '').replace(/^880/, '').replace(/^0+/, '');
+  const left = bare(a);
+  return !!left && left === bare(b);
+}
 
 export interface AuthResult {
   user: UserResponse;
@@ -131,6 +149,7 @@ export class AuthService {
       phone: user.phone ?? undefined,
       phoneVerified: user.phoneVerified,
       complete: contactComplete(user),
+      phoneChange: phoneChangeAllowance(user.phoneChanges),
     };
   }
 
@@ -146,6 +165,9 @@ export class AuthService {
         'This phone number is already verified on another account',
       );
     }
+    // Checked here as well as on confirm, so a spent allowance is answered
+    // before an SMS is paid for rather than after the code is typed in.
+    this.assertPhoneChangeAllowed(user, phone);
     const issued = await this.otp.issue(phone, VERIFY_PHONE_SCOPE);
     return {
       ok: true,
@@ -176,9 +198,45 @@ export class AuthService {
         'This phone number is already verified on another account',
       );
     }
+    // The allowance is spent here, not at `start`: sending a code costs
+    // nothing about the account, and a code that is never typed in has not
+    // changed anything.
+    const changing = this.isPhoneChange(user, phone);
+    this.assertPhoneChangeAllowed(user, phone);
     return UserResponse.fromRow(
-      await this.users.setVerifiedPhone(user.id, phone),
+      await this.users.setVerifiedPhone(
+        user.id,
+        phone,
+        changing ? recordPhoneChange(user.phoneChanges) : undefined,
+      ),
     );
+  }
+
+  /**
+   * Whether proving `phone` would move the account off a number it has
+   * already proved. Setting the first one is not a change, and re-proving the
+   * number already on file is not either - only swapping one verified number
+   * for a different one is rationed.
+   */
+  private isPhoneChange(user: UserRow, phone: string): boolean {
+    return user.phoneVerified && !samePhone(user.phone, phone);
+  }
+
+  /**
+   * Two phone changes per fortnight. A verified number is how a courier
+   * reaches the person and how an account is recovered, so a session that can
+   * roll it over at will can quietly take the account with it.
+   */
+  private assertPhoneChangeAllowed(user: UserRow, phone: string): void {
+    if (!this.isPhoneChange(user, phone)) return;
+    const allowance = phoneChangeAllowance(user.phoneChanges);
+    if (allowance.allowed) return;
+    throw new ConflictException({
+      statusCode: HttpStatus.CONFLICT,
+      error: 'PhoneChangeTooSoon',
+      nextAllowedAt: allowance.nextAllowedAt,
+      message: `A phone number can be changed twice every 14 days. You can change yours again on ${formatDay(allowance.nextAllowedAt)}.`,
+    });
   }
 
   /**

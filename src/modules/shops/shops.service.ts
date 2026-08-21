@@ -76,6 +76,13 @@ interface OwedMonth {
   feeCents: number;
 }
 
+/**
+ * Running more than one shop from a single account is switched off for now -
+ * see {@link MULTI_SHOP_ENABLED}. Everything that decides *who* may open a
+ * second shop is left intact behind it, so turning it back on is one constant.
+ */
+const MULTI_SHOP_ENABLED = false;
+
 /** Whether a seller who already owns a shop may open another one. */
 export interface ShopEligibility {
   shopCount: number;
@@ -87,6 +94,12 @@ export interface ShopEligibility {
   creditPacksBought: number;
   /** One is spent per shop opened beyond the free first one. */
   creditPacksUsed: number;
+  /**
+   * True while second shops are switched off platform-wide. The wizard reads
+   * it to say "not yet" rather than sending a seller off to buy a credit pack
+   * that would not unlock anything.
+   */
+  multiShopDisabled: boolean;
   canCreate: boolean;
 }
 
@@ -169,6 +182,10 @@ export class ShopsService {
       columns: { id: true, kycStatus: true },
     });
     if (owned.length) {
+      // Whether a second shop is allowed at all comes first: while it is
+      // switched off, "the free trial is only for your first shop" would send
+      // the seller after a paid track that does not exist yet.
+      await this.assertSecondShopAllowed(ownerId, owned);
       // The free tier is a first-shop trial, not a way to run a fleet of
       // capped shops: any existing shop (free or paid) means this one is paid.
       if (plan === 'free') {
@@ -176,7 +193,6 @@ export class ShopsService {
           'The free trial is only for your first shop - a second one starts on a paid track.',
         );
       }
-      await this.assertSecondShopAllowed(ownerId, owned);
     }
     // Nothing is charged to open a shop. The seller picks how they pay for
     // sales - a credit pack, or the verified commission track - from the
@@ -241,6 +257,14 @@ export class ShopsService {
     if (unlock.canCreate) {
       return;
     }
+    if (unlock.multiShopDisabled) {
+      throw new ForbiddenException({
+        statusCode: HttpStatus.FORBIDDEN,
+        error: 'MultiShopDisabled',
+        message:
+          'One shop per account for now - running several from one account is not open yet.',
+      });
+    }
     throw new ForbiddenException({
       statusCode: HttpStatus.FORBIDDEN,
       error: 'AdditionalShopLocked',
@@ -282,10 +306,11 @@ export class ShopsService {
       hasVerifiedBusiness,
       creditPacksBought,
       creditPacksUsed,
+      multiShopDisabled: !MULTI_SHOP_ENABLED,
       canCreate:
         owned.length === 0 ||
-        hasVerifiedBusiness ||
-        creditPacksBought > creditPacksUsed,
+        (MULTI_SHOP_ENABLED &&
+          (hasVerifiedBusiness || creditPacksBought > creditPacksUsed)),
     };
   }
 

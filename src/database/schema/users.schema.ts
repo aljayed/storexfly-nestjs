@@ -76,12 +76,26 @@ export const users = pgTable(
      * is verified (see BuyerService.setHandle).
      */
     handle: varchar('handle', { length: 24 }),
+    /**
+     * When the username was last set. A handle is how other people address
+     * this account, so it may only be changed once a month - see
+     * common/utils/identity-change.util. Null on an account that never
+     * claimed one, which is always free to.
+     */
+    handleChangedAt: timestamp('handle_changed_at', { withTimezone: true }),
     emailVerified: boolean('email_verified').notNull().default(false),
     // True once the account proves the phone number by OTP
     // (/auth/verify/phone/*). Required, together with `emailVerified`, before
     // the account may create a shop. The SMS gateway is still a stub, so the
     // code is handed back to the caller rather than texted.
     phoneVerified: boolean('phone_verified').notNull().default(false),
+    /**
+     * ISO timestamps of the recent times this account moved to a different
+     * verified number, newest first. Two are allowed per fortnight, so only
+     * the entries still inside that window are kept - the rest can never
+     * refuse a change again. Null on an account that has never changed one.
+     */
+    phoneChanges: jsonb('phone_changes').$type<string[]>(),
     // Saved checkout details (autofill the storefront order form). All optional.
     // Phone holds the bare 10 digits after +880 (same format checkout captures).
     addressLine: text('address_line'),

@@ -24,6 +24,11 @@ import {
 import { centsToDollars } from '../../common/utils/money.util';
 import { ordersOwnedBy } from '../../common/utils/order-owner.util';
 import { generatePublicId } from '../../common/utils/public-id.util';
+import {
+  formatDay,
+  handleChangeAllowance,
+  phoneChangeAllowance,
+} from '../../common/utils/identity-change.util';
 import { productLines } from '../../common/utils/order-line.util';
 import { BlockedWordsService } from '../blocked-words/blocked-words.service';
 import { RiskService } from '../risk/risk.service';
@@ -275,8 +280,13 @@ export class BuyerService {
       geo: row.geo,
       lastPayMethod: row.lastPayMethod,
       emailVerified: row.emailVerified,
+      phoneVerified: row.phoneVerified,
       handle,
       handleFromShop: fromShop,
+      // Sent with the profile rather than fetched on demand, so a screen can
+      // say when the next change is possible before anyone tries one.
+      handleChange: handleChangeAllowance(row.handleChangedAt),
+      phoneChange: phoneChangeAllowance(row.phoneChanges),
     };
   }
 
@@ -352,8 +362,21 @@ export class BuyerService {
   ): Promise<BuyerProfile> {
     const patch: Partial<NewUserRow> = {};
     if (dto.name !== undefined) patch.name = dto.name;
-    if (dto.phone !== undefined)
-      patch.phone = normalizePhone(dto.phone) || null;
+    // The saved phone is checkout autofill *until* it is proved by OTP, at
+    // which point it becomes the account's verified number and this route
+    // stops writing it: changing it goes through /auth/verify/phone/*, which
+    // is what enforces the fortnightly limit and the code on the new number.
+    // Skipped silently rather than refused, because checkout patches the whole
+    // form as one fire-and-forget save - a 409 here would drop the address
+    // with it, over a field the buyer never asked to change.
+    if (dto.phone !== undefined) {
+      const next = normalizePhone(dto.phone) || null;
+      const account = await this.findById(accountId);
+      const locked =
+        account?.phoneVerified === true &&
+        normalizePhone(account.phone) !== normalizePhone(next);
+      if (!locked) patch.phone = next;
+    }
     if (dto.address !== undefined) patch.addressLine = dto.address || null;
     if (dto.city !== undefined) patch.addressCity = dto.city || null;
     if (dto.pincode !== undefined) patch.addressPincode = dto.pincode || null;
@@ -428,6 +451,10 @@ export class BuyerService {
    * their storefront are not the same thing, and the handle is the account's
    * to change however many shops it owns. Reusing your own shop's handle is
    * allowed - see {@link handleTaken}.
+   *
+   * Once claimed it may only be changed once a month. A username is an address
+   * other people hold: chat resolves "@rafiq" to whoever holds it today, so a
+   * name that can be passed around freely is a name nobody can rely on.
    */
   async setHandle(accountId: string, raw: string): Promise<BuyerProfile> {
     const account = await this.findById(accountId);
@@ -438,6 +465,19 @@ export class BuyerService {
       );
     }
     const handle = normalizeHandle(raw);
+    // Re-saving the name they already hold changes nothing, so it must not
+    // spend the month's one change.
+    if (account.handle === handle) return this.me(account);
+
+    const allowance = handleChangeAllowance(account.handleChangedAt);
+    if (!allowance.allowed) {
+      throw new ConflictException({
+        statusCode: HttpStatus.CONFLICT,
+        error: 'HandleChangeTooSoon',
+        nextAllowedAt: allowance.nextAllowedAt,
+        message: `A username can only be changed once a month. You can change yours again on ${formatDay(allowance.nextAllowedAt)}.`,
+      });
+    }
     const shape = checkHandleShape(handle);
     if (shape) throw new ConflictException(shape);
     // A name someone else already publishes as is off limits, and so is one
@@ -449,7 +489,7 @@ export class BuyerService {
 
     const [row] = await this.db
       .update(users)
-      .set({ handle })
+      .set({ handle, handleChangedAt: new Date() })
       .where(eq(users.id, accountId))
       .returning();
     if (!row) throw new UnauthorizedException('Account no longer exists');

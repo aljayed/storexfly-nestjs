@@ -568,6 +568,13 @@
       "when": 1792886400000,
       "tag": "0083_account_identity",
       "breakpoints": true
+    },
+    {
+      "idx": 84,
+      "version": "7",
+      "when": 1792972800000,
+      "tag": "0084_identity_change_limits",
+      "breakpoints": true
     }
   ]
 }

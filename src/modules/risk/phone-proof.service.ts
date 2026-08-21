@@ -99,18 +99,23 @@ export class PhoneProofService {
       throw new BadRequestException('That code is not right, or it expired');
     }
     if (accountId) {
-      // Stored in the same shape the account flow uses, so one number reads as
-      // one number to `findByVerifiedPhone` whichever door proved it.
-      const e164 = `+880${normalized}`;
       // One number belongs to one account, so a number already verified
       // elsewhere is not claimed by this one. The order still goes through -
       // this endpoint exists to let a checkout finish, and refusing here would
       // put a wall in front of a buyer who just answered a code correctly.
       // They are simply asked again on their next repeat order, and the
-      // create-shop wizard is where a number is moved between accounts.
-      const owner = await this.users.findByVerifiedPhone(e164);
-      if (!owner || owner.id === accountId) {
-        await this.users.setVerifiedPhone(accountId, e164);
+      // profile page is where a number is moved between accounts.
+      const [owner, account] = await Promise.all([
+        this.users.findByVerifiedPhone(normalized),
+        this.users.findById(accountId),
+      ]);
+      // Only ever the *first* number an account proves. Changing one already
+      // on file is rationed to twice a fortnight, and that ration lives on the
+      // profile flow - adopting a fresh number here would hand every checkout
+      // an unlimited way around it.
+      const firstOne = !!account && !account.phoneVerified;
+      if (firstOne && (!owner || owner.id === accountId)) {
+        await this.users.setVerifiedPhone(accountId, normalized);
       }
     }
     const proof = await this.jwt.signAsync(

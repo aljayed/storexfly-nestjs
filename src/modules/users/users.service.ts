@@ -1,9 +1,22 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, inArray } from 'drizzle-orm';
 import { generatePublicId } from '../../common/utils/public-id.util';
 import { DRIZZLE } from '../../database/database.constants';
 import type { DrizzleDB } from '../../database/drizzle.types';
 import { users, type NewUserRow, type UserRow } from '../../database/schema';
+
+/**
+ * Reduce any BD phone format to the bare 10-digit national number. The same
+ * number arrives as "+8801712…", "01712…" or "1712…" depending on which door
+ * it came through, and `users.phone` holds one of them - so every read and
+ * write here goes through this first.
+ */
+function normalizePhone(raw: string | null | undefined): string {
+  return (raw ?? '')
+    .replace(/\D/g, '')
+    .replace(/^880/, '')
+    .replace(/^0+/, '');
+}
 
 export interface GoogleProfileInput {
   googleId: string;
@@ -36,7 +49,7 @@ export class UsersService {
   }
 
   async findByPhone(phone: string): Promise<UserRow | undefined> {
-    return this.db.query.users.findFirst({ where: eq(users.phone, phone) });
+    return this.db.query.users.findFirst({ where: phoneMatches(phone) });
   }
 
   /**
@@ -46,15 +59,28 @@ export class UsersService {
    */
   async findByVerifiedPhone(phone: string): Promise<UserRow | undefined> {
     return this.db.query.users.findFirst({
-      where: and(eq(users.phone, phone), eq(users.phoneVerified, true)),
+      where: and(phoneMatches(phone), eq(users.phoneVerified, true)),
     });
   }
 
-  /** Records a phone number the account just proved by SMS OTP. */
-  async setVerifiedPhone(id: string, phone: string): Promise<UserRow> {
+  /**
+   * Records a phone number the account just proved by SMS OTP, normalized so
+   * one number is one string however it was typed. `phoneChanges` is the
+   * updated rationing log, passed only when this write actually moves the
+   * account off a number it had already proved.
+   */
+  async setVerifiedPhone(
+    id: string,
+    phone: string,
+    phoneChanges?: string[],
+  ): Promise<UserRow> {
     const [row] = await this.db
       .update(users)
-      .set({ phone, phoneVerified: true })
+      .set({
+        phone: normalizePhone(phone),
+        phoneVerified: true,
+        ...(phoneChanges ? { phoneChanges } : {}),
+      })
       .where(eq(users.id, id))
       .returning();
     return row;
@@ -116,4 +142,17 @@ export class UsersService {
       emailVerified: true,
     });
   }
+}
+
+/**
+ * Match a number against `users.phone` in either shape it may be stored in.
+ * Rows written before the format was settled hold "+8801712…"; everything
+ * since holds the bare national digits. Migration 0084 normalizes the old
+ * ones, and matching both keeps a number that slipped through from looking
+ * unclaimed - which is what would let a second account verify it.
+ */
+function phoneMatches(phone: string) {
+  const national = normalizePhone(phone);
+  if (!national) return eq(users.phone, phone);
+  return inArray(users.phone, [national, `+880${national}`, `0${national}`]);
 }

@@ -9,6 +9,7 @@ import {
 } from 'class-validator';
 import { Transform, Type } from 'class-transformer';
 import type { BuyerGeoValue } from '../../../database/schema';
+import type { ChangeAllowance } from '../../../common/utils/identity-change.util';
 
 const trim = ({ value }: { value: unknown }) =>
   typeof value === 'string' ? value.trim() : value;
@@ -108,11 +109,20 @@ export interface BuyerProfile {
   lastPayMethod: string | null;
   /** True once the buyer has confirmed ownership of their email via OTP. */
   emailVerified: boolean;
+  /** True once the number has been proved by SMS code. From then on it is the
+   *  account's phone number rather than checkout autofill, and only the OTP
+   *  flow may replace it. */
+  phoneVerified: boolean;
   /** Public username ("@rafiq"), null until the account claims one. */
   handle: string | null;
   /** True when this handle is standing in from the account's shop because it
    *  has not picked a username of its own. Setting one replaces it. */
   handleFromShop: boolean;
+  /** Whether the username may be changed now, and when it may be next - one
+   *  change per 30 days (see common/utils/identity-change.util). */
+  handleChange: ChangeAllowance;
+  /** The same for the phone number: two changes per rolling 14 days. */
+  phoneChange: ChangeAllowance;
 }
 
 /** A seller's still-pending order-amount change awaiting the buyer's decision. */
