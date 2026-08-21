@@ -4,6 +4,7 @@ import {
   ArrayMaxSize,
   ArrayMinSize,
   IsArray,
+  IsBoolean,
   IsEmail,
   IsEnum,
   IsInt,
@@ -316,6 +317,19 @@ export class CheckoutPreflightDto {
   @IsString()
   @MaxLength(320)
   email?: string;
+
+  /**
+   * Whether the buyer is heading for plain Cash on Delivery - nothing
+   * collected before the parcel goes out. It changes which number the code
+   * step would be asking about, so the advisory answer needs it. Left off, the
+   * answer is given as though money were being taken up front.
+   */
+  @ApiPropertyOptional({
+    description: 'Buyer is paying cash on delivery (no advance)',
+  })
+  @IsOptional()
+  @IsBoolean()
+  cod?: boolean;
 }
 
 /** POST /checkout/phone/start */

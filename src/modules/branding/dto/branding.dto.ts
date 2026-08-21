@@ -69,6 +69,17 @@ export class UpdateBrandingDto {
   @IsString()
   @Matches(/^data:image\//, { message: 'favicon must be an image data URL' })
   favicon?: string | null;
+
+  @ApiPropertyOptional({
+    description:
+      'Top nav bar mark as a data URL, or null to fall back to the logo.',
+    nullable: true,
+  })
+  @IsOptional()
+  @ValidateIf((_, v) => v !== null)
+  @IsString()
+  @Matches(/^data:image\//, { message: 'navIcon must be an image data URL' })
+  navIcon?: string | null;
 }
 
 /** A single uploaded logo image, assigned to one theme. */
@@ -90,6 +101,7 @@ export class BrandingResponse {
   @ApiProperty({ nullable: true }) logoLight!: string | null;
   @ApiProperty({ nullable: true }) logoDark!: string | null;
   @ApiProperty({ nullable: true }) favicon!: string | null;
+  @ApiProperty({ nullable: true }) navIcon!: string | null;
 
   static fromRow(row: PlatformSettingsRow): BrandingResponse {
     return {
@@ -98,6 +110,7 @@ export class BrandingResponse {
       logoLight: row.logoLight ?? null,
       logoDark: row.logoDark ?? null,
       favicon: row.favicon ?? null,
+      navIcon: row.navIcon ?? null,
     };
   }
 }

@@ -291,9 +291,14 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
    * Which identity steps this checkout will ask for, so the storefront can say
    * so before the buyer hits the button rather than after.
    * Advisory only - `checkout` re-runs the same assessment and enforces it.
+   *
+   * `cod` is taken on trust here where checkout reads it off the catalogue,
+   * which is the right trade for an advisory answer: the worst a lie can do is
+   * promise the buyer a step they then do not meet, or fail to warn them of
+   * one they do.
    */
   async preflight(
-    dto: { shopId: string; phone?: string; email?: string },
+    dto: { shopId: string; phone?: string; email?: string; cod?: boolean },
     caller: CheckoutCaller,
   ): Promise<CheckoutRisk> {
     const risk = await this.risk.assessCheckout({
@@ -302,11 +307,41 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
       ip: caller.ip,
       device: caller.device,
       accountId: caller.accountId,
+      cashOnDelivery: dto.cod ?? false,
     });
+    // The shop's own door policy sits alongside the platform's spam gates: a
+    // guest at a signed-in-only shop is asked to sign in whatever the risk
+    // window says, and told so here rather than at the button.
+    const shopLogin =
+      !caller.accountId && (await this.shopRequiresLogin(dto.shopId));
+    const merged: CheckoutRisk = shopLogin
+      ? {
+          ...risk,
+          requireLogin: true,
+          reason: risk.reason ?? 'shop_login_only',
+        }
+      : risk;
     // Do not advertise a step the buyer could not complete.
     return this.phoneProof.canDeliver
-      ? risk
-      : { ...risk, requirePhoneVerification: false };
+      ? merged
+      : { ...merged, requirePhoneVerification: false };
+  }
+
+  /**
+   * Does this shop take orders from signed-in buyers only?
+   *
+   * Read outside the checkout transaction on purpose: this decides what to
+   * *ask* the buyer, and asking early is the whole point - the seller's answer
+   * cannot change between here and the lock in any way that matters, and a
+   * buyer sent to sign in after filling a payment screen would rightly read it
+   * as a refusal.
+   */
+  private async shopRequiresLogin(shopId: string): Promise<boolean> {
+    const [row] = await this.db
+      .select({ requireBuyerLogin: shops.requireBuyerLogin })
+      .from(shops)
+      .where(eq(shops.id, shopId));
+    return !!row?.requireBuyerLogin;
   }
 
   async checkout(
@@ -325,45 +360,10 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
       caller.accountId,
     );
 
-    /**
-     * Identity gates, before any of the pricing work. Neither one refuses the
-     * order or narrows how it may be paid for - they ask a buyer repeating
-     * inside the risk window to say who they are, and the codes are what the
-     * storefront switches on to open the right prompt. Answer both and the
-     * same order goes through unchanged.
-     */
-    const subject = {
-      phone: dto.contact.phone,
-      email: dto.contact.email,
-      ip: caller.ip,
-      device: caller.device,
-      accountId: caller.accountId,
-    };
-    const risk = await this.risk.assessCheckout(subject);
-
-    if (risk.requireLogin) {
-      throw new ForbiddenException({
-        code: 'SIGN_IN_REQUIRED',
-        message:
-          'Please sign in to confirm this order - another order was just placed with these details.',
-      });
-    }
-    // Only ask for a code that can actually be delivered. With no SMS gateway
-    // configured this step would be a wall with no door, and being signed in
-    // is already the larger part of the proof - so it is skipped rather than
-    // turned into a dead end.
-    if (
-      risk.requirePhoneVerification &&
-      this.phoneProof.canDeliver &&
-      !(await this.phoneProof.holds(dto.phoneProof, dto.contact.phone))
-    ) {
-      throw new ForbiddenException({
-        code: 'PHONE_VERIFICATION_REQUIRED',
-        message: 'Please confirm your phone number to place this order.',
-      });
-    }
-    // The catalog is platform-managed: the code must be live right now, so a
-    // method removed by an operator disappears from checkout immediately.
+    // Ahead of the identity gates too, for the same reason - and because the
+    // gates now need to know how this order is paid for. The catalog is
+    // platform-managed: the code must be live right now, so a method removed
+    // by an operator disappears from checkout immediately.
     const method = await this.paymentMethods.findEnabledByCode(
       dto.paymentMethod,
     );
@@ -380,6 +380,67 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
       throw new BadRequestException(
         'Choose bKash or SSLCommerz for the 15% advance payment.',
       );
+    }
+    /**
+     * Nothing at all is collected before this parcel is dispatched. Not the
+     * same as "the buyer chose the COD track": the 15% advance is on that
+     * track and still moves real money through a gateway first, which is
+     * exactly the assurance the code step below stands in for.
+     */
+    const cashOnDelivery = method.kind === 'cod' && !usesCodProtection;
+
+    /**
+     * Identity gates, before any of the pricing work. None of them refuses the
+     * order or narrows how it may be paid for - they ask the buyer to say who
+     * they are, and the codes are what the storefront switches on to open the
+     * right prompt. Answer them and the same order goes through unchanged.
+     */
+    // The seller's own door policy, and the first thing asked because it
+    // applies to every order at this shop rather than to this buyer's history.
+    if (!caller.accountId && (await this.shopRequiresLogin(dto.shopId))) {
+      throw new ForbiddenException({
+        code: 'SIGN_IN_REQUIRED',
+        message:
+          'This shop accepts orders from signed-in customers only. Please sign in to place your order.',
+      });
+    }
+
+    const subject = {
+      phone: dto.contact.phone,
+      email: dto.contact.email,
+      ip: caller.ip,
+      device: caller.device,
+      accountId: caller.accountId,
+      cashOnDelivery,
+    };
+    const risk = await this.risk.assessCheckout(subject);
+
+    if (risk.requireLogin) {
+      throw new ForbiddenException({
+        code: 'SIGN_IN_REQUIRED',
+        message:
+          'Please sign in to confirm this order - another order was just placed with these details.',
+      });
+    }
+    // Only ask for a code that can actually be delivered. With no SMS gateway
+    // configured this step would be a wall with no door, and being signed in
+    // is already the larger part of the proof - so it is skipped rather than
+    // turned into a dead end.
+    //
+    // The proof names the number it was issued for, so on a Cash-on-Delivery
+    // order it is already the delivery number that has to be confirmed - the
+    // buyer cannot answer a code at one number and ship to another.
+    if (
+      risk.requirePhoneVerification &&
+      this.phoneProof.canDeliver &&
+      !(await this.phoneProof.holds(dto.phoneProof, dto.contact.phone))
+    ) {
+      throw new ForbiddenException({
+        code: 'PHONE_VERIFICATION_REQUIRED',
+        message: cashOnDelivery
+          ? 'Please confirm the phone number this order will be delivered to.'
+          : 'Please confirm your phone number to place this order.',
+      });
     }
 
     /**

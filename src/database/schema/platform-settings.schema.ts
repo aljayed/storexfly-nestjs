@@ -46,6 +46,11 @@ export const platformSettings = pgTable('platform_settings', {
   logoDark: text('logo_dark'),
   // Browser-tab icon, stored inline as a data URL. null = the app's default.
   favicon: text('favicon'),
+  // The mark shown in every top nav bar, stored inline as a data URL. One
+  // image only - nav bars sit on their own tinted chrome, so unlike the
+  // page logos there is no light/dark pair to pick between. null = the nav
+  // bar falls back to the page logo/wordmark above.
+  navIcon: text('nav_icon'),
   // What a verified merchant pays on the post-paid track, in basis points
   // (150 = 1.5%). Operator-editable from the console; every quote and every
   // monthly bill reads it, so exactly one rate is live at a time.

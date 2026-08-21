@@ -125,6 +125,14 @@ export const shops = pgTable(
     // The balance is still collected at the door; this merely verifies intent
     // before stock is reserved and a parcel is dispatched.
     codAdvanceEnabled: boolean('cod_advance_enabled').notNull().default(false),
+    // Take orders from signed-in customers only. Off by default, because it
+    // costs a shop every buyer who will not make an account - it is the
+    // seller's own trade to make, not one the platform makes for them.
+    // A signed-in buyer is an account that can be looked at, warned and
+    // blocked, and one whose proved phone number carries between orders, so a
+    // shop drowning in fake Cash-on-Delivery orders can shut the door on
+    // throwaway ones.
+    requireBuyerLogin: boolean('require_buyer_login').notNull().default(false),
     // Bank/wallet account monthly settlements are transferred to.
     payoutBank: jsonb('payout_bank').$type<PayoutBank>(),
     // ── Business verification (trade-license KYC) ──────────────────

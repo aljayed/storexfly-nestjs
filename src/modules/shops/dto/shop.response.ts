@@ -33,6 +33,17 @@ export class ShopResponse {
     description: 'Require a 15% online advance for Cash on Delivery orders',
   })
   codAdvanceEnabled!: boolean;
+  /**
+   * Whether this shop takes orders from signed-in buyers only. Public on
+   * purpose, unlike the seller-only settings below: checkout enforces it
+   * either way, and a storefront that knows can say "sign in to order" on the
+   * button instead of letting the buyer fill in a whole form and be turned
+   * back at the end.
+   */
+  @ApiProperty({
+    description: 'Accept orders only from buyers who are signed in',
+  })
+  requireBuyerLogin!: boolean;
   @ApiProperty({ enum: ['free', 'paid'] }) plan!: string;
   @ApiPropertyOptional({
     type: [String],
@@ -83,6 +94,7 @@ export class ShopResponse {
       live: row.live,
       paymentMethods: row.paymentMethods,
       codAdvanceEnabled: row.codAdvanceEnabled,
+      requireBuyerLogin: row.requireBuyerLogin,
       plan: row.plan,
       bannerImages: row.bannerImages ?? undefined,
       floatingImages: row.floatingImages ?? undefined,

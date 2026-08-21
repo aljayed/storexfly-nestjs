@@ -29,13 +29,23 @@ export interface CheckoutRisk {
   requireLogin: boolean;
   /**
    * Answer an SMS code. Asked once the buyer is signed in, so the two steps
-   * arrive in that order rather than at once, and only of an account that has
-   * never answered one - it is proof of a person, kept for the account's
-   * lifetime, not a check re-run against each delivery number.
+   * arrive in that order rather than at once.
+   *
+   * What satisfies it depends on how the order is paid for. Money taken up
+   * front asks about the *account*: the code is proof that a real person is
+   * behind it, kept for the account's lifetime, so a verified buyer sending a
+   * gift to somebody else's phone is not asked again. Cash on delivery asks
+   * about the *delivery number*, because nothing has been collected and that
+   * number is the only handle anyone has on whoever is meant to open the door.
    */
   requirePhoneVerification: boolean;
-  /** Why, for the message the buyer sees and for support to read back. */
-  reason?: 'repeat_contact' | 'guest_repeat';
+  /**
+   * Why, for the message the buyer sees and for support to read back.
+   * `shop_login_only` is the seller's own door policy rather than anything
+   * this service found - checkout merges it in, because to a buyer it is the
+   * same "sign in first" step and the wording is the only difference.
+   */
+  reason?: 'repeat_contact' | 'guest_repeat' | 'shop_login_only';
 }
 
 export interface SignupRisk {
@@ -51,6 +61,13 @@ interface CheckoutSubject {
   device?: string | null;
   accountId?: string | null;
   totalCents?: number;
+  /**
+   * True when this order collects nothing before the parcel is dispatched -
+   * plain Cash on Delivery. False for anything that takes money online first,
+   * the 15% COD advance included: money that has actually moved is the proof
+   * the code would have been standing in for.
+   */
+  cashOnDelivery?: boolean;
 }
 
 /** Bare national number, the same rule the rest of the platform normalises to. */
@@ -70,9 +87,13 @@ function normalizePhone(raw: string | null | undefined): string {
  *
  * Nothing here refuses an order, withholds a payment method, or caps how often
  * anyone may buy. A repeat inside the window only asks the buyer to identify
- * themselves - sign in, and answer an SMS code once in the account's life -
- * and the order then proceeds exactly as it would have, cash on delivery
- * included. A verified account never meets either step again.
+ * themselves - sign in, then answer an SMS code - and the order then proceeds
+ * exactly as it would have, cash on delivery included.
+ *
+ * The code is asked once in an account's life for anything paid online. Cash
+ * on delivery is the exception, and asks about the delivery number rather than
+ * the account, so a buyer who edits the autofilled number confirms the one
+ * they typed; leave it alone and there is still nothing to answer.
  */
 @Injectable()
 export class RiskService {
@@ -176,21 +197,35 @@ export class RiskService {
   }
 
   /**
-   * True when this account has proved a phone number by OTP at some point -
-   * at checkout, or in the create-shop wizard, which write the same field.
+   * Has this account already answered the question the code step would ask?
    *
-   * Deliberately about the account rather than the number in front of it: the
-   * code step is a once-in-a-lifetime proof that a real person is behind the
-   * account, not a per-order check on the delivery number. A verified buyer
-   * ordering a gift to someone else's phone is still that same verified buyer,
-   * and asking them again would be asking a question already answered.
+   * For an order paid online, the question is about the account: a phone
+   * proved by OTP at some point - at checkout, or in the create-shop wizard,
+   * which write the same field - is a once-in-a-lifetime proof that a real
+   * person is behind it. The number the parcel is going to is not the point,
+   * so a verified buyer sending a gift to someone else's phone is not asked
+   * all over again. The money is what carries the risk, and it has a card or
+   * a wallet behind it.
+   *
+   * Cash on delivery narrows it to the number on the form. Nothing has been
+   * collected, the seller is about to pay a courier out of their own pocket,
+   * and an account verified against some *other* number says nothing at all
+   * about whether anyone will answer at this one. So the question becomes
+   * "is the number this parcel is going to the one this account proved?" -
+   * and when the buyer edits the autofilled number, the answer is no and they
+   * confirm the new one. Editing it is the whole reason the distinction
+   * exists: an unedited number is already the proved one and costs them
+   * nothing.
    */
-  private async accountPhoneVerified(accountId: string): Promise<boolean> {
+  private async phoneAlreadyProved(subject: CheckoutSubject): Promise<boolean> {
     const account = await this.db.query.users.findFirst({
-      where: eq(users.id, accountId),
-      columns: { phoneVerified: true },
+      where: eq(users.id, subject.accountId!),
+      columns: { phone: true, phoneVerified: true },
     });
-    return !!account?.phoneVerified;
+    if (!account?.phoneVerified) return false;
+    if (!subject.cashOnDelivery) return true;
+    const delivery = normalizePhone(subject.phone);
+    return !!delivery && normalizePhone(account.phone) === delivery;
   }
 
   async assessCheckout(subject: CheckoutSubject): Promise<CheckoutRisk> {
@@ -242,13 +277,11 @@ export class RiskService {
     if (!subject.accountId) {
       return { requireLogin: true, requirePhoneVerification: true, reason };
     }
-    // Signed in, so the code is all that is left - and only for an account
-    // that has never answered one. Once it has, this returns clean forever.
+    // Signed in, so the code is all that is left - and only when the account
+    // has not already answered it for this order's shape (see above).
     return {
       requireLogin: false,
-      requirePhoneVerification: !(await this.accountPhoneVerified(
-        subject.accountId,
-      )),
+      requirePhoneVerification: !(await this.phoneAlreadyProved(subject)),
       reason,
     };
   }

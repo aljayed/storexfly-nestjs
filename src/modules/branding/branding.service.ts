@@ -79,10 +79,11 @@ export class BrandingService implements OnModuleInit {
           logoLight: null,
           logoDark: null,
           favicon: null,
+          navIcon: null,
         };
   }
 
-  /** Update the wordmark / accent / per-theme active logos. */
+  /** Update the wordmark / accent / per-theme active logos / nav mark. */
   async update(dto: UpdateBrandingDto): Promise<BrandingResponse> {
     const existing = await this.ensureRow();
     const patch: Partial<PlatformSettingsRow> = {
@@ -98,6 +99,8 @@ export class BrandingService implements OnModuleInit {
       patch.logoDark = await this.storage.absorb(dto.logoDark, 'branding');
     if (dto.favicon !== undefined)
       patch.favicon = await this.storage.absorb(dto.favicon, 'branding');
+    if (dto.navIcon !== undefined)
+      patch.navIcon = await this.storage.absorb(dto.navIcon, 'branding');
 
     const [row] = await this.db
       .update(platformSettings)

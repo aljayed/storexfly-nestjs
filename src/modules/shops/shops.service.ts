@@ -492,6 +492,9 @@ export class ShopsService {
       patch.codAdvanceEnabled =
         effectiveMethods.includes('cod') && dto.codAdvanceEnabled;
     }
+    if (dto.requireBuyerLogin !== undefined) {
+      patch.requireBuyerLogin = dto.requireBuyerLogin;
+    }
     // Pickup address. Empty clears, same as the support contacts.
     if (dto.pickupContactName !== undefined) {
       patch.pickupContactName = dto.pickupContactName.trim() || null;

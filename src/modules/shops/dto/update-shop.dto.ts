@@ -190,6 +190,17 @@ export class UpdateShopDto {
   @IsBoolean()
   codAdvanceEnabled?: boolean;
 
+  // Takes orders from signed-in customers only. A throwaway Cash-on-Delivery
+  // order costs the seller a dispatched parcel; an account is something that
+  // can be warned and blocked, and one whose proved phone number carries from
+  // one order to the next.
+  @ApiPropertyOptional({
+    description: 'Accept orders only from buyers who are signed in',
+  })
+  @IsOptional()
+  @IsBoolean()
+  requireBuyerLogin?: boolean;
+
   // Storefront hero banner images as data URLs (or hosted URLs). Replaces the
   // whole set; an empty array clears all banners. Capped to keep the row small.
   @ApiPropertyOptional({

@@ -575,6 +575,20 @@
       "when": 1792972800000,
       "tag": "0084_identity_change_limits",
       "breakpoints": true
+    },
+    {
+      "idx": 85,
+      "version": "7",
+      "when": 1793059200000,
+      "tag": "0085_shop_require_buyer_login",
+      "breakpoints": true
+    },
+    {
+      "idx": 86,
+      "version": "7",
+      "when": 1793145600000,
+      "tag": "0086_brand_nav_icon",
+      "breakpoints": true
     }
   ]
 }
