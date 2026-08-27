@@ -78,6 +78,13 @@ export class SeoController {
     const now = new Date();
     const entries = [
       url(`${webUrl}/`, now, '0.5'),
+      // The company and policy pages. They rank for nothing, but a payment
+      // gateway's onboarding review - and anyone checking who is behind a
+      // shop - looks for them, and an SPA gives a crawler no other way to
+      // discover a route that is only linked from a footer.
+      ...['about', 'contact', 'terms', 'privacy', 'refund'].map((path) =>
+        url(`${webUrl}/${path}`, now, '0.3'),
+      ),
       ...shopRows.map((s) =>
         url(
           `${webUrl}/shop/${encodeURIComponent(s.handle)}`,
