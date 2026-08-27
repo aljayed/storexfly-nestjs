@@ -279,6 +279,21 @@ export class PaymentsService implements OnModuleInit, OnModuleDestroy {
       return { status: 'failed' };
     }
 
+    // SSLCommerz asks merchants to hold a risk_level=1 charge and confirm the
+    // cardholder before fulfilling it. The money did move, so the payment
+    // settles either way - refusing it would throw away a real payment - but
+    // the charge is called out here so a chargeback is not the first anyone
+    // hears of it. Acting on it is still a person's job today; there is no
+    // automatic hold on the order.
+    if (validation.riskLevel !== undefined && validation.riskLevel > 0) {
+      this.logger.warn(
+        `SSLCommerz flagged ${attempt.paymentId} as risk_level=${validation.riskLevel}` +
+          `${validation.riskTitle ? ` (${validation.riskTitle})` : ''}` +
+          `${attempt.orderId ? ` on order ${attempt.orderId}` : ''}` +
+          ' - verify the customer before this is dispatched',
+      );
+    }
+
     const trxId = validation.bankTranId ?? valId;
     await this.settle(attempt, {
       gatewayTxnId: trxId,

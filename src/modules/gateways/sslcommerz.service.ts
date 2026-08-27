@@ -66,6 +66,15 @@ export interface SslcommerzValidation {
   cardType?: string;
   status?: string;
   reason?: string;
+  /**
+   * SSLCommerz's own fraud score for the charge: 0 is clean, 1 is the one
+   * they ask merchants to act on. It says nothing about whether the money
+   * moved - a risky payment is still a settled payment - only that the
+   * cardholder is worth confirming before anything is dispatched.
+   */
+  riskLevel?: number;
+  /** Their wording for that score, e.g. 'Safe' / 'High Risk'. */
+  riskTitle?: string;
 }
 
 interface SessionResponse {
@@ -237,6 +246,9 @@ export class SslcommerzService {
       }
       const data = (await res.json()) as ValidationResponse;
       const settled = data.status === 'VALID' || data.status === 'VALIDATED';
+      // Absent rather than 0 when unparseable: a missing score must not read
+      // as a clean one.
+      const risk = parseInt(data.risk_level ?? '', 10);
       // An unparseable amount is reported as absent rather than as NaN: NaN
       // loses every comparison, so a short-paid check against it would pass.
       const amount = parseFloat(data.amount ?? '');
@@ -251,6 +263,8 @@ export class SslcommerzService {
         cardType: data.card_type,
         status: data.status,
         reason: data.error || data.risk_title,
+        riskLevel: Number.isFinite(risk) ? risk : undefined,
+        riskTitle: data.risk_title,
       };
     } catch (err) {
       this.logger.error(
