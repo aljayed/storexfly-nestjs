@@ -35,6 +35,7 @@ import {
   subscriptions,
   users,
   type PayoutBank,
+  type NewShopRow,
   type ShopRow,
 } from '../../database/schema';
 import {
@@ -48,6 +49,7 @@ import {
   type Buckets,
   type MonthCore,
 } from '../settlements/settlement-core';
+import { isUniqueViolationOn } from '../../common/utils/postgres-error.util';
 import { EmailOtpService } from '../auth/email-otp.service';
 import { BlockedWordsService } from '../blocked-words/blocked-words.service';
 import { ShopCourierStoresService } from '../gateways/shop-courier-stores.service';
@@ -82,6 +84,9 @@ interface OwedMonth {
  * second shop is left intact behind it, so turning it back on is one constant.
  */
 const MULTI_SHOP_ENABLED = false;
+
+/** The partial unique index behind "one trade licence, one shop". */
+const LICENSE_INDEX = 'shops_kyc_license_unique_idx';
 
 /** Whether a seller who already owns a shop may open another one. */
 export interface ShopEligibility {
@@ -197,6 +202,11 @@ export class ShopsService {
     // Nothing is charged to open a shop. The seller picks how they pay for
     // sales - a credit pack, or the verified commission track - from the
     // console once the shop exists.
+    // Before anything is written: a licence that is already vouching for
+    // another shop cannot vouch for this one too.
+    if (dto.kyc?.licenseNo) {
+      await this.assertLicenseUnclaimed(dto.kyc.licenseNo);
+    }
     const handle = handleize(dto.handle);
     await this.blockedWords.assertClean(dto.name);
     await this.blockedWords.assertClean(handle);
@@ -204,23 +214,20 @@ export class ShopsService {
       throw new ForbiddenException('That handle is already taken');
     }
     const swatch = BRAND_SWATCHES[dto.brandId];
-    const [row] = await this.db
-      .insert(shops)
-      .values({
-        name: dto.name,
-        handle,
-        tagline: dto.tagline,
-        cat: dto.cat,
-        brandId: dto.brandId,
-        brand: swatch.c,
-        brandSoft: swatch.soft,
-        ownerId,
-        plan,
-        // Optional KYC supplied during onboarding - skipped sellers start
-        // 'unsubmitted' (the column default).
-        ...this.kycPatch(dto.kyc),
-      })
-      .returning();
+    const row = await this.insertShop({
+      name: dto.name,
+      handle,
+      tagline: dto.tagline,
+      cat: dto.cat,
+      brandId: dto.brandId,
+      brand: swatch.c,
+      brandSoft: swatch.soft,
+      ownerId,
+      plan,
+      // Optional KYC supplied during onboarding - skipped sellers start
+      // 'unsubmitted' (the column default).
+      ...this.kycPatch(dto.kyc),
+    });
     // Every shop gets a billing record straight away: the credits track with
     // a zero balance, so the console has something to show and the meter
     // starts counting from the shop's first day.
@@ -586,16 +593,99 @@ export class ShopsService {
     if (shop.ownerId !== ownerId) {
       throw new ForbiddenException('You do not own this shop');
     }
+    if (dto.licenseNo) {
+      await this.assertLicenseUnclaimed(dto.licenseNo, shop.id);
+    }
     const patch = this.kycPatch(dto, shop);
     if (Object.keys(patch).length === 0) {
       return KycResponse.fromRow(shop);
     }
-    const [row] = await this.db
-      .update(shops)
-      .set(patch)
-      .where(eq(shops.id, id))
-      .returning();
-    return KycResponse.fromRow(row);
+    try {
+      const [row] = await this.db
+        .update(shops)
+        .set(patch)
+        .where(eq(shops.id, id))
+        .returning();
+      return KycResponse.fromRow(row);
+    } catch (err) {
+      if (isUniqueViolationOn(err, LICENSE_INDEX)) {
+        throw ShopsService.licenseTaken();
+      }
+      throw err;
+    }
+  }
+
+  /**
+   * Insert the shop, translating a lost race on the licence index into the
+   * same sentence the pre-check gives. Two sellers submitting one licence at
+   * the same moment both pass the check and one loses here; without this it
+   * would surface as a bare 500.
+   */
+  private async insertShop(values: NewShopRow): Promise<ShopRow> {
+    try {
+      const [row] = await this.db.insert(shops).values(values).returning();
+      return row;
+    } catch (err) {
+      if (isUniqueViolationOn(err, LICENSE_INDEX)) {
+        throw ShopsService.licenseTaken();
+      }
+      throw err;
+    }
+  }
+
+  /**
+   * A licence number reduced to what actually identifies it: no whitespace,
+   * upper case. The same form the unique index compares on - the two must
+   * agree, or the friendly error and the database would disagree about what
+   * counts as a duplicate.
+   */
+  private static licenseKey(licenseNo: string): string {
+    return licenseNo.replace(/\s+/g, '').toUpperCase();
+  }
+
+  /**
+   * Refuse a trade licence that already belongs to another shop.
+   *
+   * The database has the last word (`shops_kyc_license_unique_idx`); this is
+   * here so the seller reads a sentence instead of a constraint violation,
+   * and so the wizard fails before a shop row is written rather than after.
+   *
+   * `exceptShopId` is the shop doing the submitting, so a seller correcting a
+   * typo on their own licence is not told it is taken by themselves.
+   */
+  private async assertLicenseUnclaimed(
+    licenseNo: string,
+    exceptShopId?: string,
+  ): Promise<void> {
+    const key = ShopsService.licenseKey(licenseNo);
+    if (!key) return;
+    const clash = await this.db
+      .select({ id: shops.id, name: shops.name, handle: shops.handle })
+      .from(shops)
+      .where(
+        and(
+          sql`upper(regexp_replace(${shops.kycLicenseNo}, '\s', '', 'g')) = ${key}`,
+          exceptShopId ? ne(shops.id, exceptShopId) : undefined,
+        ),
+      )
+      .limit(1);
+    if (!clash.length) return;
+    throw ShopsService.licenseTaken();
+  }
+
+  /**
+   * The one sentence a seller sees whichever way the clash was caught - the
+   * pre-check above, or the index catching a race between two submissions.
+   * `error` is machine-readable so the wizard can put the seller back on the
+   * verification step instead of matching on the message text.
+   */
+  private static licenseTaken(): ConflictException {
+    return new ConflictException({
+      statusCode: HttpStatus.CONFLICT,
+      error: 'LicenseAlreadyUsed',
+      message:
+        'That trade licence is already registered to another shop. One licence covers one shop - use a different licence, or delete the shop holding it to free the number.',
+    });
   }
 
   /**

@@ -1,4 +1,4 @@
-import { relations } from 'drizzle-orm';
+import { relations, sql } from 'drizzle-orm';
 import {
   boolean,
   integer,
@@ -153,7 +153,30 @@ export const shops = pgTable(
       .defaultNow()
       .$onUpdate(() => new Date()),
   },
-  (table) => [uniqueIndex('shops_handle_unique_idx').on(table.handle)],
+  (table) => [
+    uniqueIndex('shops_handle_unique_idx').on(table.handle),
+    /**
+     * One trade licence, one shop.
+     *
+     * A licence is the document that says a real business stands behind a
+     * storefront, and it is what unlocks a seller's later shops. Letting the
+     * same number sit on two shops at once would let one licence vouch for a
+     * catalogue its holder never agreed to, so the database refuses it rather
+     * than trusting every write path to remember.
+     *
+     * Matched on the number with its whitespace stripped and upper-cased:
+     * "trad/dncc/004912/2026" and "TRAD / DNCC / 004912 / 2026" are one
+     * licence, and a seller retyping their own number should not be able to
+     * duplicate it by shifting a space.
+     *
+     * Partial, so the shops that have submitted nothing (the column is
+     * nullable and most rows are null) do not collide with each other.
+     * Deleting a shop hands the number straight back - the row goes with it.
+     */
+    uniqueIndex('shops_kyc_license_unique_idx')
+      .on(sql`upper(regexp_replace(${table.kycLicenseNo}, '\s', '', 'g'))`)
+      .where(sql`${table.kycLicenseNo} is not null`),
+  ],
 );
 
 export const shopsRelations = relations(shops, ({ one, many }) => ({

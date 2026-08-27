@@ -596,6 +596,13 @@
       "when": 1793232000000,
       "tag": "0087_payment_method_subtitle_icons",
       "breakpoints": true
+    },
+    {
+      "idx": 88,
+      "version": "7",
+      "when": 1793318400000,
+      "tag": "0088_shop_license_unique",
+      "breakpoints": true
     }
   ]
 }
