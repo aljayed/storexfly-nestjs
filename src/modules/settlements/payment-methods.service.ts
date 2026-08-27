@@ -31,6 +31,13 @@ export interface PaymentMethodView {
   kind: 'mbank' | 'card' | 'cod';
   title: string;
   subtitle: string | null;
+  /**
+   * true = checkout draws the brand marks the method accepts (Visa,
+   * Mastercard, Amex, bKash, Nagad...) where the subtitle would go; false =
+   * it prints the `subtitle` wording. Methods with no artwork for their
+   * kind - Cash on Delivery - show the wording either way.
+   */
+  subtitleIcons: boolean;
   feePercent: number;
   locked: boolean;
   /** Anything but 'none' = platform-collected via that gateway. */
@@ -86,6 +93,7 @@ export class PaymentMethodsService {
     kind: OnlineMethodKind;
     title: string;
     subtitle?: string;
+    subtitleIcons?: boolean;
     feePercent: number;
   }): Promise<PaymentMethodView> {
     const rows = await this.ensureSeeded();
@@ -101,6 +109,7 @@ export class PaymentMethodsService {
         kind: input.kind,
         title,
         subtitle: input.subtitle?.trim() || null,
+        subtitleIcons: input.subtitleIcons ?? true,
         feeBp: toBp(input.feePercent),
         sortOrder: maxSort + 1,
       })
@@ -113,6 +122,7 @@ export class PaymentMethodsService {
     patch: {
       title?: string;
       subtitle?: string | null;
+      subtitleIcons?: boolean;
       feePercent?: number;
       gateway?: PaymentGatewayChoice;
       enabled?: boolean;
@@ -127,6 +137,9 @@ export class PaymentMethodsService {
     }
     if (patch.subtitle !== undefined) {
       set.subtitle = patch.subtitle?.trim() || null;
+    }
+    if (patch.subtitleIcons !== undefined) {
+      set.subtitleIcons = patch.subtitleIcons;
     }
     if (patch.feePercent !== undefined) {
       if (row.locked && toBp(patch.feePercent) !== 0) {
@@ -300,6 +313,7 @@ function view(m: PaymentMethodRow): PaymentMethodView {
     kind: m.kind,
     title: m.title,
     subtitle: m.subtitle,
+    subtitleIcons: m.subtitleIcons,
     feePercent: m.feeBp / 100,
     locked: m.locked,
     gateway: m.gateway,

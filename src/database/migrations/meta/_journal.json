@@ -589,6 +589,13 @@
       "when": 1793145600000,
       "tag": "0086_brand_nav_icon",
       "breakpoints": true
+    },
+    {
+      "idx": 87,
+      "version": "7",
+      "when": 1793232000000,
+      "tag": "0087_payment_method_subtitle_icons",
+      "breakpoints": true
     }
   ]
 }

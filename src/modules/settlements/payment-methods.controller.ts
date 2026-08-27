@@ -48,6 +48,12 @@ export class PaymentMethodResponse {
   @ApiProperty({ example: 'bKash' }) title!: string;
   @ApiProperty({ example: 'Pay from your bKash wallet', nullable: true })
   subtitle!: string | null;
+  @ApiProperty({
+    description:
+      'true = checkout draws the brand marks the method accepts (Visa, ' +
+      'Mastercard, Amex, bKash, Nagad...) instead of the subtitle wording',
+  })
+  subtitleIcons!: boolean;
   @ApiProperty({ example: 3, description: 'Processing fee %' })
   feePercent!: number;
   @ApiProperty({ description: 'true only for the built-in COD method' })
@@ -91,6 +97,15 @@ export class CreatePaymentMethodDto {
   @MaxLength(140)
   subtitle?: string;
 
+  @ApiPropertyOptional({
+    description:
+      'Draw the accepted brand marks in place of the subtitle wording. ' +
+      'Defaults to true; methods with no artwork fall back to the wording.',
+  })
+  @IsOptional()
+  @IsBoolean()
+  subtitleIcons?: boolean;
+
   @ApiProperty({ example: 3, description: 'Processing fee %' })
   @IsNumber({ maxDecimalPlaces: 2 })
   @Min(0)
@@ -110,6 +125,15 @@ export class UpdatePaymentMethodDto {
   @IsString()
   @MaxLength(140)
   subtitle?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Draw the accepted brand marks in place of the subtitle wording. ' +
+      'Defaults to true; methods with no artwork fall back to the wording.',
+  })
+  @IsOptional()
+  @IsBoolean()
+  subtitleIcons?: boolean;
 
   @ApiPropertyOptional({ example: 3 })
   @IsOptional()

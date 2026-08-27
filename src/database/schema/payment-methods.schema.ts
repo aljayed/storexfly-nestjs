@@ -29,6 +29,12 @@ export const paymentMethods = pgTable(
     kind: paymentMethodEnum('kind').notNull(),
     title: varchar('title', { length: 80 }).notNull(),
     subtitle: varchar('subtitle', { length: 140 }),
+    // How the subtitle reads at checkout: `true` shows the row of brand marks
+    // the method actually accepts (Visa, Mastercard, Amex, bKash, Nagad...),
+    // `false` shows the `subtitle` wording instead. On by default - the marks
+    // are recognised faster than the same brands spelled out - and methods
+    // with no artwork for their kind fall back to the wording either way.
+    subtitleIcons: boolean('subtitle_icons').notNull().default(true),
     // Processing fee in basis points (300 = 3%), deducted from each payment
     // before it is settled to the seller. Always 0 for COD.
     feeBp: integer('fee_bp').notNull().default(0),
