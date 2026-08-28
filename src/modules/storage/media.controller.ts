@@ -31,6 +31,13 @@ const WEBP_CONVERTIBLE = new Set(['image/jpeg', 'image/png']);
    saving thins out; below ~70 gradients start to band. */
 const WEBP_QUALITY = 80;
 
+/* The admin re-encodes seller photos to WebP in the browser before upload, so
+   the stored object is now often WebP itself. A client that does not advertise
+   WebP has to be handed something it can decode, which means transcoding back.
+   Higher than WEBP_QUALITY because this is a second lossy pass over an already
+   lossy source, and it is a rare path - not worth being stingy on. */
+const JPEG_FALLBACK_QUALITY = 88;
+
 /**
  * Public media proxy. Streams private-bucket objects back to the browser so the
  * bucket needs no public access; Nginx caches these responses (content-hash
@@ -75,8 +82,14 @@ export class MediaController {
         ? webpFlag === '1'
         : (accept ?? '').includes('image/webp');
     const toWebp = wantsWebp && WEBP_CONVERTIBLE.has(obj.contentType);
+    // The reverse of toWebp: a stored WebP going to a client that never asked
+    // for one. Without this the browser is handed bytes it cannot render.
+    const fromWebp = !wantsWebp && obj.contentType === 'image/webp';
 
-    res.setHeader('Content-Type', toWebp ? 'image/webp' : obj.contentType);
+    res.setHeader(
+      'Content-Type',
+      toWebp ? 'image/webp' : fromWebp ? 'image/jpeg' : obj.contentType,
+    );
     res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
     // The response body now depends on a request header, so say so. Nginx
     // keys on its own normalised flag, but any cache between us and the
@@ -94,10 +107,18 @@ export class MediaController {
         : null;
 
     const resizable = size && RESIZABLE.has(obj.contentType);
-    if (resizable || toWebp) {
+    if (resizable || toWebp || fromWebp) {
       const pipeline = sharp().rotate(); // EXIF orientation before it's stripped
       if (resizable) pipeline.resize(size);
       if (toWebp) pipeline.webp({ quality: WEBP_QUALITY });
+      // JPEG has no alpha. Our own uploads keep transparent artwork as PNG, so
+      // this should not fire, but a WebP that does carry alpha would otherwise
+      // composite onto black instead of the page.
+      if (fromWebp) {
+        pipeline
+          .flatten({ background: '#ffffff' })
+          .jpeg({ quality: JPEG_FALLBACK_QUALITY });
+      }
       pipeline.on('error', () => res.destroy());
       obj.body.pipe(pipeline).pipe(res);
       return;

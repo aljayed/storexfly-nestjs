@@ -10,12 +10,16 @@ async function bootstrap(): Promise<void> {
   // Disable Nest's built-in body parser so we can raise the JSON size limit:
   // products carry their photos inline as resized data URLs (up to 8), which
   // easily exceeds Express's ~100kb default.
+  //
+  // Keep this equal to client_max_body_size in the frontend's nginx.conf. The
+  // two are a pair: nginx rejects at the door with a clean 413, and this is
+  // the backstop for requests that reach the API another way.
   const app = await NestFactory.create(AppModule, {
     bufferLogs: false,
     bodyParser: false,
   });
-  app.use(json({ limit: '15mb' }));
-  app.use(urlencoded({ extended: true, limit: '15mb' }));
+  app.use(json({ limit: '20mb' }));
+  app.use(urlencoded({ extended: true, limit: '20mb' }));
   const config = app.get(ConfigService);
   const logger = new Logger('Bootstrap');
 
