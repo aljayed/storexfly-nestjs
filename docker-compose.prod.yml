@@ -31,6 +31,12 @@ services:
     build: ./frontend
     container_name: storexfly_web
     restart: unless-stopped
+    # nginx terminates every public HTTPS connection inside this network
+    # namespace.  Keep its TCP sockets on BBR: CUBIC collapses on the lossy
+    # Europe-to-Bangladesh path even though the host namespace already uses
+    # BBR.  The host loads tcp_bbr and pairs it with fq.
+    sysctls:
+      - net.ipv4.tcp_congestion_control=bbr
     depends_on:
       - api
     ports:
