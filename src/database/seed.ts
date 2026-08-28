@@ -1,5 +1,6 @@
 import 'dotenv/config';
 import * as bcrypt from 'bcryptjs';
+import { eq } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/postgres-js';
 import { authenticator } from 'otplib';
 import postgres from 'postgres';
@@ -19,10 +20,26 @@ import type {
 
 /**
  * Seeds the database with the prototype's "Mango Shop" demo dataset
- * (transcribed from design-reference/data.jsx). Idempotent: it clears the
- * domain tables first, then re-inserts a consistent graph of
- * user → shop → products → reviews → customers → orders, plus an admin account.
+ * (transcribed from design-reference/data.jsx). Idempotent and scoped: it
+ * clears only the demo account's own data, then re-inserts a consistent graph
+ * of user → shop → products → reviews → customers → orders, plus an admin
+ * account.
+ *
+ * "Scoped" matters — this used to `db.delete(schema.users)` etc. with no
+ * `where` clause, which wiped *every* user/shop/order in the database, demo
+ * or not. It now deletes only the known demo shop (by handle) and current demo
+ * user (by email); every child row (products, customers, orders, order items,
+ * reviews, subscriptions, subscription payments, admin account) cascades off
+ * those via `ON DELETE CASCADE` foreign keys, so nothing outside those demo
+ * identities is ever touched. The whole run is one transaction, so a failure
+ * partway through rolls back instead of leaving the demo shop half-deleted.
+ *
+ *   npm run db:seed              # refuses to touch NODE_ENV=production
+ *   npm run db:seed -- --force   # required to run against NODE_ENV=production
  */
+
+const DEMO_OWNER_EMAIL = 'maya@mango-shop.com';
+const DEMO_SHOP_HANDLE = 'mango-shop';
 
 const PRODUCTS: {
   name: string;
@@ -463,6 +480,15 @@ const CUSTOMERS: {
 ];
 
 async function seed(): Promise<void> {
+  const force = process.argv.includes('--force');
+  if (process.env.NODE_ENV === 'production' && !force) {
+    console.error(
+      'Refusing to run against NODE_ENV=production without --force.\n' +
+        'This (re)creates the demo shop/account — a deliberate choice, not an accidental `npm run db:seed`.',
+    );
+    process.exit(1);
+  }
+
   const url = process.env.DATABASE_URL;
   if (!url) throw new Error('DATABASE_URL is not set');
 
@@ -470,247 +496,255 @@ async function seed(): Promise<void> {
   const db = drizzle(client, { schema });
 
   try {
-    console.log('Clearing existing data…');
-    await db.delete(schema.subscriptionPayments);
-    await db.delete(schema.subscriptions);
-    await db.delete(schema.orderItems);
-    await db.delete(schema.orders);
-    await db.delete(schema.reviews);
-    await db.delete(schema.products);
-    await db.delete(schema.customers);
-    await db.delete(schema.adminUsers);
-    await db.delete(schema.shops);
-    await db.delete(schema.users);
+    await db.transaction(async (tx) => {
+      // The handle is the demo storefront's stable identity. Remove it first
+      // so the seed stays idempotent even if DEMO_OWNER_EMAIL changes later;
+      // its shop-owned rows cascade with it. Then remove the current demo
+      // login and anything owned only by that account.
+      console.log(
+        'Clearing previous demo data (scoped to its handle and email)…',
+      );
+      await tx
+        .delete(schema.shops)
+        .where(eq(schema.shops.handle, DEMO_SHOP_HANDLE));
+      await tx
+        .delete(schema.users)
+        .where(eq(schema.users.email, DEMO_OWNER_EMAIL));
 
-    // The credit-pack shelf is seeded by migration 0060 and re-priceable by
-    // the operator, so it is topped up rather than wiped with the demo data.
-    console.log('Ensuring the credit pack shelf…');
-    await db
-      .insert(schema.creditPacks)
-      .values(
-        CREDIT_PACKS.map((pack, i) => ({
-          code: pack.code,
-          name: pack.name,
-          salesCreditCents: pack.salesCreditCents,
-          priceCents: pack.priceCents,
-          badge: pack.badge ?? null,
-          sortOrder: i + 1,
-        })),
-      )
-      .onConflictDoNothing({ target: schema.creditPacks.code });
+      // The credit-pack shelf is seeded by migration 0060 and re-priceable by
+      // the operator, so it is topped up rather than wiped with the demo data.
+      console.log('Ensuring the credit pack shelf…');
+      await tx
+        .insert(schema.creditPacks)
+        .values(
+          CREDIT_PACKS.map((pack, i) => ({
+            code: pack.code,
+            name: pack.name,
+            salesCreditCents: pack.salesCreditCents,
+            priceCents: pack.priceCents,
+            badge: pack.badge ?? null,
+            sortOrder: i + 1,
+          })),
+        )
+        .onConflictDoNothing({ target: schema.creditPacks.code });
 
-    console.log('Creating owner + shop…');
-    const passwordHash = await bcrypt.hash('password123', 12);
-    const [owner] = await db
-      .insert(schema.users)
-      .values({
-        publicId: generatePublicId(),
-        name: 'Maya Rahman',
-        email: 'maya@mango-shop.com',
-        passwordHash,
-        via: 'email',
-        emailVerified: true,
-      })
-      .returning();
-
-    const amber = BRAND_SWATCHES.amber;
-    const [shop] = await db
-      .insert(schema.shops)
-      .values({
-        name: 'Mango Shop',
-        handle: 'mango-shop',
-        tagline: 'Tropical fruit, delivered fresh.',
-        cat: 'Food & grocery',
-        brandId: 'amber',
-        brand: amber.c,
-        brandSoft: amber.soft,
-        ownerId: owner.id,
-      })
-      .returning();
-
-    console.log('Creating products…');
-    const productByName = new Map<string, { id: string; priceCents: number }>();
-    for (const p of PRODUCTS) {
-      const [row] = await db
-        .insert(schema.products)
+      console.log('Creating owner + shop…');
+      const passwordHash = await bcrypt.hash('password123', 12);
+      const [owner] = await tx
+        .insert(schema.users)
         .values({
-          shopId: shop.id,
-          name: p.name,
-          slug: handleize(p.name),
-          cat: p.cat,
-          priceCents: dollarsToCents(p.price),
-          unit: p.unit,
-          stock: p.stock,
-          emoji: p.emoji,
-          tone: p.tone,
-          tag: p.tag,
-          rating: p.rating,
-          reviewsCount: p.reviews,
-          blurb: p.blurb,
+          publicId: generatePublicId(),
+          name: 'Maya Rahman',
+          email: DEMO_OWNER_EMAIL,
+          passwordHash,
+          via: 'email',
+          emailVerified: true,
         })
-        .returning({
-          id: schema.products.id,
-          priceCents: schema.products.priceCents,
-        });
-      productByName.set(p.name, row);
-    }
+        .returning();
 
-    console.log('Creating reviews for the bestseller…');
-    const hero = productByName.get('Alphonso Mango Box')!;
-    await db.insert(schema.reviews).values([
-      {
-        productId: hero.id,
-        author: 'Nusrat Jahan',
-        rating: 5,
-        body: 'Best mangoes I have had outside India. Perfectly ripe.',
-        verified: true,
-      },
-      {
-        productId: hero.id,
-        author: 'Daniel Cho',
-        rating: 5,
-        body: 'Arrived next day, beautifully packed.',
-        verified: true,
-      },
-      {
-        productId: hero.id,
-        author: 'Marco Rossi',
-        rating: 4,
-        body: 'Delicious, a couple were a touch soft.',
-        verified: false,
-      },
-    ]);
-
-    console.log('Creating customers…');
-    const customerByEmail = new Map<string, string>();
-    for (const c of CUSTOMERS) {
-      const [row] = await db
-        .insert(schema.customers)
+      const amber = BRAND_SWATCHES.amber;
+      const [shop] = await tx
+        .insert(schema.shops)
         .values({
-          shopId: shop.id,
-          name: c.name,
-          email: c.email,
-          phone: c.phone,
-          city: c.city,
-          ordersCount: c.orders,
-          spentCents: dollarsToCents(c.spent),
-          firstOrderAt: new Date(c.first),
-          lastOrderAt: new Date(c.last),
-          segment: c.segment,
+          name: 'Mango Shop',
+          handle: DEMO_SHOP_HANDLE,
+          tagline: 'Tropical fruit, delivered fresh.',
+          cat: 'Food & grocery',
+          brandId: 'amber',
+          brand: amber.c,
+          brandSoft: amber.soft,
+          ownerId: owner.id,
         })
-        .returning({ id: schema.customers.id });
-      customerByEmail.set(c.email, row.id);
-    }
+        .returning();
 
-    console.log('Creating orders + line items…');
-    for (const o of ORDERS) {
-      const [order] = await db
-        .insert(schema.orders)
-        .values({
-          reference: o.ref,
-          shopId: shop.id,
-          customerId: customerByEmail.get(o.email) ?? null,
-          customerName: o.customer,
-          email: o.email,
-          qty: o.qty,
-          totalCents: dollarsToCents(o.total),
-          status: o.status,
-          pay: o.pay,
-          channel: o.channel,
-          placedAt: new Date(o.date),
-        })
-        .returning({ id: schema.orders.id });
-
-      for (const [name, qty] of o.items) {
-        const product = productByName.get(name);
-        await db.insert(schema.orderItems).values({
-          orderId: order.id,
-          productId: product?.id ?? null,
-          name,
-          qty,
-          unitPriceCents: product?.priceCents ?? 0,
-        });
+      console.log('Creating products…');
+      const productByName = new Map<
+        string,
+        { id: string; priceCents: number }
+      >();
+      for (const p of PRODUCTS) {
+        const [row] = await tx
+          .insert(schema.products)
+          .values({
+            shopId: shop.id,
+            name: p.name,
+            slug: handleize(p.name),
+            cat: p.cat,
+            priceCents: dollarsToCents(p.price),
+            unit: p.unit,
+            stock: p.stock,
+            emoji: p.emoji,
+            tone: p.tone,
+            tag: p.tag,
+            rating: p.rating,
+            reviewsCount: p.reviews,
+            blurb: p.blurb,
+          })
+          .returning({
+            id: schema.products.id,
+            priceCents: schema.products.priceCents,
+          });
+        productByName.set(p.name, row);
       }
-    }
 
-    console.log('Creating platform billing record + payment history…');
-    // The demo shop is on the pre-paid credits track: it bought the ৳2,00,000
-    // pack on 2026-03-12 with the launch coupon, then topped up with the
-    // ৳1,00,000 pack in May. Its meter starts the day the shop opened, so the
-    // seeded orders draw the balance down and the console shows a real number.
-    const meterStartAt = new Date('2026-03-12T10:00:00Z');
-    const bigPack = CREDIT_PACKS[1];
-    const smallPack = CREDIT_PACKS[0];
-    const [subscription] = await db
-      .insert(schema.subscriptions)
-      .values({
-        shopId: shop.id,
-        ownerId: owner.id,
-        status: 'active',
-        billingMode: 'credits',
-        currency: 'BDT',
-        commissionBps: COMMISSION_BPS,
-        creditGrantedCents:
-          bigPack.salesCreditCents + smallPack.salesCreditCents,
-        meterStartAt,
-        autoDebit: true,
-        startedAt: meterStartAt,
-        nextBillingAt: new Date('2026-06-12T10:00:00Z'),
-      })
-      .returning();
-    await db.insert(schema.subscriptionPayments).values([
-      {
-        userId: owner.id,
-        subscriptionId: subscription.id,
-        shopId: shop.id,
-        type: 'credit_pack' as const,
-        method: 'manual' as const,
-        planCode: bigPack.code,
-        amountCents: Math.round(bigPack.priceCents / 2),
-        salesCreditCents: bigPack.salesCreditCents,
-        discountCents: bigPack.priceCents - Math.round(bigPack.priceCents / 2),
-        couponCode: 'LAUNCH50',
-        currency: 'BDT',
-        paidAt: meterStartAt,
-      },
-      {
-        userId: owner.id,
-        subscriptionId: subscription.id,
-        shopId: shop.id,
-        type: 'credit_pack' as const,
-        method: 'manual' as const,
-        planCode: smallPack.code,
-        amountCents: smallPack.priceCents,
-        salesCreditCents: smallPack.salesCreditCents,
-        currency: 'BDT',
-        paidAt: new Date('2026-05-12T10:00:00Z'),
-      },
-    ]);
+      console.log('Creating reviews for the bestseller…');
+      const hero = productByName.get('Alphonso Mango Box')!;
+      await tx.insert(schema.reviews).values([
+        {
+          productId: hero.id,
+          author: 'Nusrat Jahan',
+          rating: 5,
+          body: 'Best mangoes I have had outside India. Perfectly ripe.',
+          verified: true,
+        },
+        {
+          productId: hero.id,
+          author: 'Daniel Cho',
+          rating: 5,
+          body: 'Arrived next day, beautifully packed.',
+          verified: true,
+        },
+        {
+          productId: hero.id,
+          author: 'Marco Rossi',
+          rating: 4,
+          body: 'Delicious, a couple were a touch soft.',
+          verified: false,
+        },
+      ]);
 
-    console.log('Creating admin account (with 2FA)…');
-    const totpSecret = authenticator.generateSecret();
-    const adminPasswordHash = await bcrypt.hash('admin12345', 12);
-    await db.insert(schema.adminUsers).values({
-      name: 'Maya Rahman',
-      email: 'maya@mango-shop.com',
-      passwordHash: adminPasswordHash,
-      role: 'owner',
-      shopId: shop.id,
-      twoFactorEnabled: true,
-      twoFactorSecret: totpSecret,
+      console.log('Creating customers…');
+      const customerByEmail = new Map<string, string>();
+      for (const c of CUSTOMERS) {
+        const [row] = await tx
+          .insert(schema.customers)
+          .values({
+            shopId: shop.id,
+            name: c.name,
+            email: c.email,
+            phone: c.phone,
+            city: c.city,
+            ordersCount: c.orders,
+            spentCents: dollarsToCents(c.spent),
+            firstOrderAt: new Date(c.first),
+            lastOrderAt: new Date(c.last),
+            segment: c.segment,
+          })
+          .returning({ id: schema.customers.id });
+        customerByEmail.set(c.email, row.id);
+      }
+
+      console.log('Creating orders + line items…');
+      for (const o of ORDERS) {
+        const [order] = await tx
+          .insert(schema.orders)
+          .values({
+            reference: o.ref,
+            shopId: shop.id,
+            customerId: customerByEmail.get(o.email) ?? null,
+            customerName: o.customer,
+            email: o.email,
+            qty: o.qty,
+            totalCents: dollarsToCents(o.total),
+            status: o.status,
+            pay: o.pay,
+            channel: o.channel,
+            placedAt: new Date(o.date),
+          })
+          .returning({ id: schema.orders.id });
+
+        for (const [name, qty] of o.items) {
+          const product = productByName.get(name);
+          await tx.insert(schema.orderItems).values({
+            orderId: order.id,
+            productId: product?.id ?? null,
+            name,
+            qty,
+            unitPriceCents: product?.priceCents ?? 0,
+          });
+        }
+      }
+
+      console.log('Creating platform billing record + payment history…');
+      // The demo shop is on the pre-paid credits track: it bought the ৳2,00,000
+      // pack on 2026-03-12 with the launch coupon, then topped up with the
+      // ৳1,00,000 pack in May. Its meter starts the day the shop opened, so the
+      // seeded orders draw the balance down and the console shows a real number.
+      const meterStartAt = new Date('2026-03-12T10:00:00Z');
+      const bigPack = CREDIT_PACKS[1];
+      const smallPack = CREDIT_PACKS[0];
+      const [subscription] = await tx
+        .insert(schema.subscriptions)
+        .values({
+          shopId: shop.id,
+          ownerId: owner.id,
+          status: 'active',
+          billingMode: 'credits',
+          currency: 'BDT',
+          commissionBps: COMMISSION_BPS,
+          creditGrantedCents:
+            bigPack.salesCreditCents + smallPack.salesCreditCents,
+          meterStartAt,
+          autoDebit: true,
+          startedAt: meterStartAt,
+          nextBillingAt: new Date('2026-06-12T10:00:00Z'),
+        })
+        .returning();
+      await tx.insert(schema.subscriptionPayments).values([
+        {
+          userId: owner.id,
+          subscriptionId: subscription.id,
+          shopId: shop.id,
+          type: 'credit_pack' as const,
+          method: 'manual' as const,
+          planCode: bigPack.code,
+          amountCents: Math.round(bigPack.priceCents / 2),
+          salesCreditCents: bigPack.salesCreditCents,
+          discountCents:
+            bigPack.priceCents - Math.round(bigPack.priceCents / 2),
+          couponCode: 'LAUNCH50',
+          currency: 'BDT',
+          paidAt: meterStartAt,
+        },
+        {
+          userId: owner.id,
+          subscriptionId: subscription.id,
+          shopId: shop.id,
+          type: 'credit_pack' as const,
+          method: 'manual' as const,
+          planCode: smallPack.code,
+          amountCents: smallPack.priceCents,
+          salesCreditCents: smallPack.salesCreditCents,
+          currency: 'BDT',
+          paidAt: new Date('2026-05-12T10:00:00Z'),
+        },
+      ]);
+
+      console.log('Creating admin account (with 2FA)…');
+      const totpSecret = authenticator.generateSecret();
+      const adminPasswordHash = await bcrypt.hash('admin12345', 12);
+      await tx.insert(schema.adminUsers).values({
+        name: 'Maya Rahman',
+        email: DEMO_OWNER_EMAIL,
+        passwordHash: adminPasswordHash,
+        role: 'owner',
+        shopId: shop.id,
+        twoFactorEnabled: true,
+        twoFactorSecret: totpSecret,
+      });
+
+      console.log('\n✅ Seed complete.\n');
+      console.log(`Seller login:  ${DEMO_OWNER_EMAIL} / password123`);
+      console.log(`Storefront:    GET /api/shops/${DEMO_SHOP_HANDLE}`);
+      console.log(`\nAdmin login (workspace = ${DEMO_SHOP_HANDLE}):`);
+      console.log(`  email:    ${DEMO_OWNER_EMAIL}`);
+      console.log('  password: admin12345');
+      console.log(`  2FA TOTP secret: ${totpSecret}`);
+      console.log(
+        `  otpauth URL:     ${authenticator.keyuri(DEMO_OWNER_EMAIL, 'Hoomri', totpSecret)}`,
+      );
+      console.log(`  current code:    ${authenticator.generate(totpSecret)}\n`);
     });
-
-    console.log('\n✅ Seed complete.\n');
-    console.log('Seller login:  maya@mango-shop.com / password123');
-    console.log('Storefront:    GET /api/shops/mango-shop');
-    console.log('\nAdmin login (workspace = mango-shop):');
-    console.log('  email:    maya@mango-shop.com');
-    console.log('  password: admin12345');
-    console.log(`  2FA TOTP secret: ${totpSecret}`);
-    console.log(
-      `  otpauth URL:     ${authenticator.keyuri('maya@mango-shop.com', 'Hoomri', totpSecret)}`,
-    );
-    console.log(`  current code:    ${authenticator.generate(totpSecret)}\n`);
   } finally {
     await client.end({ timeout: 5 });
   }
