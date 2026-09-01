@@ -887,7 +887,13 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
       email: string | null;
       phone: string | null;
     };
-    address: { line: string; area: string; pincode?: string };
+    address: {
+      line: string;
+      area: string;
+      pincode?: string;
+      /** Where the buyer pinned it, when they used the map in the offer sheet. */
+      geo?: { lat?: number; lng?: number };
+    };
     paymentMethod: string;
     phone?: string;
   }): Promise<{ order: OrderRow; paymentUrl?: string }> {
@@ -1063,6 +1069,7 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
             line: args.address.line,
             area: args.address.area,
             pincode: args.address.pincode ?? '',
+            geo: args.address.geo as never,
           },
           placedAt,
         })

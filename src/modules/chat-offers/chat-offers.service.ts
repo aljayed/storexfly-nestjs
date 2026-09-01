@@ -490,6 +490,7 @@ export class ChatOffersService {
           line: dto.address.line,
           area: dto.address.area,
           pincode: dto.address.pincode,
+          geo: dto.address.geo,
         },
         paymentMethod: dto.paymentMethod,
         phone: dto.phone,

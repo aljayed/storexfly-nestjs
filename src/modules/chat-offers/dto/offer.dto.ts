@@ -7,6 +7,8 @@ import {
   IsBoolean,
   IsInt,
   IsISO8601,
+  IsLatitude,
+  IsLongitude,
   IsNotEmptyObject,
   IsOptional,
   IsString,
@@ -93,6 +95,21 @@ export class CreateOfferDto {
   expiresAt?: string;
 }
 
+/** Where the buyer pinned the delivery on the map, if they used it. */
+class OfferGeoDto {
+  @ApiPropertyOptional({ example: 23.8103 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsLatitude()
+  lat?: number;
+
+  @ApiPropertyOptional({ example: 90.4125 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsLongitude()
+  lng?: number;
+}
+
 class OfferAddressDto {
   @ApiProperty() @IsString() @MaxLength(240) line!: string;
   @ApiProperty() @IsString() @MaxLength(240) area!: string;
@@ -101,6 +118,12 @@ class OfferAddressDto {
   @IsString()
   @MaxLength(20)
   pincode?: string;
+
+  @ApiPropertyOptional({ type: OfferGeoDto })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => OfferGeoDto)
+  geo?: OfferGeoDto;
 }
 
 /** Buyer accepts or rejects. Accepting needs somewhere to send it and a way to pay. */
