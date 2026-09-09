@@ -153,6 +153,28 @@ export class ShopsController {
     return this.shops.updateFromConsole(shopId, dto);
   }
 
+  // The console can outlive the account session. Use its own owner-scoped
+  // token for private business verification, never a staff permission alone.
+  @Public()
+  @UseGuards(AdminJwtAuthGuard, ShopScopeGuard, RolesGuard)
+  @Roles('owner')
+  @ApiBearerAuth()
+  @Get(':shopId/console/kyc')
+  @ApiOkResponse({ type: KycResponse })
+  consoleKyc(@Param('shopId') shopId: string) {
+    return this.shops.getKycForConsole(shopId);
+  }
+
+  @Public()
+  @UseGuards(AdminJwtAuthGuard, ShopScopeGuard, RolesGuard)
+  @Roles('owner')
+  @ApiBearerAuth()
+  @Patch(':shopId/console/kyc')
+  @ApiOkResponse({ type: KycResponse })
+  consoleSubmitKyc(@Param('shopId') shopId: string, @Body() dto: SubmitKycDto) {
+    return this.shops.submitKycForConsole(shopId, dto);
+  }
+
   // ── Payout bank account (settlement transfer destination) ──
   @Public()
   @UseGuards(AdminJwtAuthGuard, ShopScopeGuard, RolesGuard)

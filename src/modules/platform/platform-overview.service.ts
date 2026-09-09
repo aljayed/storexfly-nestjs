@@ -1,4 +1,10 @@
-import { Inject, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  Inject,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import {
   and,
   asc,
@@ -23,6 +29,7 @@ import {
   subscriptions,
 } from '../../database/schema';
 import type { ShopRow } from '../../database/schema';
+import { hasCompleteKyc } from '../shops/kyc-submission';
 import { NoticesService } from '../notices/notices.service';
 import type {
   NoticeListResponse,
@@ -450,6 +457,9 @@ export class PlatformOverviewService {
     return {
       ...this.toKycResponse(shop),
       document: shop.kycDocument ?? undefined,
+      ownerLegalName: shop.kycOwnerLegalName ?? undefined,
+      businessAddress: shop.kycBusinessAddress ?? undefined,
+      reviewNote: shop.kycReviewNote ?? undefined,
     };
   }
 
@@ -457,13 +467,47 @@ export class PlatformOverviewService {
   async decideKyc(
     shopId: string,
     status: 'verified' | 'rejected',
+    reviewNote?: string,
+    submittedAt?: string,
   ): Promise<PlatformKycDetailResponse> {
+    const shop = await this.db.query.shops.findFirst({
+      where: eq(shops.id, shopId),
+    });
+    if (!shop) throw new NotFoundException('Shop not found');
+    if (
+      shop.kycStatus !== 'pending' ||
+      !shop.kycSubmittedAt ||
+      submittedAt !== shop.kycSubmittedAt.toISOString()
+    ) {
+      throw new ConflictException(
+        'This submission has changed. Reload it before reviewing.',
+      );
+    }
+    if (status === 'verified' && !hasCompleteKyc(shop)) {
+      throw new BadRequestException(
+        'The submission is incomplete. Ask the seller to add the missing business details.',
+      );
+    }
+    if (status === 'rejected' && !reviewNote?.trim()) {
+      throw new BadRequestException(
+        'Explain what the seller needs to correct.',
+      );
+    }
     const [row] = await this.db
       .update(shops)
-      .set({ kycStatus: status })
-      .where(eq(shops.id, shopId))
+      .set({ kycStatus: status, kycReviewNote: reviewNote?.trim() || null })
+      .where(
+        and(
+          eq(shops.id, shopId),
+          eq(shops.kycStatus, 'pending'),
+          eq(shops.kycSubmittedAt, shop.kycSubmittedAt),
+        ),
+      )
       .returning({ id: shops.id });
-    if (!row) throw new NotFoundException('Shop not found');
+    if (!row)
+      throw new ConflictException(
+        'This submission has changed. Reload it before reviewing.',
+      );
     return this.getKyc(shopId);
   }
 

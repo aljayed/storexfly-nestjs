@@ -158,12 +158,13 @@ export class SubscriptionsService implements OnModuleInit, OnModuleDestroy {
   async openForNewShop(
     userId: string,
     shopId: string,
+    db: DbExecutor = this.db,
   ): Promise<SubscriptionRow> {
     const now = new Date();
     // Snapshotted now and re-snapshotted whenever the shop joins the verified
     // track, so a rate change never has to walk every credits shop.
     const bps = await this.billing.commissionBps();
-    const [sub] = await this.db
+    const [sub] = await db
       .insert(subscriptions)
       .values({
         shopId,

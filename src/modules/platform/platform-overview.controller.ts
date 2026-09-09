@@ -118,6 +118,11 @@ export class PlatformOverviewController {
     @Param('shopId', ParseUUIDPipe) shopId: string,
     @Body() dto: KycDecisionDto,
   ) {
-    return this.overview.decideKyc(shopId, dto.status);
+    return this.overview.decideKyc(
+      shopId,
+      dto.status,
+      dto.reviewNote,
+      dto.submittedAt,
+    );
   }
 }

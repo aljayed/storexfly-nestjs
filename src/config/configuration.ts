@@ -105,7 +105,21 @@ export const smsConfig = registerAs('sms', () => ({
   // Approved sender ID (a numeric shortcode, or a masking name).
   senderName: process.env.SMS_SENDER_NAME ?? '',
   timeoutMs: parseInt(process.env.SMS_TIMEOUT_MS ?? '10000', 10),
+  /**
+   * Holds the gateway off while keeping the credentials on file, so a machine
+   * that cannot reach MiMSMS - a laptop whose IP is not whitelisted, most of
+   * them - can still walk the phone flows end to end. The code comes back in
+   * the response and goes to the log, exactly as it does when SMS_* is unset.
+   *
+   * Ignored outright in production. It is a testing switch, and a deployment
+   * that picked it up by accident would silently stop texting anyone while
+   * handing out live codes over the wire.
+   */
+  devMode:
+    process.env.SMS_DEV_MODE === 'true' &&
+    process.env.NODE_ENV !== 'production',
   get enabled() {
+    if (this.devMode) return false;
     return Boolean(this.apiKey && this.userName && this.senderName);
   },
 }));

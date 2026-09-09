@@ -34,6 +34,9 @@ export class PlatformKycResponse {
 
 /** A single KYC record with the full trade-licence document (operator-only). */
 export class PlatformKycDetailResponse extends PlatformKycResponse {
+  @ApiPropertyOptional() ownerLegalName?: string;
+  @ApiPropertyOptional() businessAddress?: string;
+  @ApiPropertyOptional() reviewNote?: string;
   @ApiPropertyOptional({ description: 'Trade licence document as a data URL' })
   document?: string;
 }

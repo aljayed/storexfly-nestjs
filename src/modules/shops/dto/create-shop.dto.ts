@@ -1,7 +1,8 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import {
   IsEnum,
+  IsEmail,
   IsObject,
   IsOptional,
   IsString,
@@ -23,6 +24,7 @@ type ShopCategory = (typeof shopCategoryEnum.enumValues)[number];
 export class CreateShopDto {
   @ApiProperty({ example: 'Mango Shop' })
   @IsString()
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
   @MinLength(2)
   @MaxLength(160)
   name!: string;
@@ -58,6 +60,19 @@ export class CreateShopDto {
   @ApiProperty({ enum: brandSwatchEnum.enumValues })
   @IsEnum(brandSwatchEnum.enumValues)
   brandId!: BrandSwatchId;
+
+  @ApiPropertyOptional({ description: 'Public customer support email' })
+  @IsOptional()
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  @IsEmail()
+  @MaxLength(254)
+  supportEmail?: string;
+
+  @ApiPropertyOptional({ description: 'Public customer support phone (+880)' })
+  @IsOptional()
+  @IsString()
+  @Matches(/^\+8801[3-9]\d{8}$/)
+  supportPhone?: string;
 
   // Optional business verification captured during onboarding. Sellers can
   // skip this entirely and complete it later from the console.

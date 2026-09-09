@@ -1,5 +1,11 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsIn, IsOptional, IsString, MaxLength } from 'class-validator';
+import {
+  IsIn,
+  IsISO8601,
+  IsOptional,
+  IsString,
+  MaxLength,
+} from 'class-validator';
 import { PaginationQueryDto } from '../../../common/dto/pagination-query.dto';
 
 /** A `status` filter for the review queue. `all` shows every submitted shop. */
@@ -34,4 +40,19 @@ export class KycDecisionDto {
   @ApiProperty({ enum: ['verified', 'rejected'] })
   @IsIn(['verified', 'rejected'])
   status!: 'verified' | 'rejected';
+
+  @ApiPropertyOptional({
+    description: 'Feedback shown to the seller; required when rejecting',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  reviewNote?: string;
+
+  @ApiProperty({
+    description:
+      'Submission timestamp being reviewed (prevents stale decisions)',
+  })
+  @IsISO8601()
+  submittedAt!: string;
 }

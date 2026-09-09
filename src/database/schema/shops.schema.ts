@@ -142,6 +142,9 @@ export const shops = pgTable(
     // (same approach as product images); it is never sent to public routes.
     kycStatus: kycStatusEnum('kyc_status').notNull().default('unsubmitted'),
     kycLegalName: varchar('kyc_legal_name', { length: 200 }),
+    kycOwnerLegalName: varchar('kyc_owner_legal_name', { length: 160 }),
+    kycBusinessAddress: varchar('kyc_business_address', { length: 500 }),
+    kycReviewNote: varchar('kyc_review_note', { length: 500 }),
     kycLicenseNo: varchar('kyc_license_no', { length: 120 }),
     kycDocument: text('kyc_document'),
     kycSubmittedAt: timestamp('kyc_submitted_at', { withTimezone: true }),

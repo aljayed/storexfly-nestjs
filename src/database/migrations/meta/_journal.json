@@ -603,6 +603,13 @@
       "when": 1793318400000,
       "tag": "0088_shop_license_unique",
       "breakpoints": true
+    },
+    {
+      "idx": 89,
+      "version": "7",
+      "when": 1793404800000,
+      "tag": "0089_kyc_review_details",
+      "breakpoints": true
     }
   ]
 }

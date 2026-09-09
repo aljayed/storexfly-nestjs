@@ -24,7 +24,7 @@ import { contactComplete } from '../../common/utils/contact-verification.util';
 import { centsToDollars } from '../../common/utils/money.util';
 import { handleize } from '../../common/utils/slug.util';
 import { DRIZZLE } from '../../database/database.constants';
-import type { DrizzleDB } from '../../database/drizzle.types';
+import type { DbExecutor, DrizzleDB } from '../../database/drizzle.types';
 import {
   deletedShopSettlements,
   orders,
@@ -59,6 +59,7 @@ import { SubscriptionsService } from '../subscriptions/subscriptions.service';
 import type { CreateShopDto } from './dto/create-shop.dto';
 import type { SubmitKycDto } from './dto/kyc.dto';
 import { KycResponse } from './dto/kyc.response';
+import { kycSubmissionPatch } from './kyc-submission';
 import { ShopResponse } from './dto/shop.response';
 import { DiscoverResponse } from './dto/discover.response';
 import type { UpdateShopDto } from './dto/update-shop.dto';
@@ -172,7 +173,7 @@ export class ShopsService {
         columns: { id: true },
       }),
     ]);
-    if (byShop && byShop.ownerId !== ownerId) return true;
+    if (byShop) return true;
     if (byAccount && byAccount.id !== ownerId) return true;
     return false;
   }
@@ -211,13 +212,15 @@ export class ShopsService {
     await this.blockedWords.assertClean(dto.name);
     await this.blockedWords.assertClean(handle);
     if (await this.handleTakenByOther(handle, ownerId)) {
-      throw new ForbiddenException('That handle is already taken');
+      throw ShopsService.handleTaken();
     }
     const swatch = BRAND_SWATCHES[dto.brandId];
-    const row = await this.insertShop({
+    const values: NewShopRow = {
       name: dto.name,
       handle,
       tagline: dto.tagline,
+      supportEmail: dto.supportEmail,
+      supportPhone: dto.supportPhone,
       cat: dto.cat,
       brandId: dto.brandId,
       brand: swatch.c,
@@ -226,12 +229,16 @@ export class ShopsService {
       plan,
       // Optional KYC supplied during onboarding - skipped sellers start
       // 'unsubmitted' (the column default).
-      ...this.kycPatch(dto.kyc),
-    });
+      ...kycSubmissionPatch(dto.kyc),
+    };
     // Every shop gets a billing record straight away: the credits track with
     // a zero balance, so the console has something to show and the meter
     // starts counting from the shop's first day.
-    await this.subscriptionsService.openForNewShop(ownerId, row.id);
+    const row = await this.db.transaction(async (tx) => {
+      const created = await this.insertShop(values, tx);
+      await this.subscriptionsService.openForNewShop(ownerId, created.id, tx);
+      return created;
+    });
     return ShopResponse.fromRow(row);
   }
 
@@ -578,11 +585,24 @@ export class ShopsService {
     return KycResponse.fromRow(shop);
   }
 
+  /** Only called after the console's owner-role and shop-scope guards. */
+  async getKycForConsole(id: string): Promise<KycResponse> {
+    const shop = await this.requireById(id);
+    return KycResponse.fromRow(shop);
+  }
+
+  async submitKycForConsole(
+    id: string,
+    dto: SubmitKycDto,
+  ): Promise<KycResponse> {
+    const shop = await this.requireById(id);
+    return this.submitKyc(shop.ownerId, id, dto);
+  }
+
   /**
    * Create or update the shop's business verification. Sellers can save
-   * partial details and finish later; submitting (or replacing) the document
-   * moves the shop into the 'pending' review state. Already-verified shops
-   * keep their status when only the editable text fields change.
+   * text drafts and finish later. Complete submissions and changes to approved
+   * identity details move the shop into the pending review state.
    */
   async submitKyc(
     ownerId: string,
@@ -596,7 +616,7 @@ export class ShopsService {
     if (dto.licenseNo) {
       await this.assertLicenseUnclaimed(dto.licenseNo, shop.id);
     }
-    const patch = this.kycPatch(dto, shop);
+    const patch = kycSubmissionPatch(dto, shop);
     if (Object.keys(patch).length === 0) {
       return KycResponse.fromRow(shop);
     }
@@ -621,16 +641,29 @@ export class ShopsService {
    * the same moment both pass the check and one loses here; without this it
    * would surface as a bare 500.
    */
-  private async insertShop(values: NewShopRow): Promise<ShopRow> {
+  private async insertShop(
+    values: NewShopRow,
+    db: DbExecutor = this.db,
+  ): Promise<ShopRow> {
     try {
-      const [row] = await this.db.insert(shops).values(values).returning();
+      const [row] = await db.insert(shops).values(values).returning();
       return row;
     } catch (err) {
       if (isUniqueViolationOn(err, LICENSE_INDEX)) {
         throw ShopsService.licenseTaken();
       }
+      if (isUniqueViolationOn(err, 'shops_handle_unique_idx')) {
+        throw ShopsService.handleTaken();
+      }
       throw err;
     }
+  }
+
+  private static handleTaken(): ConflictException {
+    return new ConflictException({
+      error: 'HandleTaken',
+      message: 'That shop link is already taken. Choose another one.',
+    });
   }
 
   /**
@@ -686,45 +719,6 @@ export class ShopsService {
       message:
         'That trade licence is already registered to another shop. One licence covers one shop - use a different licence, or delete the shop holding it to free the number.',
     });
-  }
-
-  /**
-   * Build the KYC column patch from a (partial) submission. `current` is the
-   * existing shop on an update (absent during onboarding).
-   *
-   * A submission (re)enters the operator's 'pending' review queue when either:
-   *  - a fresh document is uploaded, or
-   *  - a previously *rejected* shop resubmits - even with no new file - so the
-   *    operator sees it again and the seller isn't stuck on 'rejected'.
-   * A *verified* shop keeps its badge on text-only edits (only a new document
-   * sends it back for review). Returns an empty object when nothing was given.
-   */
-  private kycPatch(dto?: SubmitKycDto, current?: ShopRow): Partial<ShopRow> {
-    if (!dto) return {};
-    const patch: Partial<ShopRow> = {};
-    if (dto.legalName !== undefined) {
-      patch.kycLegalName = dto.legalName.trim() || null;
-    }
-    if (dto.licenseNo !== undefined) {
-      patch.kycLicenseNo = dto.licenseNo.trim() || null;
-    }
-
-    const hasNewDoc = dto.document !== undefined;
-    if (hasNewDoc) {
-      patch.kycDocument = dto.document!.trim() || null;
-    }
-
-    // A document must be on file for there to be anything to review - either
-    // the one just uploaded, or the one already saved on a resubmission.
-    const documentOnFile = hasNewDoc
-      ? !!patch.kycDocument
-      : !!current?.kycDocument;
-    const resubmittingRejected = current?.kycStatus === 'rejected';
-    if (documentOnFile && (hasNewDoc || resubmittingRejected)) {
-      patch.kycStatus = 'pending';
-      patch.kycSubmittedAt = new Date();
-    }
-    return patch;
   }
 
   async listForOwner(ownerId: string): Promise<ShopResponse[]> {

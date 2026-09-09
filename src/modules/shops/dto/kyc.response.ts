@@ -14,6 +14,9 @@ export class KycResponse {
   status!: KycStatus;
 
   @ApiPropertyOptional() legalName?: string;
+  @ApiPropertyOptional() ownerLegalName?: string;
+  @ApiPropertyOptional() businessAddress?: string;
+  @ApiPropertyOptional() reviewNote?: string;
   @ApiPropertyOptional() licenseNo?: string;
   @ApiPropertyOptional({ description: 'Trade licence document as a data URL' })
   document?: string;
@@ -23,6 +26,9 @@ export class KycResponse {
     return {
       status: row.kycStatus,
       legalName: row.kycLegalName ?? undefined,
+      ownerLegalName: row.kycOwnerLegalName ?? undefined,
+      businessAddress: row.kycBusinessAddress ?? undefined,
+      reviewNote: row.kycReviewNote ?? undefined,
       licenseNo: row.kycLicenseNo ?? undefined,
       document: row.kycDocument ?? undefined,
       submittedAt: row.kycSubmittedAt?.toISOString(),

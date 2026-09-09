@@ -11,7 +11,7 @@ import type { AdminRole } from '../../database/schema/enums';
  *  - `editor`   - view reports + add/edit/delete items
  *  - `staff`    - view reports + add items only
  * `owner` is never assignable by invite; it additionally covers the
- * owner-only seller-token flows (business verification / KYC).
+ * owner-only business verification / KYC flows.
  */
 export type AdminPermission =
   | 'items.view'
@@ -48,8 +48,8 @@ const FULL_ACCESS: AdminPermission[] = [
 ];
 
 const ROLE_PERMISSIONS: Record<AdminRole, readonly AdminPermission[]> = {
-  // Verification (KYC) runs on the owner's seller session, so it stays
-  // owner-only even though managers otherwise have full access.
+  // Private business verification stays owner-only even though managers
+  // otherwise have full access.
   owner: [...FULL_ACCESS, 'verification.manage'],
   manager: FULL_ACCESS,
   editor: [

@@ -4,14 +4,30 @@ import { IsOptional, IsString, Matches, MaxLength } from 'class-validator';
 
 /**
  * Seller-submitted business verification (trade-licence KYC). Every field is
- * optional so a seller can save partial details and finish later, or submit
- * the document on its own. `document` is the trade licence as a data URL
- * (image or PDF), capped to comfortably fit the 15mb JSON body limit.
+ * optional to support text drafts and updates to existing applications.
+ * The service requires complete details whenever a document is submitted.
+ * `document` is a base64 image/PDF capped at 10M characters (7 MiB file).
  *
  * Used both as an optional block on the create-shop wizard and as the body of
  * `PATCH /shops/:id/kyc` from the seller console.
  */
 export class SubmitKycDto {
+  @ApiPropertyOptional({ description: 'Owner full name on the trade licence' })
+  @IsOptional()
+  @IsString()
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  @MaxLength(160)
+  ownerLegalName?: string;
+
+  @ApiPropertyOptional({
+    description: 'Registered address on the trade licence (private)',
+  })
+  @IsOptional()
+  @IsString()
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  @MaxLength(500)
+  businessAddress?: string;
+
   @ApiPropertyOptional({ example: 'Mango Fresh Trading' })
   @IsOptional()
   @IsString()

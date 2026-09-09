@@ -247,13 +247,16 @@ export class AuthService {
   async startEmailVerification(
     userId: string,
     email: string,
-  ): Promise<{ ok: true }> {
+  ): Promise<{ ok: true; retryAfterSeconds: number }> {
     const user = await this.requireUser(userId);
     const existing = await this.users.findByEmail(email);
     if (existing && existing.id !== user.id) {
       throw new ConflictException('An account with this email already exists');
     }
-    await this.emailOtp.start<{ userId: string; email: string }>(
+    const dispatch = await this.emailOtp.start<{
+      userId: string;
+      email: string;
+    }>(
       VERIFY_EMAIL_SCOPE,
       email,
       { userId: user.id, email },
@@ -263,7 +266,7 @@ export class AuthService {
         intro: 'Use this code to confirm your email on Hoomri:',
       },
     );
-    return { ok: true };
+    return { ok: true, retryAfterSeconds: dispatch.retryAfterSeconds };
   }
 
   async confirmEmailVerification(
