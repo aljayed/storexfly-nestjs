@@ -14,6 +14,7 @@ import { DRIZZLE } from '../../database/database.constants';
 import type { DrizzleDB } from '../../database/drizzle.types';
 import {
   orders,
+  paymentRefunds,
   paymentTransactions,
   reviews,
   shops,
@@ -534,7 +535,7 @@ export class BuyerService {
     // It is keyed on the account, so changing email keeps the history.
     const mine = ordersOwnedBy(accountId, account.email);
 
-    const [orderRows, reviewRows, paymentRows] = await Promise.all([
+    const [orderRows, reviewRows, paymentRows, refundRows] = await Promise.all([
       this.db.query.orders.findMany({
         // No email → match nothing (a phone-only account has no order history yet).
         where: mine,
@@ -565,6 +566,7 @@ export class BuyerService {
           transactionId: paymentTransactions.gatewayTxnId,
           paidAt: paymentTransactions.capturedAt,
           orderReference: orders.reference,
+          orderId: orders.id,
           shopName: shops.name,
           shopHandle: shops.handle,
         })
@@ -575,11 +577,41 @@ export class BuyerService {
         .leftJoin(shops, eq(orders.shopId, shops.id))
         .where(mine)
         .orderBy(desc(paymentTransactions.capturedAt)),
+      // What has been sent back. Joined the same way as the charges so a
+      // refund against an order this account does not own cannot appear here.
+      this.db
+        .select({
+          transactionId: paymentRefunds.transactionId,
+          orderId: paymentRefunds.orderId,
+          amountCents: paymentRefunds.amountCents,
+          status: paymentRefunds.status,
+          requestedAt: paymentRefunds.requestedAt,
+          settledAt: paymentRefunds.settledAt,
+        })
+        .from(paymentRefunds)
+        .innerJoin(orders, eq(paymentRefunds.orderId, orders.id))
+        .where(mine),
     ]);
+
+    /* A refund is looked up by the charge it reverses, and falls back to the
+       order - a refund recorded for manual payout has no gateway transaction
+       to point at, and is exactly the case a buyer most needs told about. */
+    const refundByTxn = new Map<string, (typeof refundRows)[number]>();
+    const refundByOrder = new Map<string, (typeof refundRows)[number]>();
+    for (const r of refundRows) {
+      if (r.transactionId) refundByTxn.set(r.transactionId, r);
+      if (r.orderId) refundByOrder.set(r.orderId, r);
+    }
 
     const totalSpentCents = orderRows
       .filter((o) => o.pay === 'Paid')
       .reduce((sum, o) => sum + o.totalCents, 0);
+    // Everything on its way back or already back. A failed refund is not
+    // counted - nothing has been returned, and saying otherwise would tell a
+    // buyer they have money they do not.
+    const totalRefundedCents = refundRows
+      .filter((r) => r.status !== 'failed')
+      .reduce((sum, r) => sum + r.amountCents, 0);
 
     return {
       buyer: {
@@ -590,6 +622,7 @@ export class BuyerService {
         orders: orderRows.length,
         reviews: reviewRows.length,
         totalSpent: centsToDollars(totalSpentCents),
+        totalRefunded: centsToDollars(totalRefundedCents),
         payments: paymentRows.length,
       },
       orders: orderRows.map((o) => {
@@ -638,6 +671,17 @@ export class BuyerService {
         instrument: p.instrument,
         transactionId: p.transactionId,
         paidAt: p.paidAt.toISOString(),
+        refund: (() => {
+          const r = refundByTxn.get(p.id) ?? refundByOrder.get(p.orderId);
+          return r
+            ? {
+                status: r.status,
+                amount: centsToDollars(r.amountCents),
+                requestedAt: r.requestedAt.toISOString(),
+                settledAt: r.settledAt?.toISOString(),
+              }
+            : undefined;
+        })(),
       })),
     };
   }

@@ -185,6 +185,22 @@ export interface BuyerOverviewPayment {
   /** The gateway's own reference - what a receipt or a refund quotes. */
   transactionId: string;
   paidAt: string;
+  /**
+   * Set when this charge is being sent back. A payment history that shows
+   * what left the account and stays silent about what came back reads as
+   * money lost, so the row carries its own reversal rather than leaving the
+   * buyer to infer it from a total that quietly went down.
+   *
+   * `status` is where the money actually is, not merely what was decided:
+   * 'processing' means the gateway took the request and it has not landed
+   * yet, 'refunded' means it has, and 'manual' means it is owed by hand.
+   */
+  refund?: {
+    status: string;
+    amount: number;
+    requestedAt: string;
+    settledAt?: string;
+  };
 }
 
 /** GET /buyer/profile - everything the profile screen renders, in one payload. */
@@ -194,6 +210,8 @@ export interface BuyerOverview {
     orders: number;
     reviews: number;
     totalSpent: number;
+    /** What has been sent back, in whole currency units. */
+    totalRefunded: number;
     /** How many gateway charges this buyer has made, duplicates included. */
     payments: number;
   };
