@@ -76,6 +76,10 @@ export class RefundsService implements OnModuleInit, OnModuleDestroy {
 
   onModuleInit(): void {
     this.bootTimer = setTimeout(() => {
+      // See the note on the deadline sweep: a poll with nothing to chase says
+      // nothing, so one line per deploy is what distinguishes a quiet job
+      // from an absent one.
+      this.logger.log('Refund poll: first pass after boot');
       void this.sweepPendingRefunds();
     }, REFUND_POLL_BOOT_DELAY_MS);
     this.bootTimer.unref();

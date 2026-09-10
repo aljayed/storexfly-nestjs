@@ -185,6 +185,8 @@ export interface BuyerOverviewPayment {
   /** The gateway's own reference - what a receipt or a refund quotes. */
   transactionId: string;
   paidAt: string;
+  /** What the money bought ("Carrom pass", "Hot cake + 2 more"). */
+  itemSummary: string;
   /**
    * Set when this charge is being sent back. A payment history that shows
    * what left the account and stays silent about what came back reads as

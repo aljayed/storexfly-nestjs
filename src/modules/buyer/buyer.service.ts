@@ -596,6 +596,18 @@ export class BuyerService {
     /* A refund is looked up by the charge it reverses, and falls back to the
        order - a refund recorded for manual payout has no gateway transaction
        to point at, and is exactly the case a buyer most needs told about. */
+    /* What each charge actually bought. The orders were already fetched with
+       their items for the list above, so this reuses them rather than asking
+       the database a second time - a payment row without the goods on it
+       tells a buyer the money left and nothing about what for. */
+    const summaryByOrder = new Map<string, string>();
+    for (const o of orderRows) {
+      summaryByOrder.set(
+        o.id,
+        summarizeItems(productLines(o.items).map((i) => i.name)),
+      );
+    }
+
     const refundByTxn = new Map<string, (typeof refundRows)[number]>();
     const refundByOrder = new Map<string, (typeof refundRows)[number]>();
     for (const r of refundRows) {
@@ -671,6 +683,7 @@ export class BuyerService {
         instrument: p.instrument,
         transactionId: p.transactionId,
         paidAt: p.paidAt.toISOString(),
+        itemSummary: summaryByOrder.get(p.orderId) ?? '',
         refund: (() => {
           const r = refundByTxn.get(p.id) ?? refundByOrder.get(p.orderId);
           return r

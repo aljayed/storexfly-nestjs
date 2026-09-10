@@ -325,6 +325,11 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
        delayed first pass guarantees one per deploy without letting a
        superseded build fire one on its way out. */
     this.deadlineBootTimer = setTimeout(() => {
+      // Said out loud once per deploy. A sweep that finds nothing is silent,
+      // which is right - but it makes "the job is running" and "the job has
+      // been dead for a month" look identical in the logs, and that is the
+      // exact failure this boot pass exists to prevent.
+      this.logger.log('Deadline sweep: first pass after boot');
       void this.sweepOrderDeadlines();
     }, DEADLINE_SWEEP_BOOT_DELAY_MS);
     this.deadlineBootTimer.unref();
