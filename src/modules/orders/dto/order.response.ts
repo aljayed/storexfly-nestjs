@@ -1,3 +1,7 @@
+import {
+  orderDeadline,
+  withinSellerEditWindow,
+} from '../order-deadlines';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { centsToDollars } from '../../../common/utils/money.util';
 import {
@@ -84,6 +88,31 @@ export class OrderResponse {
   @ApiProperty({ description: 'Order total (dollars)' }) total!: number;
   @ApiProperty({ enum: ['New', 'Packed', 'Shipped', 'Delivered'] })
   status!: string;
+
+  @ApiPropertyOptional({
+    description: 'When the seller accepted the order (ISO)',
+  })
+  confirmedAt?: string;
+
+  @ApiPropertyOptional({ description: 'Why the order was cancelled' })
+  cancelReason?: string;
+
+  @ApiPropertyOptional({
+    description: 'Id of the delivered order this one replaces, if any',
+  })
+  exchangedFrom?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'The clock this order is running against, and when it runs out. Absent once the order is finished.',
+  })
+  deadline?: { kind: string; dueAt: string };
+
+  @ApiPropertyOptional({
+    description: 'Whether the seller may still reorder the status by hand',
+  })
+  sellerEditable?: boolean;
+
   @ApiProperty({ enum: ['Paid', 'Refunded'] }) pay!: string;
   @ApiPropertyOptional({ example: 'cod', description: 'Payment-method code' })
   paymentMethod?: string;
@@ -199,6 +228,18 @@ export class OrderResponse {
           : undefined,
       courierFailureReason: row.courierFailureReason ?? undefined,
       handedOverAt: row.handedOverAt?.toISOString(),
+      confirmedAt: row.confirmedAt?.toISOString(),
+      cancelReason: row.cancelReason ?? undefined,
+      exchangedFrom: row.exchangedFromOrderId ?? undefined,
+      // What the order is running out of time on, so the console can show a
+      // countdown that agrees with the job that actually cancels it.
+      deadline: (() => {
+        const due = orderDeadline(row);
+        return due
+          ? { kind: due.kind, dueAt: due.dueAt.toISOString() }
+          : undefined;
+      })(),
+      sellerEditable: withinSellerEditWindow(row.placedAt),
       adjustments: [...adjustments]
         .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
         .map(OrderAdjustmentResponse.fromRow),

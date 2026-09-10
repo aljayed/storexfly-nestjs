@@ -10,6 +10,7 @@ import {
   varchar,
 } from 'drizzle-orm/pg-core';
 import {
+  cancelReasonEnum,
   mobileBankAppEnum,
   orderStatusEnum,
   paymentStatusEnum,
@@ -107,9 +108,25 @@ export const orders = pgTable(
     // Why the parcel came back, straight from the courier ('customer refused',
     // …). Set on a return/failed delivery so the seller sees the reason.
     courierFailureReason: varchar('courier_failure_reason', { length: 255 }),
+    // When the seller accepted the order. This starts the dispatch clock: the
+    // parcel has to reach a courier within `dispatchDays` of it or the order
+    // cancels itself. Null on rows placed before the column, and on anything
+    // still sitting on 'New'.
+    confirmedAt: timestamp('confirmed_at', { withTimezone: true }),
     // When the seller physically handed the parcel over - the moment the
     // order stops being theirs to advance.
     handedOverAt: timestamp('handed_over_at', { withTimezone: true }),
+    // ── How an order ended ─────────────────────────────────────────
+    // `cancelledAt` is the audit trail for a deadline that ran out; the
+    // reason is what the buyer's notification is written from, because "the
+    // shop cancelled this" and "the shop never confirmed it" are not the
+    // same news. Both null on an order that is still alive.
+    cancelledAt: timestamp('cancelled_at', { withTimezone: true }),
+    cancelReason: cancelReasonEnum('cancel_reason'),
+    // Set on the *replacement* order raised when a delivered order is
+    // exchanged, pointing back at the one it replaces. The original moves to
+    // 'Exchanged' and keeps its money; this one is born already paid for.
+    exchangedFromOrderId: uuid('exchanged_from_order_id'),
     placedAt: timestamp('placed_at', { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -127,6 +144,11 @@ export const orders = pgTable(
     index('orders_shop_channel_idx').on(table.shopId, table.channel),
     index('orders_customer_idx').on(table.customerId),
     index('orders_user_idx').on(table.userId, table.placedAt),
+    // The deadline sweep asks "which live orders are overdue" every few
+    // minutes across every shop at once, so it wants status and age together
+    // and without a shop to narrow it first.
+    index('orders_status_placed_idx').on(table.status, table.placedAt),
+    index('orders_status_confirmed_idx').on(table.status, table.confirmedAt),
   ],
 );
 

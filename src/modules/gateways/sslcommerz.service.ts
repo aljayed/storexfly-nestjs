@@ -17,6 +17,8 @@ const SSL_BASE = {
 
 const SESSION_PATH = '/gwprocess/v4/api.php';
 const VALIDATE_PATH = '/validator/api/validationserverAPI.php';
+/** Both filing a refund and asking after one; the parameters tell them apart. */
+const REFUND_PATH = '/validator/api/merchantTransIDvalidationAPI.php';
 const REQUEST_TIMEOUT_MS = 30_000;
 
 export interface SslcommerzCustomer {
@@ -75,6 +77,58 @@ export interface SslcommerzValidation {
   riskLevel?: number;
   /** Their wording for that score, e.g. 'Safe' / 'High Risk'. */
   riskTitle?: string;
+}
+
+export interface SslcommerzRefundInput {
+  /** The charge being reversed, as the bank knows it. */
+  bankTranId: string;
+  /** Ours, and unique per refund - the gateway's `refund_trans_id`. */
+  refundTransId: string;
+  amountCents: number;
+  /** Why, in the merchant's words. Mandatory at their end. */
+  remarks: string;
+}
+
+export interface SslcommerzRefundResult {
+  /**
+   * 'success'    - accepted for processing (not yet in the buyer's account).
+   * 'processing' - already underway, which is also what a safe retry gets.
+   * 'failed'     - refused; `reason` says why.
+   * 'unreachable'- we could not ask. Nothing was filed, so it can be retried.
+   */
+  status: 'success' | 'processing' | 'failed' | 'unreachable';
+  /** Their handle for the refund, which the status query is filed against. */
+  refundRefId?: string;
+  bankTranId?: string;
+  reason?: string;
+}
+
+export interface SslcommerzRefundStatus {
+  /** 'refunded' is the only one that means the buyer has the money. */
+  status: 'refunded' | 'processing' | 'cancelled' | 'unknown' | 'unreachable';
+  refundedOn?: string;
+  initiatedOn?: string;
+  reason?: string;
+}
+
+interface RefundResponse {
+  APIConnect?: string;
+  bank_tran_id?: string;
+  trans_id?: string;
+  refund_ref_id?: string;
+  status?: string;
+  errorReason?: string;
+}
+
+interface RefundStatusResponse {
+  APIConnect?: string;
+  bank_tran_id?: string;
+  tran_id?: string;
+  refund_ref_id?: string;
+  initiated_on?: string;
+  refunded_on?: string;
+  status?: string;
+  errorReason?: string;
 }
 
 interface SessionResponse {
@@ -278,6 +332,124 @@ export class SslcommerzService {
         status: 'UNREACHABLE',
         reason: 'Gateway unreachable',
       };
+    }
+  }
+
+  /* ── Refunds ───────────────────────────────────────────────────
+     Filing one is not paying one. SSLCommerz answers 'success' to mean it has
+     accepted the request; the cardholder sees the money days later, and only
+     {@link refundStatus} reporting 'refunded' says it arrived. Both live on
+     the same endpoint - what you send decides which one you get. */
+
+  /**
+   * File a refund against a settled charge.
+   *
+   * `refundTransId` is the caller's idempotency key and must be stored before
+   * this is called: filing the same id twice is answered 'processing' for the
+   * existing refund rather than paying the buyer a second time, but only if
+   * we can still produce the id after a crash.
+   */
+  async refund(
+    input: SslcommerzRefundInput,
+  ): Promise<SslcommerzRefundResult> {
+    const config = await this.requireConfig();
+    const query = new URLSearchParams({
+      bank_tran_id: input.bankTranId,
+      refund_trans_id: input.refundTransId.slice(0, 30),
+      store_id: config.storeId,
+      store_passwd: config.storePassword,
+      refund_amount: (input.amountCents / 100).toFixed(2),
+      refund_remarks: input.remarks.slice(0, 255) || 'Order refund',
+      format: 'json',
+    });
+    let data: RefundResponse;
+    try {
+      const res = await fetch(
+        `${this.baseUrl(config)}${REFUND_PATH}?${query.toString()}`,
+        {
+          headers: { Accept: 'application/json' },
+          signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+        },
+      );
+      if (!res.ok) {
+        throw new Error(`SSLCommerz HTTP ${res.status} filing a refund`);
+      }
+      data = (await res.json()) as RefundResponse;
+    } catch (err) {
+      this.logger.error(
+        `SSLCommerz refund request failed for ${input.bankTranId}`,
+        err as Error,
+      );
+      // Nothing was filed that we know of, and the caller keeps its row - so
+      // this is retried rather than written off.
+      return { status: 'unreachable', reason: 'Gateway unreachable' };
+    }
+
+    // APIConnect is the transport verdict; `status` is the refund's own. A
+    // request that never connected has no refund status worth reading.
+    if (data.APIConnect && data.APIConnect !== 'DONE') {
+      this.logger.error(
+        `SSLCommerz refused the refund for ${input.bankTranId}: APIConnect=${data.APIConnect} ${data.errorReason ?? ''}`,
+      );
+      return {
+        status: data.APIConnect === 'INACTIVE' ? 'failed' : 'unreachable',
+        reason: data.errorReason ?? data.APIConnect,
+      };
+    }
+
+    const status = (data.status ?? '').toLowerCase();
+    if (status === 'success' || status === 'processing') {
+      return {
+        status: status as 'success' | 'processing',
+        refundRefId: data.refund_ref_id,
+        bankTranId: data.bank_tran_id,
+      };
+    }
+    this.logger.error(
+      `SSLCommerz refund refused for ${input.bankTranId}: ${data.status ?? 'no status'} ${data.errorReason ?? ''}`,
+    );
+    return { status: 'failed', reason: data.errorReason ?? data.status };
+  }
+
+  /** Ask what became of a filed refund. */
+  async refundStatus(refundRefId: string): Promise<SslcommerzRefundStatus> {
+    const config = await this.requireConfig();
+    const query = new URLSearchParams({
+      refund_ref_id: refundRefId,
+      store_id: config.storeId,
+      store_passwd: config.storePassword,
+      format: 'json',
+    });
+    try {
+      const res = await fetch(
+        `${this.baseUrl(config)}${REFUND_PATH}?${query.toString()}`,
+        {
+          headers: { Accept: 'application/json' },
+          signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+        },
+      );
+      if (!res.ok) {
+        throw new Error(`SSLCommerz HTTP ${res.status} on refund status`);
+      }
+      const data = (await res.json()) as RefundStatusResponse;
+      const status = (data.status ?? '').toLowerCase();
+      return {
+        status:
+          status === 'refunded' ||
+          status === 'processing' ||
+          status === 'cancelled'
+            ? status
+            : 'unknown',
+        refundedOn: data.refunded_on,
+        initiatedOn: data.initiated_on,
+        reason: data.errorReason,
+      };
+    } catch (err) {
+      this.logger.error(
+        `SSLCommerz refund status failed for ${refundRefId}`,
+        err as Error,
+      );
+      return { status: 'unreachable', reason: 'Gateway unreachable' };
     }
   }
 

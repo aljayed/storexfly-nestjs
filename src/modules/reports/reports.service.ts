@@ -44,6 +44,10 @@ import {
  * service), so a status doubles as "how far this order got". Ranking it lets
  * every stage of the funnel be answered with one comparison. `Cancelled` is
  * off the ladder - an order that never completed did not reach any stage.
+ *
+ * 'Exchanged' ranks with 'Delivered' rather than off the ladder: the goods did
+ * arrive, and the funnel is about how far an order got, not about what the
+ * buyer thought of it once it landed.
  */
 const STAGE_RANK: Record<OrderStatus, number> = {
   New: 0,
@@ -52,6 +56,7 @@ const STAGE_RANK: Record<OrderStatus, number> = {
   HandedOver: 3,
   Shipped: 4,
   Delivered: 5,
+  Exchanged: 5,
   Cancelled: -1,
 };
 

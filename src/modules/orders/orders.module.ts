@@ -11,6 +11,7 @@ import { CourierWebhookController } from './courier-webhook.controller';
 import { OrdersController } from './orders.controller';
 import { OrdersService } from './orders.service';
 import { PaymentsController } from './payments.controller';
+import { RefundsService } from './refunds.service';
 import { PaymentsService } from './payments.service';
 
 @Module({
@@ -26,7 +27,7 @@ import { PaymentsService } from './payments.service';
     SubscriptionsModule,
   ],
   controllers: [OrdersController, PaymentsController, CourierWebhookController],
-  providers: [OrdersService, PaymentsService],
-  exports: [OrdersService],
+  providers: [OrdersService, PaymentsService, RefundsService],
+  exports: [OrdersService, RefundsService],
 })
 export class OrdersModule {}

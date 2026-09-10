@@ -37,6 +37,7 @@ import {
 } from './dto/checkout.dto';
 import { OrderQueryDto } from './dto/order-query.dto';
 import { RequestAdjustmentDto } from './dto/request-adjustment.dto';
+import { ExchangeOrderDto } from './dto/exchange-order.dto';
 import { UpdateOrderStatusDto } from './dto/update-order-status.dto';
 import { OrdersService } from './orders.service';
 
@@ -253,6 +254,40 @@ export class OrdersController {
   })
   cancel(@Param('shopId') shopId: string, @Param('id') id: string) {
     return this.orders.cancel(shopId, id);
+  }
+
+  @Public()
+  @UseGuards(AdminJwtAuthGuard, ShopScopeGuard, RolesGuard)
+  @RequirePerm('orders.manage')
+  @ApiBearerAuth()
+  @Get('shops/:shopId/orders/:id/refunds')
+  @ApiOperation({
+    summary:
+      'Admin: refunds filed against an order, and where the money actually got to',
+  })
+  async refundsFor(
+    @Param('shopId') shopId: string,
+    @Param('id') id: string,
+  ) {
+    return this.orders.refundsFor(shopId, id);
+  }
+
+  @Public()
+  @UseGuards(AdminJwtAuthGuard, ShopScopeGuard, RolesGuard)
+  @RequirePerm('orders.manage')
+  @ApiBearerAuth()
+  @Post('shops/:shopId/orders/:id/exchange')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary:
+      'Admin: exchange a delivered order - marks it Exchanged and raises a paid replacement',
+  })
+  exchange(
+    @Param('shopId') shopId: string,
+    @Param('id') id: string,
+    @Body() dto: ExchangeOrderDto,
+  ) {
+    return this.orders.exchange(shopId, id, dto.items);
   }
 
   @Public()

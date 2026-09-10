@@ -113,6 +113,12 @@ export const listingTypeEnum = pgEnum('listing_type', ['sale', 'showcase']);
 // later 'HandedOver' sit at the end here - the logical order
 // (New → Confirmed → Packed → HandedOver → Shipped → Delivered) is enforced by
 // STATUS_FLOW in the orders service and the UI, not by this list.
+//
+// 'Exchanged' is terminal too, and only reachable from 'Delivered': the buyer
+// sent the goods back and a replacement order was raised in its place (see
+// `exchange` in the orders service, and `exchangedFromOrderId`). The original
+// keeps its money and its place in the customer's history - the replacement is
+// a new order that happens to be already paid for.
 export const orderStatusEnum = pgEnum('order_status', [
   'New',
   'Packed',
@@ -121,6 +127,22 @@ export const orderStatusEnum = pgEnum('order_status', [
   'Confirmed',
   'Cancelled',
   'HandedOver',
+  'Exchanged',
+]);
+
+/**
+ * Why an order ended up 'Cancelled'. Three of these are the platform's own
+ * deadlines rather than anybody's decision, and the buyer is told which one
+ * ran out - "the shop didn't confirm in time" is a different message from
+ * "the shop cancelled this".
+ */
+export const cancelReasonEnum = pgEnum('cancel_reason', [
+  'seller',
+  'buyer',
+  'payment_expired',
+  'auto_unconfirmed',
+  'auto_undispatched',
+  'auto_undelivered',
 ]);
 
 // 'Paid' = money confirmed received (gateway-verified or seller-confirmed).
@@ -225,6 +247,7 @@ export type KycStatus = (typeof kycStatusEnum.enumValues)[number];
 export type ProductTag = (typeof productTagEnum.enumValues)[number];
 export type ListingType = (typeof listingTypeEnum.enumValues)[number];
 export type OrderStatus = (typeof orderStatusEnum.enumValues)[number];
+export type CancelReason = (typeof cancelReasonEnum.enumValues)[number];
 export type PaymentStatus = (typeof paymentStatusEnum.enumValues)[number];
 export type PaymentMethod = (typeof paymentMethodEnum.enumValues)[number];
 export type MobileBankApp = (typeof mobileBankAppEnum.enumValues)[number];

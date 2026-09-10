@@ -12,6 +12,7 @@ import {
   gte,
   inArray,
   isNotNull,
+  isNull,
   lt,
   ne,
   or,
@@ -116,6 +117,10 @@ export class SettlementsService {
           or(eq(orders.pay, 'Paid'), isNotNull(orders.advancePaidAt)),
           ne(orders.status, 'Cancelled'),
           ne(orders.pay, 'Refunded'),
+          // An exchange replacement carries the money of the order it
+          // replaces, which has already been settled. Paying out on both
+          // would pay the shop twice for one sale.
+          isNull(orders.exchangedFromOrderId),
         ),
         columns: {
           totalCents: true,
@@ -166,6 +171,10 @@ export class SettlementsService {
           or(eq(orders.pay, 'Paid'), isNotNull(orders.advancePaidAt)),
           ne(orders.status, 'Cancelled'),
           ne(orders.pay, 'Refunded'),
+          // An exchange replacement carries the money of the order it
+          // replaces, which has already been settled. Paying out on both
+          // would pay the shop twice for one sale.
+          isNull(orders.exchangedFromOrderId),
           gte(orders.placedAt, from),
           lt(orders.placedAt, end),
         ),
@@ -370,6 +379,7 @@ export class SettlementsService {
         or(eq(orders.pay, 'Paid'), isNotNull(orders.advancePaidAt)),
         ne(orders.status, 'Cancelled'),
         ne(orders.pay, 'Refunded'),
+        isNull(orders.exchangedFromOrderId),
         gte(orders.placedAt, from),
         lt(orders.placedAt, end),
       ),

@@ -19,9 +19,11 @@ import {
   gte,
   ilike,
   inArray,
+  isNotNull,
   isNull,
   lt,
   ne,
+  notInArray,
   or,
   sql,
 } from 'drizzle-orm';
@@ -92,7 +94,15 @@ import type { CheckoutDto, CouponQuoteDto } from './dto/checkout.dto';
 import { BuyerOrderDetailResponse } from './dto/buyer-order-detail.response';
 import { CheckoutResultResponse } from './dto/checkout-result.response';
 import { OrderListResponse } from './dto/order-list.response';
+import type { CancelReason } from '../../database/schema/enums';
+import { RefundsService } from './refunds.service';
 import { OrderResponse } from './dto/order.response';
+import {
+  ORDER_DEADLINES,
+  TERMINAL_STATUSES,
+  orderDeadline,
+  withinSellerEditWindow,
+} from './order-deadlines';
 
 /**
  * Allowed forward transitions for the order pipeline.
@@ -111,6 +121,7 @@ const STATUS_FLOW: Record<OrderStatus, OrderStatus | null> = {
   Shipped: 'Delivered',
   Delivered: null,
   Cancelled: null,
+  Exchanged: null,
 };
 
 /**
@@ -126,6 +137,22 @@ const SELLER_ADVANCEABLE: readonly OrderStatus[] = [
 
 /** Statuses from which an order may still be cancelled (before it's packed). */
 const CANCELLABLE: readonly OrderStatus[] = ['New', 'Confirmed'];
+
+/**
+ * Statuses a seller may set by hand while inside the edit window.
+ *
+ * The same set the pipeline already lets them drive, but reachable in any
+ * order rather than one forward step at a time - which is what makes a
+ * mis-click fixable. 'Shipped' and 'Delivered' are still absent, and still for
+ * the reason at the top of this file: they are the courier's to report, and a
+ * shop that could set them could steer its own billing.
+ */
+const SELLER_SETTABLE: readonly OrderStatus[] = [
+  'New',
+  'Confirmed',
+  'Packed',
+  'HandedOver',
+];
 
 /** Statuses a buyer may self-cancel from - only before the seller confirms. */
 const BUYER_CANCELLABLE: readonly OrderStatus[] = ['New'];
@@ -151,6 +178,16 @@ const AMOUNT_ADJUSTABLE: readonly OrderStatus[] = [
  * attempts spans over half an hour of whatever was briefly broken.
  */
 const WEBHOOK_SWEEP_INTERVAL_MS = 5 * 60 * 1000;
+
+/**
+ * How often the deadline sweep runs, and how many orders one pass will take
+ * on. Fifteen minutes is far finer than the shortest deadline it enforces
+ * (72 hours), so nothing waits meaningfully longer than it should, and the
+ * batch cap keeps a backlog - the first run after this ships, most of all -
+ * from turning into one enormous transaction.
+ */
+const DEADLINE_SWEEP_INTERVAL_MS = 15 * 60 * 1000;
+const DEADLINE_SWEEP_BATCH = 200;
 const MAX_WEBHOOK_ATTEMPTS = 8;
 /** Cap per sweep so a backlog can't monopolise a tick. */
 const WEBHOOK_SWEEP_BATCH = 200;
@@ -238,6 +275,7 @@ interface CheckoutCart {
 export class OrdersService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(OrdersService.name);
   private webhookSweepTimer?: NodeJS.Timeout;
+  private deadlineSweepTimer?: NodeJS.Timeout;
 
   constructor(
     @Inject(DRIZZLE) private readonly db: DrizzleDB,
@@ -256,6 +294,7 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
     private readonly config: ConfigService,
     private readonly messages: MessagesService,
     private readonly shopCoupons: ShopCouponsService,
+    private readonly refunds: RefundsService,
   ) {}
 
   onModuleInit(): void {
@@ -267,10 +306,19 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
     }, WEBHOOK_SWEEP_INTERVAL_MS);
     this.webhookSweepTimer.unref();
     void this.sweepCourierWebhooks();
+
+    // The order deadlines (see order-deadlines.ts). Not run on boot: a deploy
+    // restarts this process, and a redeploy loop would otherwise mean several
+    // sweeps in quick succession racing each other over the same backlog.
+    this.deadlineSweepTimer = setInterval(() => {
+      void this.sweepOrderDeadlines();
+    }, DEADLINE_SWEEP_INTERVAL_MS);
+    this.deadlineSweepTimer.unref();
   }
 
   onModuleDestroy(): void {
     clearInterval(this.webhookSweepTimer);
+    clearInterval(this.deadlineSweepTimer);
   }
 
   /**
@@ -2015,11 +2063,28 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
     next: OrderStatus,
   ): Promise<OrderResponse> {
     const order = await this.requireOwned(shopId, id);
-    const allowedNext = STATUS_FLOW[order.status];
-    if (next !== allowedNext) {
+    if (TERMINAL_STATUSES.includes(order.status)) {
+      throw new ConflictException(
+        `Order ${order.reference} is ${order.status.toLowerCase()} and can no longer change status.`,
+      );
+    }
+    /* Inside the edit window a seller may put the order on any step they own,
+       in either direction - correcting "packed" back to "confirmed" is an
+       ordinary thing to need, and refusing it only teaches people to cancel
+       and re-key the order. Outside the window the pipeline runs forwards one
+       step at a time, as it always has. */
+    const freeToReorder =
+      withinSellerEditWindow(order.placedAt) && SELLER_SETTABLE.includes(next);
+    if (!freeToReorder && next !== STATUS_FLOW[order.status]) {
       throw new BadRequestException(
         `Cannot move an order from ${order.status} to ${next}`,
       );
+    }
+    if (next === order.status) {
+      const items = await this.db.query.orderItems.findMany({
+        where: eq(orderItems.orderId, order.id),
+      });
+      return OrderResponse.fromRow(order, items);
     }
     if (!(await this.sellerMayAdvance(order))) {
       throw new ForbiddenException(
@@ -2039,6 +2104,11 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
       .update(orders)
       .set({
         status: next,
+        // Starts the dispatch clock. Stamped once - a seller who steps an
+        // order back to 'New' and forward again inside the edit window does
+        // not get a fresh seven days out of it.
+        ...(next === 'Confirmed' &&
+          !order.confirmedAt && { confirmedAt: new Date() }),
         ...(next === 'HandedOver' && { handedOverAt: new Date() }),
         ...(codCollected && { pay: 'Paid' as const }),
       })
@@ -2666,7 +2736,7 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
    * refunded (that would subtract the money twice).
    */
   async refund(shopId: string, id: string): Promise<OrderResponse> {
-    return this.db.transaction(async (tx) => {
+    const result = await this.db.transaction(async (tx) => {
       const order = await tx.query.orders.findFirst({
         where: this.orderIdFilter(shopId, id),
       });
@@ -2681,6 +2751,13 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
       }
       if (order.status === 'Cancelled') {
         throw new ConflictException('Cancelled orders cannot be refunded');
+      }
+      // The money followed the replacement order. Refunding this one too
+      // would give back cash the shop has already spent on new goods.
+      if (order.status === 'Exchanged') {
+        throw new ConflictException(
+          'This order was exchanged - refund the replacement order instead.',
+        );
       }
       const [row] = await tx
         .update(orders)
@@ -2704,7 +2781,201 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
       const items = await tx.query.orderItems.findMany({
         where: eq(orderItems.orderId, order.id),
       });
-      return OrderResponse.fromRow(row, items);
+      return { response: OrderResponse.fromRow(row, items), orderId: order.id };
+    });
+    await this.fileRefund(
+      result.orderId,
+      `Refund for order ${result.response.id}`,
+      'seller',
+    );
+    return result.response;
+  }
+
+  /**
+   * Refunds filed against one of this shop's orders.
+   *
+   * Deliberately reports where the money *is*, not just that a refund was
+   * asked for: 'processing' means the gateway took the request and the buyer
+   * does not have it yet, which is the thing a seller answering "where is my
+   * money" actually needs to know.
+   */
+  async refundsFor(shopId: string, id: string) {
+    const order = await this.requireOwned(shopId, id);
+    const rows = await this.refunds.forOrder(order.id);
+    return rows.map((r) => ({
+      id: r.id,
+      amount: centsToDollars(r.amountCents),
+      status: r.status,
+      provider: r.provider,
+      reference: r.refundRefId ?? undefined,
+      reason: r.reason ?? undefined,
+      errorReason: r.errorReason ?? undefined,
+      initiatedBy: r.initiatedBy,
+      requestedAt: r.requestedAt.toISOString(),
+      settledAt: r.settledAt?.toISOString(),
+    }));
+  }
+
+  /**
+   * Ask the gateway for the money back, once the order has already been
+   * marked refunded and committed.
+   *
+   * Outside the transaction on purpose: filing a refund is a round trip to
+   * another company, and holding the order's row lock across it would let a
+   * slow gateway stall everything else touching that order. If it cannot be
+   * filed now the refund row survives as 'requested' and the refunds sweep
+   * retries it, so the worst case is a delay rather than a buyer who is never
+   * paid back.
+   */
+  private async fileRefund(
+    orderId: string,
+    reason: string,
+    initiatedBy: 'seller' | 'auto',
+  ): Promise<void> {
+    try {
+      await this.refunds.refundOrder(orderId, { reason, initiatedBy });
+    } catch (err) {
+      this.logger.error(
+        `Refund could not be filed for order ${orderId}: ${(err as Error).message}`,
+      );
+    }
+  }
+
+  /**
+   * Replace a delivered order with a new one for different goods.
+   *
+   * The buyer already paid; nothing is charged again and nothing is refunded.
+   * The original is stamped 'Exchanged' - it keeps its money, its place in the
+   * customer's history and its settlement - and a replacement order is raised
+   * carrying the same contact and address, already paid for, sitting on
+   * 'Confirmed' so the shop's next move is to pack it.
+   *
+   * The replacement is deliberately excluded from settlement and from the
+   * customer's lifetime spend (see `exchangedFromOrderId` in the settlements
+   * queries): the money it represents was counted once already, on the order
+   * it replaces. Counting it twice would pay the shop twice for one sale.
+   */
+  async exchange(
+    shopId: string,
+    id: string,
+    items: { productId: string; qty: number }[],
+  ): Promise<OrderResponse> {
+    if (!items.length) {
+      throw new BadRequestException('Choose at least one replacement item');
+    }
+    return this.db.transaction(async (tx) => {
+      const order = await tx.query.orders.findFirst({
+        where: this.orderIdFilter(shopId, id),
+      });
+      if (!order) throw new NotFoundException('Order not found');
+      if (order.status !== 'Delivered') {
+        throw new ConflictException(
+          'Only a delivered order can be exchanged.',
+        );
+      }
+      if (order.pay === 'Refunded') {
+        throw new ConflictException(
+          'This order was refunded - there is nothing left to exchange.',
+        );
+      }
+
+      // Price the replacement from today's catalogue, and take its stock the
+      // same guarded way checkout does.
+      let totalCents = 0;
+      let totalUnits = 0;
+      const rows: {
+        productId: string;
+        name: string;
+        qty: number;
+        unitPriceCents: number;
+      }[] = [];
+      for (const pick of items) {
+        const qty = Math.max(1, Math.floor(pick.qty));
+        const product = await tx.query.products.findFirst({
+          where: and(
+            eq(products.id, pick.productId),
+            eq(products.shopId, shopId),
+          ),
+        });
+        if (!product) {
+          throw new NotFoundException('Replacement item not found');
+        }
+        const updated = await tx
+          .update(products)
+          .set({ stock: sql`${products.stock} - ${qty}` })
+          .where(and(eq(products.id, product.id), gte(products.stock, qty)))
+          .returning({ id: products.id });
+        if (!updated.length) {
+          throw new ConflictException(
+            `Not enough stock of ${product.name} for this exchange`,
+          );
+        }
+        totalCents += product.priceCents * qty;
+        totalUnits += qty;
+        rows.push({
+          productId: product.id,
+          name: product.name,
+          qty,
+          unitPriceCents: product.priceCents,
+        });
+      }
+
+      const reference = await this.nextReference(tx, shopId);
+      const [replacement] = await tx
+        .insert(orders)
+        .values({
+          reference,
+          shopId,
+          customerId: order.customerId,
+          userId: order.userId,
+          customerName: order.customerName,
+          email: order.email,
+          phone: order.phone,
+          qty: totalUnits,
+          totalCents,
+          // The buyer paid delivery once already. An exchange the shop is
+          // sending out is not a second delivery to charge them for.
+          deliveryCents: 0,
+          status: 'Confirmed',
+          // Already settled on the original, so the replacement is born paid
+          // and the shop is never waiting on money that has already arrived.
+          pay: 'Paid',
+          paymentMethod: order.paymentMethod,
+          channel: order.channel,
+          address: order.address,
+          confirmedAt: new Date(),
+          exchangedFromOrderId: order.id,
+        })
+        .returning();
+
+      await tx.insert(orderItems).values(
+        rows.map((r) => ({
+          orderId: replacement.id,
+          productId: r.productId,
+          name: r.name,
+          qty: r.qty,
+          units: r.qty,
+          unitPriceCents: r.unitPriceCents,
+        })),
+      );
+
+      await tx
+        .update(orders)
+        .set({ status: 'Exchanged' })
+        .where(eq(orders.id, order.id));
+
+      await this.notifications.orderEvent(
+        tx,
+        replacement,
+        'order_status',
+        `Order ${replacement.reference} is your exchange for ${order.reference}`,
+        'The shop has raised a replacement order for you. Nothing more to pay - it will be packed and sent out.',
+      );
+
+      const newItems = await tx.query.orderItems.findMany({
+        where: eq(orderItems.orderId, replacement.id),
+      });
+      return OrderResponse.fromRow(replacement, newItems);
     });
   }
 
@@ -2733,7 +3004,7 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
           'This order was refunded; it can no longer be cancelled.',
         );
       }
-      const row = await this.cancelTx(tx, order);
+      const row = await this.cancelTx(tx, order, { reason: 'seller' });
       await this.notifications.orderEvent(
         tx,
         row,
@@ -2867,7 +3138,7 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
           'The shop has already started processing this order - please contact the shop to cancel it.',
         );
       }
-      const row = await this.cancelTx(tx, order);
+      const row = await this.cancelTx(tx, order, { reason: 'buyer' });
       await this.notifications.orderEvent(
         tx,
         row,
@@ -2882,15 +3153,27 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
     });
   }
 
-  /** Shared cancel core: restock, mark 'Cancelled', unwind customer stats. */
-  private async cancelTx(tx: OrdersTx, order: OrderRow): Promise<OrderRow> {
+  /**
+   * Shared cancel core: restock, mark 'Cancelled', unwind customer stats.
+   *
+   * `restock` is not always right. A parcel that has already been handed to a
+   * courier is somewhere on a van, and putting its units back on the shelf
+   * would invent inventory the shop does not have - so a cancellation that
+   * late records the cancellation and leaves the stock alone.
+   */
+  private async cancelTx(
+    tx: OrdersTx,
+    order: OrderRow,
+    opts: { reason?: CancelReason; restock?: boolean } = {},
+  ): Promise<OrderRow> {
+    const { reason, restock = true } = opts;
     const items = await tx.query.orderItems.findMany({
       where: eq(orderItems.orderId, order.id),
     });
     // Put the reserved stock back for every line that still points at a
     // live product (productId is null once a product has been deleted).
     const returns: VariantDeduction[] = [];
-    for (const item of items) {
+    for (const item of restock ? items : []) {
       if (!item.productId) continue;
       // Give back what the line actually took: `units` for anything placed
       // since that column existed, `qty` for older rows - which is also all
@@ -2924,15 +3207,164 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
     // one redemption, nor a slot from a capped code.
     await this.shopCoupons.releaseForOrder(tx, order.id);
 
+    /* Money the buyer has actually parted with comes back with the
+       cancellation, in the same breath and the same transaction. Note this
+       marks the order refunded rather than calling `refund()`: that method
+       unwinds the customer's spend on its own, and `unwindOrder` below already
+       does it - running both would subtract the same money twice. */
+    const refunding = order.pay === 'Paid';
     const [row] = await tx
       .update(orders)
-      .set({ status: 'Cancelled' })
+      .set({
+        status: 'Cancelled',
+        cancelledAt: new Date(),
+        ...(reason && { cancelReason: reason }),
+        ...(refunding && { pay: 'Refunded' as const }),
+      })
       .where(eq(orders.id, order.id))
       .returning();
     if (order.customerId) {
       await this.customers.unwindOrder(tx, order.customerId, order.totalCents);
     }
     return row;
+  }
+
+  /* ── The deadlines ────────────────────────────────────────────────
+     A shop that goes quiet used to cost the buyer their money and their
+     patience indefinitely. These sweeps are the platform declining to wait on
+     the shop's behalf past a published limit: unconfirmed for three days,
+     undispatched for a week after confirming, or undelivered for a month.
+
+     Everything here is idempotent and re-reads the order inside the
+     transaction, so two sweeps overlapping - or a seller confirming in the
+     same second - cannot cancel an order twice or refund it twice. */
+
+  /** Copy for the buyer, per clock. They are told which one ran out. */
+  private static readonly AUTO_CANCEL_COPY: Record<
+    string,
+    { title: (ref: string) => string; body: string }
+  > = {
+    auto_unconfirmed: {
+      title: (ref) => `Order ${ref} was cancelled`,
+      body: `The shop did not confirm this order within ${ORDER_DEADLINES.confirmHours} hours, so it has been cancelled`,
+    },
+    auto_undispatched: {
+      title: (ref) => `Order ${ref} was cancelled`,
+      body: `The shop did not hand this order to a courier within ${ORDER_DEADLINES.dispatchDays} days of confirming it, so it has been cancelled`,
+    },
+    auto_undelivered: {
+      title: (ref) => `Order ${ref} was cancelled`,
+      body: `This order was not delivered within ${ORDER_DEADLINES.deliverDays} days, so it has been cancelled`,
+    },
+  };
+
+  /**
+   * Cancel one overdue order and tell the buyer why. Re-checks the deadline
+   * against the freshly-read row, so an order the seller rescued between the
+   * scan and this call is left alone.
+   */
+  private async autoCancelOrder(orderId: string): Promise<boolean> {
+    const outcome = await this.db.transaction(async (tx) => {
+      const order = await tx.query.orders.findFirst({
+        where: eq(orders.id, orderId),
+      });
+      if (!order) return { cancelled: false, refund: null };
+      const due = orderDeadline(order);
+      if (!due || due.dueAt > new Date()) {
+        return { cancelled: false, refund: null };
+      }
+
+      const row = await this.cancelTx(tx, order, {
+        reason: due.reason,
+        // Past handover the goods are with the courier, not on the shelf.
+        restock: !order.handedOverAt,
+      });
+      const copy = OrdersService.AUTO_CANCEL_COPY[due.reason];
+      const refunded = order.pay === 'Paid';
+      await this.notifications.orderEvent(
+        tx,
+        row,
+        'order_cancelled',
+        copy.title(row.reference),
+        refunded
+          ? `${copy.body}. Your payment of ${formatBdt(order.totalCents)} is being refunded.`
+          : `${copy.body}. Nothing is owed.`,
+      );
+      this.logger.log(
+        `Auto-cancelled ${row.reference} (${due.reason})${refunded ? ' + refund' : ''}`,
+      );
+      return {
+        cancelled: true,
+        refund: refunded ? { id: row.id, reason: due.reason } : null,
+      };
+    });
+    // The money leaves the transaction behind: the cancellation is already
+    // durable, so a gateway that is slow or down delays the payout without
+    // putting the cancellation itself at risk.
+    if (outcome.refund) {
+      await this.fileRefund(
+        outcome.refund.id,
+        `Order cancelled automatically (${outcome.refund.reason})`,
+        'auto',
+      );
+    }
+    return outcome.cancelled;
+  }
+
+  /**
+   * Find every order past one of its deadlines and cancel it.
+   *
+   * Deliberately a scan of ids followed by one transaction each, rather than
+   * one big statement: a cancellation restocks products, releases coupons,
+   * rewrites customer aggregates and notifies a buyer, and doing that for a
+   * thousand orders under a single lock would hold half the catalogue.
+   */
+  async sweepOrderDeadlines(): Promise<number> {
+    const now = new Date();
+    const hoursAgo = (h: number) => new Date(now.getTime() - h * 3600_000);
+    const daysAgo = (d: number) => hoursAgo(d * 24);
+
+    const overdue = await this.db
+      .select({ id: orders.id })
+      .from(orders)
+      .where(
+        and(
+          notInArray(orders.status, [...TERMINAL_STATUSES]),
+          // A gateway payment still in flight belongs to the payments sweep.
+          ne(orders.pay, 'Pending'),
+          or(
+            and(
+              eq(orders.status, 'New'),
+              lt(orders.placedAt, hoursAgo(ORDER_DEADLINES.confirmHours)),
+            ),
+            and(
+              inArray(orders.status, ['Confirmed', 'Packed']),
+              isNull(orders.handedOverAt),
+              isNotNull(orders.confirmedAt),
+              lt(orders.confirmedAt, daysAgo(ORDER_DEADLINES.dispatchDays)),
+            ),
+            lt(orders.placedAt, daysAgo(ORDER_DEADLINES.deliverDays)),
+          ),
+        ),
+      )
+      .limit(DEADLINE_SWEEP_BATCH);
+
+    let cancelled = 0;
+    for (const { id } of overdue) {
+      try {
+        if (await this.autoCancelOrder(id)) cancelled++;
+      } catch (err) {
+        // One bad order must not stop the rest of the batch; it will be
+        // picked up again on the next pass.
+        this.logger.error(
+          `Auto-cancel failed for order ${id}: ${(err as Error).message}`,
+        );
+      }
+    }
+    if (cancelled) {
+      this.logger.log(`Deadline sweep cancelled ${cancelled} order(s)`);
+    }
+    return cancelled;
   }
 
   /**
@@ -2948,7 +3380,7 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
       if (!order || order.pay !== 'Pending' || order.status === 'Cancelled') {
         return;
       }
-      await this.cancelTx(tx, order);
+      await this.cancelTx(tx, order, { reason: 'payment_expired' });
     });
   }
 
