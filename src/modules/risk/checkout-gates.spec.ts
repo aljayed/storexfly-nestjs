@@ -70,18 +70,49 @@ describe('checkout identity gates', () => {
     });
   });
 
-  it('asks a repeating guest to sign in first, with the code still to come', async () => {
+  /* ── Paying up front replaces the code ──────────────────────────
+     Money before dispatch answers the question the SMS step was asking, and a
+     prepaid order that is never paid never becomes an order at all - it sits
+     Pending, is swept and restocked, and costs nobody anything. So a repeat
+     prepaid buyer is asked to sign in and nothing more. These two are the
+     rule, not an edge case: an SMS step between deciding to pay and paying is
+     friction at the worst possible moment. */
+
+  it('asks a repeating guest paying up front only to sign in', async () => {
     const risk = await riskServiceFor({ priorOrders: 1 }).assessCheckout(buyer);
     expect(risk.requireLogin).toBe(true);
-    expect(risk.requirePhoneVerification).toBe(true);
+    expect(risk.requirePhoneVerification).toBe(false);
     expect(risk.reason).toBe('repeat_contact');
   });
 
-  it('asks only for the code once the buyer is signed in', async () => {
+  it('asks nothing more of a signed-in buyer paying up front, verified or not', async () => {
     const risk = await riskServiceFor({
       priorOrders: 1,
       account: { phone: '01575802456', phoneVerified: false },
     }).assessCheckout({ ...buyer, accountId: 'acct-1' });
+    expect(risk).toEqual({
+      requireLogin: false,
+      requirePhoneVerification: false,
+      reason: 'repeat_contact',
+    });
+  });
+
+  /* ── Cash on delivery still asks, and that is the whole difference ── */
+
+  it('still asks a repeating guest for the code when it is cash on delivery', async () => {
+    const risk = await riskServiceFor({ priorOrders: 1 }).assessCheckout({
+      ...buyer,
+      cashOnDelivery: true,
+    });
+    expect(risk.requireLogin).toBe(true);
+    expect(risk.requirePhoneVerification).toBe(true);
+  });
+
+  it('still asks a signed-in unverified buyer for the code on cash on delivery', async () => {
+    const risk = await riskServiceFor({
+      priorOrders: 1,
+      account: { phone: '01575802456', phoneVerified: false },
+    }).assessCheckout({ ...buyer, accountId: 'acct-1', cashOnDelivery: true });
     expect(risk.requireLogin).toBe(false);
     expect(risk.requirePhoneVerification).toBe(true);
   });
@@ -95,9 +126,9 @@ describe('checkout identity gates', () => {
     expect(risk.requirePhoneVerification).toBe(false);
   });
 
-  // Paid up front, the code proves a person is behind the account, once. It is
-  // not re-run against the delivery number, so a gift to someone else's phone
-  // is not a reason to ask an already-verified buyer all over again.
+  // Prepaying to somebody else's number - a gift - is not a reason to ask
+  // anything either. Nothing about the delivery number is in question when the
+  // money has already moved.
   it('asks nothing of a verified account prepaying to a different number', async () => {
     const risk = await riskServiceFor({
       priorOrders: 1,
@@ -137,9 +168,9 @@ describe('checkout identity gates', () => {
     expect(risk.requirePhoneVerification).toBe(false);
   });
 
-  // The 15% advance is on the COD track but still moves real money through a
-  // gateway before dispatch, which is the assurance the code stands in for.
-  it('treats a prepaid order to an unproved number as prepaid, not COD', async () => {
+  // The 15% advance rides the COD track but still moves real money through a
+  // gateway before dispatch, so it counts as prepaid and asks for no code.
+  it('treats an advance-protected order as prepaid, not COD', async () => {
     const risk = await riskServiceFor({
       priorOrders: 1,
       account: { phone: '+8801711111111', phoneVerified: true },

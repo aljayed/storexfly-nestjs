@@ -31,12 +31,11 @@ export interface CheckoutRisk {
    * Answer an SMS code. Asked once the buyer is signed in, so the two steps
    * arrive in that order rather than at once.
    *
-   * What satisfies it depends on how the order is paid for. Money taken up
-   * front asks about the *account*: the code is proof that a real person is
-   * behind it, kept for the account's lifetime, so a verified buyer sending a
-   * gift to somebody else's phone is not asked again. Cash on delivery asks
-   * about the *delivery number*, because nothing has been collected and that
-   * number is the only handle anyone has on whoever is meant to open the door.
+   * Cash on delivery only. It asks about the *delivery number*, because
+   * nothing has been collected and that number is the only handle anyone has
+   * on whoever is meant to open the door. An order paid for before dispatch
+   * has already answered the same question with money, and one that is never
+   * paid never becomes an order at all - so it is never asked there.
    */
   requirePhoneVerification: boolean;
   /**
@@ -199,23 +198,17 @@ export class RiskService {
   /**
    * Has this account already answered the question the code step would ask?
    *
-   * For an order paid online, the question is about the account: a phone
-   * proved by OTP at some point - at checkout, or in the create-shop wizard,
-   * which write the same field - is a once-in-a-lifetime proof that a real
-   * person is behind it. The number the parcel is going to is not the point,
-   * so a verified buyer sending a gift to someone else's phone is not asked
-   * all over again. The money is what carries the risk, and it has a card or
-   * a wallet behind it.
+   * Cash on delivery only - a prepaid order never reaches here, because money
+   * before dispatch answers the same question and this step is not asked.
    *
-   * Cash on delivery narrows it to the number on the form. Nothing has been
-   * collected, the seller is about to pay a courier out of their own pocket,
-   * and an account verified against some *other* number says nothing at all
-   * about whether anyone will answer at this one. So the question becomes
-   * "is the number this parcel is going to the one this account proved?" -
-   * and when the buyer edits the autofilled number, the answer is no and they
-   * confirm the new one. Editing it is the whole reason the distinction
-   * exists: an unedited number is already the proved one and costs them
-   * nothing.
+   * The question is about the number on the form, not the account. Nothing has
+   * been collected, the seller is about to pay a courier out of their own
+   * pocket, and an account verified against some *other* number says nothing
+   * at all about whether anyone will answer at this one. So it asks "is the
+   * number this parcel is going to the one this account proved?" - and when
+   * the buyer edits the autofilled number, the answer is no and they confirm
+   * the new one. Editing it is the whole reason the check exists: an unedited
+   * number is already the proved one and costs them nothing.
    */
   private async phoneAlreadyProved(subject: CheckoutSubject): Promise<boolean> {
     const account = await this.db.query.users.findFirst({
@@ -223,7 +216,6 @@ export class RiskService {
       columns: { phone: true, phoneVerified: true },
     });
     if (!account?.phoneVerified) return false;
-    if (!subject.cashOnDelivery) return true;
     const delivery = normalizePhone(subject.phone);
     return !!delivery && normalizePhone(account.phone) === delivery;
   }
@@ -271,17 +263,35 @@ export class RiskService {
           : undefined;
     if (!reason) return none;
 
+    /* Money taken before dispatch is its own proof, so it replaces the code.
+       A prepaid order that is never actually paid never becomes an order: it
+       sits on `pay='Pending'`, is swept, cancelled and restocked, and costs
+       nobody anything. There is no repeat-order abuse to prevent, so an SMS
+       step on top of the payment is friction that buys nothing - and it is
+       friction at the worst possible moment, between a buyer deciding to pay
+       and paying. Signing in still applies: the order needs an account to
+       hang off, and an email or a Google sign-in is what establishes that.
+
+       Cash on delivery is the opposite case and keeps the code. Nothing has
+       been collected, the seller is about to pay a courier out of pocket, and
+       the delivery number is the only handle anyone has on whoever is meant
+       to open the door. */
+    const prepaid = !subject.cashOnDelivery;
+
     // Two steps, in this order. A guest is asked to sign in first - the code
     // step means little against an account that does not exist yet, and it is
     // the account that carries the proof forward to their next order.
     if (!subject.accountId) {
-      return { requireLogin: true, requirePhoneVerification: true, reason };
+      return { requireLogin: true, requirePhoneVerification: !prepaid, reason };
     }
-    // Signed in, so the code is all that is left - and only when the account
-    // has not already answered it for this order's shape (see above).
+    // Signed in, so the code is all that is left - and only when the order is
+    // one the code is actually protecting, and the account has not already
+    // answered it for this order's shape (see above).
     return {
       requireLogin: false,
-      requirePhoneVerification: !(await this.phoneAlreadyProved(subject)),
+      requirePhoneVerification: prepaid
+        ? false
+        : !(await this.phoneAlreadyProved(subject)),
       reason,
     };
   }
