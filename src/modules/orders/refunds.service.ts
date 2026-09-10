@@ -25,6 +25,15 @@ import { SslcommerzService } from '../gateways/sslcommerz.service';
  * so the record ends up truthful, not so anybody watches it happen.
  */
 const REFUND_POLL_INTERVAL_MS = 30 * 60 * 1000;
+/**
+ * How long after boot the first pass runs.
+ *
+ * An interval alone is not enough: it restarts with the process, so a project
+ * that deploys more often than the interval would never poll at all. A short
+ * delay guarantees one pass per deploy while still being long enough that a
+ * rapid redeploy - a superseded build torn down in seconds - does not fire.
+ */
+const REFUND_POLL_BOOT_DELAY_MS = 90_000;
 const REFUND_POLL_BATCH = 100;
 const REFUND_STALE_DAYS = 14;
 
@@ -58,6 +67,7 @@ export interface RefundOutcome {
 export class RefundsService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(RefundsService.name);
   private pollTimer?: NodeJS.Timeout;
+  private bootTimer?: NodeJS.Timeout;
 
   constructor(
     @Inject(DRIZZLE) private readonly db: DrizzleDB,
@@ -65,6 +75,10 @@ export class RefundsService implements OnModuleInit, OnModuleDestroy {
   ) {}
 
   onModuleInit(): void {
+    this.bootTimer = setTimeout(() => {
+      void this.sweepPendingRefunds();
+    }, REFUND_POLL_BOOT_DELAY_MS);
+    this.bootTimer.unref();
     this.pollTimer = setInterval(() => {
       void this.sweepPendingRefunds();
     }, REFUND_POLL_INTERVAL_MS);
@@ -72,6 +86,7 @@ export class RefundsService implements OnModuleInit, OnModuleDestroy {
   }
 
   onModuleDestroy(): void {
+    clearTimeout(this.bootTimer);
     clearInterval(this.pollTimer);
   }
 

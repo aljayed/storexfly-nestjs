@@ -188,6 +188,17 @@ const WEBHOOK_SWEEP_INTERVAL_MS = 5 * 60 * 1000;
  */
 const DEADLINE_SWEEP_INTERVAL_MS = 15 * 60 * 1000;
 const DEADLINE_SWEEP_BATCH = 200;
+/**
+ * How long after boot the first sweep runs.
+ *
+ * An interval restarts with the process, so on its own it means a project
+ * deploying more often than the interval never sweeps at all. A delay
+ * guarantees one pass per deploy; the length of it is what keeps a rapid
+ * redeploy - a superseded build torn down in seconds - from firing several in
+ * a row at the same backlog. Offset from the refund poll so the two do not
+ * land together on a cold start.
+ */
+const DEADLINE_SWEEP_BOOT_DELAY_MS = 45_000;
 const MAX_WEBHOOK_ATTEMPTS = 8;
 /** Cap per sweep so a backlog can't monopolise a tick. */
 const WEBHOOK_SWEEP_BATCH = 200;
@@ -276,6 +287,7 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(OrdersService.name);
   private webhookSweepTimer?: NodeJS.Timeout;
   private deadlineSweepTimer?: NodeJS.Timeout;
+  private deadlineBootTimer?: NodeJS.Timeout;
 
   constructor(
     @Inject(DRIZZLE) private readonly db: DrizzleDB,
@@ -307,9 +319,15 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
     this.webhookSweepTimer.unref();
     void this.sweepCourierWebhooks();
 
-    // The order deadlines (see order-deadlines.ts). Not run on boot: a deploy
-    // restarts this process, and a redeploy loop would otherwise mean several
-    // sweeps in quick succession racing each other over the same backlog.
+    /* The order deadlines (see order-deadlines.ts). The interval alone would
+       be a trap: it restarts with the process, so deploying more often than
+       fifteen minutes would mean deadlines were never enforced at all. The
+       delayed first pass guarantees one per deploy without letting a
+       superseded build fire one on its way out. */
+    this.deadlineBootTimer = setTimeout(() => {
+      void this.sweepOrderDeadlines();
+    }, DEADLINE_SWEEP_BOOT_DELAY_MS);
+    this.deadlineBootTimer.unref();
     this.deadlineSweepTimer = setInterval(() => {
       void this.sweepOrderDeadlines();
     }, DEADLINE_SWEEP_INTERVAL_MS);
@@ -318,6 +336,7 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
 
   onModuleDestroy(): void {
     clearInterval(this.webhookSweepTimer);
+    clearTimeout(this.deadlineBootTimer);
     clearInterval(this.deadlineSweepTimer);
   }
 
