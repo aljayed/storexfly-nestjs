@@ -98,6 +98,10 @@ import type { CancelReason } from '../../database/schema/enums';
 import { RefundsService } from './refunds.service';
 import { OrderResponse } from './dto/order.response';
 import {
+  summarizeSellerOrders,
+  type SellerOrderAttention,
+} from './seller-order-attention';
+import {
   ORDER_DEADLINES,
   TERMINAL_STATUSES,
   orderDeadline,
@@ -1948,6 +1952,33 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
     });
   }
 
+  /** Exact counts across all owned shops, independent of console pagination.
+   * Read only the active orders' clock fields, without items or buyer PII. */
+  async sellerAttention(ownerId: string): Promise<SellerOrderAttention> {
+    const rows = await this.db
+      .select({
+        id: orders.id,
+        reference: orders.reference,
+        shopId: orders.shopId,
+        shopName: shops.name,
+        status: orders.status,
+        pay: orders.pay,
+        placedAt: orders.placedAt,
+        confirmedAt: orders.confirmedAt,
+        handedOverAt: orders.handedOverAt,
+      })
+      .from(orders)
+      .innerJoin(shops, eq(orders.shopId, shops.id))
+      .where(
+        and(
+          eq(shops.ownerId, ownerId),
+          notInArray(orders.status, [...TERMINAL_STATUSES]),
+          ne(orders.pay, 'Pending'),
+        ),
+      );
+    return summarizeSellerOrders(rows);
+  }
+
   /**
    * Paginated admin list. `total` counts the filtered set; `stats` are
    * shop-wide aggregates (one grouped query) so tab counts and KPI cards
@@ -2893,9 +2924,7 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
       });
       if (!order) throw new NotFoundException('Order not found');
       if (order.status !== 'Delivered') {
-        throw new ConflictException(
-          'Only a delivered order can be exchanged.',
-        );
+        throw new ConflictException('Only a delivered order can be exchanged.');
       }
       if (order.pay === 'Refunded') {
         throw new ConflictException(

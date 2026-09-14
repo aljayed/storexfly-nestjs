@@ -17,6 +17,9 @@ import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import type { Request } from 'express';
 import { Throttle } from '@nestjs/throttler';
 import { Public } from '../../common/decorators/public.decorator';
+import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { StorefrontSession } from '../../common/decorators/storefront-session.decorator';
+import type { SellerPrincipal } from '../../common/types/principal';
 import { RequirePerm } from '../../common/decorators/roles.decorator';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { AdminJwtAuthGuard } from '../../common/guards/admin-jwt-auth.guard';
@@ -148,7 +151,11 @@ export class OrdersController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Exchange the code for a checkout email proof' })
   confirmEmail(@Body() dto: CheckoutEmailConfirmDto, @Req() req: Request) {
-    return this.emailProof.confirmCode(dto.email, dto.code, this.accountOf(req));
+    return this.emailProof.confirmCode(
+      dto.email,
+      dto.code,
+      this.accountOf(req),
+    );
   }
 
   /**
@@ -190,6 +197,19 @@ export class OrdersController {
   @ApiOperation({ summary: 'Check what a coupon code takes off this cart' })
   quoteCoupon(@Body() dto: CouponQuoteDto) {
     return this.orders.quoteCoupon(dto);
+  }
+
+  // A read of the account's own shops, using the same session as the home.
+  // The service scopes by the authenticated owner, never a supplied shop id.
+  @StorefrontSession()
+  @ApiBearerAuth()
+  @Get('seller/order-attention')
+  @ApiOperation({
+    summary:
+      'Owner: new orders and automatic cancellation deadlines across owned shops',
+  })
+  sellerAttention(@CurrentUser() user: SellerPrincipal) {
+    return this.orders.sellerAttention(user.id);
   }
 
   // ── Admin order pipeline ─────────────────────────────────────
@@ -265,10 +285,7 @@ export class OrdersController {
     summary:
       'Admin: refunds filed against an order, and where the money actually got to',
   })
-  async refundsFor(
-    @Param('shopId') shopId: string,
-    @Param('id') id: string,
-  ) {
+  async refundsFor(@Param('shopId') shopId: string, @Param('id') id: string) {
     return this.orders.refundsFor(shopId, id);
   }
 
