@@ -6,6 +6,8 @@ import { OrdersModule } from '../orders/orders.module';
 import { BuyerAuthController } from './buyer-auth.controller';
 import { BuyerOrdersController } from './buyer-orders.controller';
 import { BuyerProfileController } from './buyer-profile.controller';
+import { BuyerAddressesController } from './buyer-addresses.controller';
+import { BuyerAddressesService } from './buyer-addresses.service';
 import { BuyerService } from './buyer.service';
 
 /**
@@ -19,8 +21,9 @@ import { BuyerService } from './buyer.service';
     BuyerAuthController,
     BuyerOrdersController,
     BuyerProfileController,
+    BuyerAddressesController,
   ],
-  providers: [BuyerService],
+  providers: [BuyerService, BuyerAddressesService],
   exports: [BuyerService],
 })
 export class BuyerModule {}
