@@ -6,7 +6,7 @@ import { RolesGuard } from '../../common/guards/roles.guard';
 import { AdminJwtAuthGuard } from '../../common/guards/admin-jwt-auth.guard';
 import { ShopScopeGuard } from '../../common/guards/shop-scope.guard';
 import { CustomersService } from './customers.service';
-import { CustomerQueryDto } from './dto/customer-query.dto';
+import { CustomerListQueryDto } from './dto/customer-query.dto';
 import { MonthlyActivityQueryDto } from './dto/monthly-activity-query.dto';
 import { RepeatAnalyticsQueryDto } from './dto/repeat-analytics-query.dto';
 
@@ -21,9 +21,9 @@ export class CustomersController {
 
   @Get()
   @ApiOperation({
-    summary: 'Admin: paginated customer list (segment/q filters)',
+    summary: 'Admin: paginated customer list (segment/q/sort/quiet filters)',
   })
-  list(@Param('shopId') shopId: string, @Query() query: CustomerQueryDto) {
+  list(@Param('shopId') shopId: string, @Query() query: CustomerListQueryDto) {
     return this.customers.list(shopId, query);
   }
 
@@ -40,7 +40,9 @@ export class CustomersController {
 
   @Get('analytics/repeat')
   @RequirePerm('reports.view')
-  @ApiOperation({ summary: 'Admin: repeat-buyer report for a selected date window' })
+  @ApiOperation({
+    summary: 'Admin: repeat-buyer report for a selected date window',
+  })
   repeatAnalytics(
     @Param('shopId') shopId: string,
     @Query() query: RepeatAnalyticsQueryDto,

@@ -33,6 +33,10 @@ import { customers, orders, type CustomerRow } from '../../database/schema';
 import type { CustomerSegment } from '../../database/schema/enums';
 import { OrderResponse } from '../orders/dto/order.response';
 import { CustomerListResponse } from './dto/customer-list.response';
+import {
+  QUIET_AFTER_DAYS,
+  type CustomerListSort,
+} from './dto/customer-query.dto';
 import { CustomerResponse } from './dto/customer.response';
 import type { ActivitySort } from './dto/monthly-activity-query.dto';
 import type {
@@ -229,13 +233,23 @@ export class CustomersService {
     query: {
       segment?: CustomerSegment;
       q?: string;
+      sort?: CustomerListSort;
+      quiet?: boolean;
       page: number;
       limit: number;
       offset: number;
     },
   ): Promise<CustomerListResponse> {
+    const quietBefore = new Date(Date.now() - QUIET_AFTER_DAYS * 86_400_000);
+    // A regular who stopped coming back: the list's win-back filter and the
+    // header count share this one definition.
+    const isQuiet = and(
+      gt(customers.ordersCount, 1),
+      lt(customers.lastOrderAt, quietBefore),
+    )!;
     const conditions = [eq(customers.shopId, shopId)];
     if (query.segment) conditions.push(eq(customers.segment, query.segment));
+    if (query.quiet) conditions.push(isQuiet);
     const q = query.q?.trim();
     if (q) {
       const like = `%${q}%`;
@@ -253,7 +267,20 @@ export class CustomersService {
     const [rows, [{ total }], segmentRows, [aggr]] = await Promise.all([
       this.db.query.customers.findMany({
         where,
-        orderBy: [desc(customers.spentCents)],
+        orderBy: query.quiet
+          ? [sql`${customers.lastOrderAt} asc`, desc(customers.spentCents)]
+          : query.sort === 'recent'
+            ? [
+                sql`${customers.lastOrderAt} desc nulls last`,
+                desc(customers.id),
+              ]
+            : query.sort === 'orders'
+              ? [
+                  desc(customers.ordersCount),
+                  desc(customers.spentCents),
+                  desc(customers.id),
+                ]
+              : [desc(customers.spentCents), desc(customers.id)],
         limit: query.limit,
         offset: query.offset,
       }),
@@ -267,6 +294,7 @@ export class CustomersService {
         .select({
           returning: sql<string>`count(*) filter (where ${customers.ordersCount} > 1)`,
           avgSpentCents: sql<string>`coalesce(avg(${customers.spentCents}), 0)`,
+          quiet: sql<string>`count(*) filter (where ${isQuiet})`,
         })
         .from(customers)
         .where(eq(customers.shopId, shopId)),
@@ -287,6 +315,7 @@ export class CustomersService {
         counts,
         returning: Number(aggr.returning),
         avgLifetime: Math.round(Number(aggr.avgSpentCents)) / 100,
+        quiet: Number(aggr.quiet),
       },
     };
   }
@@ -330,7 +359,11 @@ export class CustomersService {
       const buyers = new Map<string, BuyerAcc>();
       for (const o of source) {
         if (!o.customerId) continue;
-        const acc = buyers.get(o.customerId) ?? { orders: 0, revenueCents: 0, dates: [] };
+        const acc = buyers.get(o.customerId) ?? {
+          orders: 0,
+          revenueCents: 0,
+          dates: [],
+        };
         acc.orders += 1;
         acc.revenueCents += o.totalCents;
         acc.dates.push(o.placedAt);
@@ -338,7 +371,10 @@ export class CustomersService {
       }
       const repeat = [...buyers].filter(([, b]) => b.orders >= 2);
       const revenueCents = source.reduce((n, o) => n + o.totalCents, 0);
-      const repeatRevenueCents = repeat.reduce((n, [, b]) => n + b.revenueCents, 0);
+      const repeatRevenueCents = repeat.reduce(
+        (n, [, b]) => n + b.revenueCents,
+        0,
+      );
       return { buyers, repeat, revenueCents, repeatRevenueCents };
     };
     const cur = group(current);
@@ -347,7 +383,8 @@ export class CustomersService {
     const gaps: number[] = [];
     for (const [, b] of cur.repeat) {
       const dates = [...b.dates].sort((a, z) => a.getTime() - z.getTime());
-      for (let i = 1; i < dates.length; i++) gaps.push((dates[i].getTime() - dates[i - 1].getTime()) / 86_400_000);
+      for (let i = 1; i < dates.length; i++)
+        gaps.push((dates[i].getTime() - dates[i - 1].getTime()) / 86_400_000);
     }
     const averageDaysBetween = gaps.length
       ? Math.round(gaps.reduce((a, b) => a + b, 0) / gaps.length)
@@ -365,7 +402,9 @@ export class CustomersService {
 
     const ids = [...cur.buyers.keys()];
     const customerRows = ids.length
-      ? await this.db.query.customers.findMany({ where: inArray(customers.id, ids) })
+      ? await this.db.query.customers.findMany({
+          where: inArray(customers.id, ids),
+        })
       : [];
     const byId = new Map(customerRows.map((c) => [c.id, c]));
     const topCustomers = [...cur.repeat]
@@ -376,7 +415,9 @@ export class CustomersService {
         windowOrders: b.orders,
         windowSpent: centsToDollars(b.revenueCents),
         averageOrder: centsToDollars(Math.round(b.revenueCents / b.orders)),
-        lastOrder: new Date(Math.max(...b.dates.map((d) => d.getTime()))).toISOString(),
+        lastOrder: new Date(
+          Math.max(...b.dates.map((d) => d.getTime())),
+        ).toISOString(),
       }))
       .filter((r) => r.customer);
 
@@ -434,7 +475,10 @@ export class CustomersService {
               pctOf(prev.repeat.length, prev.buyers.size)) *
               10,
           ) / 10,
-        repeatRevenue: pctChange(cur.repeatRevenueCents, prev.repeatRevenueCents),
+        repeatRevenue: pctChange(
+          cur.repeatRevenueCents,
+          prev.repeatRevenueCents,
+        ),
       },
       frequencyBands,
       winBack: await this.winBackCandidates(shopId, averageDaysBetween),

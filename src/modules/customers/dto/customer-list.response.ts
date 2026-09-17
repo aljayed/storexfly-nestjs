@@ -9,6 +9,11 @@ export class CustomerListStatsResponse {
   returning!: number;
   @ApiProperty({ description: 'Average lifetime spend (major units)' })
   avgLifetime!: number;
+  @ApiProperty({
+    description:
+      'Repeat buyers with no order in the last 60 days - worth a call',
+  })
+  quiet!: number;
 }
 
 /** Paginated admin customer list. `total` counts rows matching the filters. */
