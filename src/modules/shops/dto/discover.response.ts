@@ -2,7 +2,7 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import type { ListingType } from '../../../database/schema/enums';
 
 /**
- * Public marketplace feed (the logged-in home for users without a shop).
+ * Public marketplace catalogue, shared by guests and signed-in buyers.
  * Deliberately lean: shop cards skip the banner-image payloads and product
  * cards carry only the cover image, so the feed stays a light request.
  */
@@ -16,6 +16,8 @@ export class DiscoverShopResponse {
 }
 
 export class DiscoverProductResponse {
+  @ApiProperty() id!: string;
+  @ApiProperty() category!: string;
   @ApiProperty() name!: string;
   @ApiProperty() slug!: string;
   @ApiProperty({
@@ -29,6 +31,8 @@ export class DiscoverProductResponse {
       'Unit price in the shop currency (0 on a showcase item = "contact for price")',
   })
   price!: number;
+  @ApiPropertyOptional({ description: 'Actual regular price, when higher than the selling price' })
+  comparePrice?: number;
   @ApiProperty() unit!: string;
   @ApiProperty() stock!: number;
   @ApiProperty() emoji!: string;
@@ -44,9 +48,20 @@ export class DiscoverProductResponse {
   currency!: string;
 }
 
+export class DiscoverCategoryResponse {
+  @ApiProperty() name!: string;
+  @ApiProperty() count!: number;
+}
+
 export class DiscoverResponse {
   @ApiProperty({ type: [DiscoverShopResponse] })
   shops!: DiscoverShopResponse[];
   @ApiProperty({ type: [DiscoverProductResponse] })
   products!: DiscoverProductResponse[];
+  @ApiProperty({ type: [DiscoverCategoryResponse] })
+  categories!: DiscoverCategoryResponse[];
+  @ApiProperty() total!: number;
+  @ApiProperty() page!: number;
+  @ApiProperty() limit!: number;
+  @ApiProperty() hasMore!: boolean;
 }

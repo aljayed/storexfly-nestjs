@@ -78,6 +78,7 @@ export class SeoController {
     const now = new Date();
     const entries = [
       url(`${webUrl}/`, now, '0.5'),
+      url(`${webUrl}/sellers`, now, '0.5'),
       // The company and policy pages. They rank for nothing, but a payment
       // gateway's onboarding review - and anyone checking who is behind a
       // shop - looks for them, and an SPA gives a crawler no other way to

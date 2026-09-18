@@ -10,6 +10,9 @@ import {
 } from '@nestjs/common';
 import {
   and,
+  asc,
+  gt,
+  ilike,
   count,
   desc,
   eq,
@@ -62,11 +65,12 @@ import { KycResponse } from './dto/kyc.response';
 import { kycSubmissionPatch } from './kyc-submission';
 import { ShopResponse } from './dto/shop.response';
 import { DiscoverResponse } from './dto/discover.response';
+import { DiscoverQuery } from './dto/discover.query';
 import type { UpdateShopDto } from './dto/update-shop.dto';
 
 const FEATURED_LIMIT = 8;
-// Cards per section on the public marketplace feed (logged-in no-shop home).
-const DISCOVER_LIMIT = 12;
+// Shop introductions below the public product catalogue.
+const DISCOVER_SHOPS = 6;
 
 // EmailOtpService namespace for the delete-shop confirmation codes.
 const DELETE_OTP_SCOPE = 'shop-delete';
@@ -364,12 +368,27 @@ export class ShopsService {
    * image travels per product; the full data-URL arrays would put megabytes
    * on what should be a light feed.
    */
-  async discover(): Promise<DiscoverResponse> {
-    const [shopRows, productRows] = await Promise.all([
+  async discover(query: DiscoverQuery = new DiscoverQuery()): Promise<DiscoverResponse> {
+    const { q, category: selectedCategory, availability, sort, page, limit } = query;
+    const category = sql<string>`coalesce(nullif(trim(${products.cat}), ''), ${shops.cat}::text)`;
+    // Literal wildcard characters are searchable; never let a typed '%' turn
+    // into an unbounded wildcard or interpolate user input into SQL syntax.
+    const term = q ? `%${q.replace(/[\\%_]/g, '\\$&')}%` : undefined;
+    const where = and(
+      eq(shops.live, true),
+      term ? or(ilike(products.name, term), ilike(category, term), ilike(shops.name, term), ilike(shops.handle, term)) : undefined,
+      selectedCategory ? eq(category, selectedCategory) : undefined,
+      availability === 'stock' ? and(eq(products.listingType, 'sale'), gt(products.stock, 0)) : undefined,
+      availability === 'showcase' ? eq(products.listingType, 'showcase') : undefined,
+    );
+    const order = sort === 'rating'
+      ? [desc(products.rating), desc(products.reviewsCount), desc(products.createdAt), desc(products.id)]
+      : [desc(products.createdAt), desc(products.id)];
+    const [shopRows, productRows, totals, categories] = await Promise.all([
       this.db.query.shops.findMany({
         where: eq(shops.live, true),
         orderBy: [desc(shops.createdAt)],
-        limit: DISCOVER_LIMIT,
+        limit: DISCOVER_SHOPS,
         columns: {
           name: true,
           handle: true,
@@ -381,10 +400,13 @@ export class ShopsService {
       }),
       this.db
         .select({
+          id: products.id,
+          category,
           name: products.name,
           slug: products.slug,
           listingType: products.listingType,
           priceCents: products.priceCents,
+          comparePriceCents: products.comparePriceCents,
           unit: products.unit,
           stock: products.stock,
           emoji: products.emoji,
@@ -399,17 +421,31 @@ export class ShopsService {
         })
         .from(products)
         .innerJoin(shops, eq(products.shopId, shops.id))
-        .where(eq(shops.live, true))
-        .orderBy(desc(products.createdAt))
-        .limit(DISCOVER_LIMIT),
+        .where(where)
+        .orderBy(...order)
+        .limit(limit)
+        .offset((page - 1) * limit),
+      this.db.select({ total: count() }).from(products)
+        .innerJoin(shops, eq(products.shopId, shops.id)).where(where),
+      // Global categories stay available even when a search has no matches.
+      this.db.select({ name: category, count: count() }).from(products)
+        .innerJoin(shops, eq(products.shopId, shops.id))
+        .where(eq(shops.live, true)).groupBy(category)
+        .orderBy(desc(count()), asc(category)),
     ]);
+    const total = totals[0]?.total ?? 0;
     return {
+      total, page, limit, hasMore: page * limit < total, categories,
       shops: shopRows.map((s) => ({ ...s, tagline: s.tagline ?? undefined })),
       products: productRows.map((p) => ({
+        id: p.id,
+        category: p.category,
         name: p.name,
         slug: p.slug,
         listingType: p.listingType,
         price: centsToDollars(p.priceCents),
+        comparePrice: p.listingType === 'sale' && p.comparePriceCents && p.comparePriceCents > p.priceCents
+          ? centsToDollars(p.comparePriceCents) : undefined,
         unit: p.unit,
         stock: p.stock,
         emoji: p.emoji,

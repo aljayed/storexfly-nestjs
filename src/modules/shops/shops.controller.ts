@@ -30,6 +30,7 @@ import { CreateShopDto } from './dto/create-shop.dto';
 import { DeleteShopDto } from './dto/delete-shop.dto';
 import { PayoutBankDto } from './dto/payout-bank.dto';
 import { DiscoverResponse } from './dto/discover.response';
+import { DiscoverQuery } from './dto/discover.query';
 import { SubmitKycDto } from './dto/kyc.dto';
 import { KycResponse } from './dto/kyc.response';
 import { ShopResponse } from './dto/shop.response';
@@ -66,11 +67,11 @@ export class ShopsController {
   @Public()
   @Get('discover')
   @ApiOperation({
-    summary: 'Public marketplace feed (live shops + newest products)',
+    summary: 'Public marketplace: search, categories, availability and paginated products',
   })
   @ApiOkResponse({ type: DiscoverResponse })
-  discover() {
-    return this.shops.discover();
+  discover(@Query() query: DiscoverQuery) {
+    return this.shops.discover(query);
   }
 
   // Not @StorefrontSession(): opening a shop is the line between shopping and
