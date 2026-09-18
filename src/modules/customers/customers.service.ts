@@ -21,11 +21,14 @@ import { centsToDollars } from '../../common/utils/money.util';
 import { productLines } from '../../common/utils/order-line.util';
 import {
   buildBuckets,
+  addDays,
   isoDate,
   pctChange,
   pctOf,
   resolveWindow,
   startOfDay,
+  startOfMonth,
+  zonedParts,
 } from '../../common/utils/report-window.util';
 import { DRIZZLE } from '../../database/database.constants';
 import type { DbExecutor, DrizzleDB } from '../../database/drizzle.types';
@@ -76,9 +79,10 @@ const MONTH_LABELS = [
   'Dec',
 ];
 
-/** Local calendar month bucket key, "YYYY-MM" (same convention as reports). */
+/** Calendar month bucket key, "YYYY-MM", on the seller's calendar. */
 function monthKey(d: Date): string {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+  const p = zonedParts(d);
+  return `${p.year}-${String(p.month).padStart(2, '0')}`;
 }
 
 @Injectable()
@@ -335,9 +339,7 @@ export class CustomersService {
    */
   async repeatAnalytics(shopId: string, fromIso?: string, toIso?: string) {
     const win = resolveWindow(fromIso, toIso, (now) => {
-      const d = startOfDay(now);
-      d.setDate(d.getDate() - 29);
-      return d;
+      return addDays(startOfDay(now), -29);
     });
     const rows = await this.db.query.orders.findMany({
       where: and(
@@ -557,23 +559,16 @@ export class CustomersService {
     },
   ): Promise<MonthlyActivityResponse> {
     const now = new Date();
-    const windowStart = new Date(
-      now.getFullYear(),
-      now.getMonth() - (query.months - 1),
-      1,
-    );
+    const windowStart = startOfMonth(now, -(query.months - 1));
 
     const months: ActivityMonthResponse[] = [];
     for (let i = 0; i < query.months; i++) {
-      const d = new Date(
-        windowStart.getFullYear(),
-        windowStart.getMonth() + i,
-        1,
-      );
+      const d = startOfMonth(windowStart, i);
+      const p = zonedParts(d);
       months.push({
         key: monthKey(d),
-        label: MONTH_LABELS[d.getMonth()],
-        year: d.getFullYear(),
+        label: MONTH_LABELS[p.month - 1],
+        year: p.year,
       });
     }
 

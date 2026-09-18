@@ -3,12 +3,105 @@
  * its range the same way, so the dashboard, the insights report and the
  * retention report can never disagree about what "last 30 days" means.
  *
- * Date-only bounds ("2026-05-01") are inclusive calendar dates in server-local
- * time; bounds carrying a time part ("2026-05-01T14:00:00Z", used by the
- * "last 24 hours" preset) are exact instants with `to` exclusive.
+ * Date-only bounds ("2026-05-01") are inclusive calendar dates in the shop's
+ * calendar (see `REPORT_TIME_ZONE`); bounds carrying a time part
+ * ("2026-05-01T14:00:00Z", used by the "last 24 hours" preset) are exact
+ * instants with `to` exclusive.
+ *
+ * ## Why days are not the server's days
+ *
+ * Production runs in UTC, so "today" used to begin at 6am in Dhaka: an order
+ * taken at 5am counted towards yesterday, and the dashboard could show "৳0
+ * today" while the last-24-hours tile showed the sale. A report is read on the
+ * seller's calendar, so every day, month and bucket boundary here is resolved
+ * in `REPORT_TIME_ZONE` rather than in whatever zone the process happens to
+ * run in. Set REPORTS_TIMEZONE to move the whole console to another market.
  */
 
 export type Granularity = 'hour' | 'day' | 'month';
+
+/** The calendar every report is read on. Same default as the rest of the app. */
+export const REPORT_TIME_ZONE =
+  process.env.REPORTS_TIMEZONE?.trim() || 'Asia/Dhaka';
+
+const ZONE_PARTS = new Intl.DateTimeFormat('en-US', {
+  timeZone: REPORT_TIME_ZONE,
+  hour12: false,
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+  hour: '2-digit',
+  minute: '2-digit',
+  second: '2-digit',
+});
+
+export interface ZonedParts {
+  year: number;
+  /** 1-12, as people write months. */
+  month: number;
+  day: number;
+  hour: number;
+  minute: number;
+  second: number;
+}
+
+/** An instant as the wall clock reads it in the report timezone. */
+export function zonedParts(at: Date): ZonedParts {
+  const found: Record<string, number> = {};
+  for (const part of ZONE_PARTS.formatToParts(at)) {
+    if (part.type !== 'literal') found[part.type] = Number(part.value);
+  }
+  return {
+    year: found.year,
+    month: found.month,
+    day: found.day,
+    // Midnight comes back as 24 from some ICU builds.
+    hour: found.hour % 24,
+    minute: found.minute,
+    second: found.second,
+  };
+}
+
+/** How far ahead of UTC the zone is at that instant, in milliseconds. */
+function zoneOffsetMs(at: Date): number {
+  const p = zonedParts(at);
+  const asUtc = Date.UTC(
+    p.year,
+    p.month - 1,
+    p.day,
+    p.hour,
+    p.minute,
+    p.second,
+  );
+  return asUtc - Math.floor(at.getTime() / 1000) * 1000;
+}
+
+/**
+ * The instant a wall-clock time in the report timezone happens. Month and day
+ * overflow the way `Date.UTC` allows, so callers can add to either.
+ *
+ * The offset is applied twice on purpose: the first guess uses the offset at
+ * the wrong instant, which is only visible across a DST change (not in Dhaka,
+ * but this utility is the one place another market would go through).
+ */
+export function zonedTime(
+  year: number,
+  month: number,
+  day: number,
+  hour = 0,
+  minute = 0,
+  second = 0,
+): Date {
+  const wall = Date.UTC(year, month - 1, day, hour, minute, second);
+  const first = new Date(wall - zoneOffsetMs(new Date(wall)));
+  return new Date(wall - zoneOffsetMs(first));
+}
+
+/** Midnight that begins the calendar month `delta` months from `at`. */
+export function startOfMonth(at: Date, delta = 0): Date {
+  const p = zonedParts(at);
+  return zonedTime(p.year, p.month + delta, 1);
+}
 
 export interface ReportWindow {
   /** Inclusive start of the selected window. */
@@ -53,7 +146,7 @@ export function resolveWindow(
   const from = fromIso
     ? hasTimePart(fromIso)
       ? new Date(fromIso)
-      : startOfDay(new Date(fromIso))
+      : calendarDate(fromIso)
     : fallbackFrom(now);
 
   let toInclusive: Date;
@@ -62,7 +155,7 @@ export function resolveWindow(
     end = new Date(toIso);
     toInclusive = end;
   } else {
-    toInclusive = toIso ? startOfDay(new Date(toIso)) : startOfDay(now);
+    toInclusive = toIso ? calendarDate(toIso) : startOfDay(now);
     end = addDays(toInclusive, 1);
   }
 
@@ -99,7 +192,7 @@ export function buildBuckets(win: ReportWindow): SeriesBucket[] {
       cursor = addHours(cursor, 1)
     ) {
       buckets.push({
-        label: `${String(cursor.getHours()).padStart(2, '0')}:00`,
+        label: `${String(zonedParts(cursor).hour).padStart(2, '0')}:00`,
         from: cursor,
         to: addHours(cursor, 1),
       });
@@ -113,7 +206,7 @@ export function buildBuckets(win: ReportWindow): SeriesBucket[] {
       cursor = addDays(cursor, 1)
     ) {
       buckets.push({
-        label: `${cursor.getDate()} ${MONTH_LABELS[cursor.getMonth()]}`,
+        label: `${zonedParts(cursor).day} ${MONTH_LABELS[zonedParts(cursor).month - 1]}`,
         from: cursor,
         to: addDays(cursor, 1),
       });
@@ -121,14 +214,14 @@ export function buildBuckets(win: ReportWindow): SeriesBucket[] {
     return buckets;
   }
   for (
-    let cursor = new Date(win.from.getFullYear(), win.from.getMonth(), 1);
+    let cursor = startOfMonth(win.from);
     cursor < win.end && buckets.length < 36;
-    cursor = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1)
+    cursor = startOfMonth(cursor, 1)
   ) {
     buckets.push({
-      label: MONTH_LABELS[cursor.getMonth()],
+      label: MONTH_LABELS[zonedParts(cursor).month - 1],
       from: cursor,
-      to: new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1),
+      to: startOfMonth(cursor, 1),
     });
   }
   return buckets;
@@ -157,29 +250,40 @@ export function hasTimePart(iso: string): boolean {
   return iso.includes('T');
 }
 
+/** A date-only bound ("2026-05-01") as midnight in the report timezone. */
+export function calendarDate(iso: string): Date {
+  const [year, month, day] = iso.slice(0, 10).split('-').map(Number);
+  return Number.isFinite(year) && Number.isFinite(month) && Number.isFinite(day)
+    ? zonedTime(year, month, day)
+    : startOfDay(new Date(iso));
+}
+
 export function startOfDay(d: Date): Date {
-  return new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  const p = zonedParts(d);
+  return zonedTime(p.year, p.month, p.day);
 }
 
 export function startOfHour(d: Date): Date {
-  return new Date(d.getFullYear(), d.getMonth(), d.getDate(), d.getHours());
+  const p = zonedParts(d);
+  return zonedTime(p.year, p.month, p.day, p.hour);
 }
 
 export function addHours(d: Date, hours: number): Date {
   return new Date(d.getTime() + hours * 3_600_000);
 }
 
+/** Calendar-day arithmetic in the report timezone, keeping the wall clock. */
 export function addDays(d: Date, days: number): Date {
-  const next = new Date(d);
-  next.setDate(next.getDate() + days);
-  return next;
+  const p = zonedParts(d);
+  return zonedTime(p.year, p.month, p.day + days, p.hour, p.minute, p.second);
 }
 
-/** Local calendar date as "YYYY-MM-DD" (not UTC - buckets are local days). */
+/** Calendar date as "YYYY-MM-DD", on the seller's calendar. */
 export function isoDate(d: Date): string {
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${d.getFullYear()}-${m}-${day}`;
+  const p = zonedParts(d);
+  const m = String(p.month).padStart(2, '0');
+  const day = String(p.day).padStart(2, '0');
+  return `${p.year}-${m}-${day}`;
 }
 
 /** Percentage of `total`, one decimal place. 0 when there is no denominator. */
@@ -189,6 +293,7 @@ export function pctOf(part: number, total: number): number {
 
 /** Period-over-period change as a percentage, one decimal place. */
 export function pctChange(current: number, previous: number): number {
-  if (previous > 0) return Math.round(((current - previous) / previous) * 1000) / 10;
+  if (previous > 0)
+    return Math.round(((current - previous) / previous) * 1000) / 10;
   return current > 0 ? 100 : 0;
 }

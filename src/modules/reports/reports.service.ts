@@ -30,12 +30,14 @@ import type {
   SalesInsightResponse,
 } from './dto/insights.response';
 import {
+  addDays,
   buildBuckets,
   bucketIndex,
   isoDate,
   pctOf,
   resolveWindow,
   startOfDay,
+  startOfMonth,
   type ReportWindow,
 } from '../../common/utils/report-window.util';
 
@@ -114,7 +116,12 @@ const INSIGHT_COLUMNS = {
 } as const;
 
 type InsightOrder = Pick<OrderRow, keyof typeof INSIGHT_COLUMNS> & {
-  items: { productId: string | null; name: string; qty: number; unitPriceCents: number }[];
+  items: {
+    productId: string | null;
+    name: string;
+    qty: number;
+    unitPriceCents: number;
+  }[];
 };
 
 @Injectable()
@@ -135,11 +142,7 @@ export class ReportsService {
     toIso?: string,
   ): Promise<DashboardResponse> {
     await this.shops.requireById(shopId);
-    const win = resolveWindow(
-      fromIso,
-      toIso,
-      (now) => new Date(now.getFullYear(), now.getMonth() - 11, 1),
-    );
+    const win = resolveWindow(fromIso, toIso, (now) => startOfMonth(now, -11));
     const rows = await this.db.query.orders.findMany({
       where: eq(orders.shopId, shopId),
       columns: { totalCents: true, qty: true, pay: true, placedAt: true },
@@ -212,9 +215,7 @@ export class ReportsService {
   ): Promise<InsightsResponse> {
     await this.shops.requireById(shopId);
     const win = resolveWindow(fromIso, toIso, (now) => {
-      const d = startOfDay(now);
-      d.setDate(d.getDate() - 29);
-      return d;
+      return addDays(startOfDay(now), -29);
     });
 
     // `Pending` is a gateway payment still in flight: hidden from the seller
@@ -259,7 +260,9 @@ export class ReportsService {
     const current = rows.filter(
       (o) => o.placedAt >= win.from && o.placedAt < win.end,
     ) as InsightOrder[];
-    const previous = rows.filter((o) => o.placedAt < win.from) as InsightOrder[];
+    const previous = rows.filter(
+      (o) => o.placedAt < win.from,
+    ) as InsightOrder[];
 
     const methodTitles = new Map(methodRows.map((m) => [m.code, m.title]));
 
@@ -489,13 +492,16 @@ export class ReportsService {
     const funnel: FunnelStageResponse[] = FUNNEL_STAGES.map(
       ({ stage, rank }, i) => {
         const reached =
-          i === 0 ? current : current.filter((o) => STAGE_RANK[o.status] >= rank);
+          i === 0
+            ? current
+            : current.filter((o) => STAGE_RANK[o.status] >= rank);
         const row: FunnelStageResponse = {
           stage,
           orders: reached.length,
           value: centsToDollars(reached.reduce((n, o) => n + o.totalCents, 0)),
           pctOfPlaced: pctOf(reached.length, placed),
-          droppedFromPrevious: i === 0 ? 0 : Math.max(0, carried - reached.length),
+          droppedFromPrevious:
+            i === 0 ? 0 : Math.max(0, carried - reached.length),
         };
         carried = reached.length;
         return row;
@@ -516,7 +522,8 @@ export class ReportsService {
         oldestDays: stageRows.length
           ? Math.floor(ageDays(stageRows[0].placedAt))
           : 0,
-        overdue: stageRows.filter((o) => ageDays(o.placedAt) > targetDays).length,
+        overdue: stageRows.filter((o) => ageDays(o.placedAt) > targetDays)
+          .length,
         targetDays,
       };
     });

@@ -11,6 +11,7 @@ import {
   feeCents,
   type SettlementStatus,
 } from './settlement.constants';
+import { zonedParts, zonedTime } from '../../common/utils/report-window.util';
 
 /**
  * Pure settlement math shared by SettlementsService and the delete-shop
@@ -134,10 +135,18 @@ export function payoutCents(core: MonthCore): number {
   return core.online.reduce((sum, m) => sum + m.cents - m.feeCents, 0);
 }
 
-/* ── Calendar helpers (server-local months, matching the dashboard) ─ */
+/* ── Calendar helpers (the seller's months, matching the dashboard) ─ */
 
 export function periodOf(d: Date): string {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+  const p = zonedParts(d);
+  return `${p.year}-${String(p.month).padStart(2, '0')}`;
+}
+
+/** "YYYY-MM" plus a number of months, as plain calendar arithmetic. */
+function shiftPeriod(period: string, months: number): string {
+  const [y, m] = period.split('-').map(Number);
+  const zero = y * 12 + (m - 1) + months;
+  return `${Math.floor(zero / 12)}-${String((zero % 12) + 1).padStart(2, '0')}`;
 }
 
 export function currentPeriod(): string {
@@ -145,22 +154,23 @@ export function currentPeriod(): string {
 }
 
 export function previousPeriod(period: string): string {
-  const [y, m] = period.split('-').map(Number);
-  return periodOf(new Date(y, m - 2, 1));
+  return shiftPeriod(period, -1);
 }
 
-/** [start, end) instants of one "YYYY-MM" month in server-local time. */
+/**
+ * [start, end) instants of one "YYYY-MM" month on the seller's calendar. A
+ * sale made at 1am on the 1st belongs to the month the seller made it in, not
+ * to the previous one because the server happens to run in UTC.
+ */
 export function monthRange(period: string): [Date, Date] {
   const [y, m] = period.split('-').map(Number);
-  return [new Date(y, m - 1, 1), new Date(y, m, 1)];
+  return [zonedTime(y, m, 1), zonedTime(y, m + 1, 1)];
 }
 
 /** The 15th-21st payout window in the month after the earnings month. */
 export function windowOf(period: string): { from: string; to: string } {
-  const [y, m] = period.split('-').map(Number);
-  const next = new Date(y, m, 1); // first day of the following month
-  const iso = (day: number) =>
-    `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+  const next = shiftPeriod(period, 1); // the following month
+  const iso = (day: number) => `${next}-${String(day).padStart(2, '0')}`;
   return {
     from: iso(SETTLEMENT_WINDOW_START_DAY),
     to: iso(SETTLEMENT_WINDOW_END_DAY),
