@@ -249,7 +249,7 @@ export class OrdersController {
     @Param('id') id: string,
     @Body() dto: UpdateOrderStatusDto,
   ) {
-    return this.orders.updateStatus(shopId, id, dto.status);
+    return this.orders.updateStatus(shopId, id, dto.status, dto);
   }
 
   @Public()

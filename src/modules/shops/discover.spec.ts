@@ -15,7 +15,7 @@ function harness(productRows: unknown[][] = [], total = 0) {
     if (sql.includes('inner join')) return { rows: productRows };
     return { rows: [] };
   }, { schema });
-  const service = new ShopsService(db as unknown as DrizzleDB, {} as never, {} as never, {} as never, {} as never, {} as never);
+  const service = new ShopsService(db as unknown as DrizzleDB, {} as never, {} as never, {} as never, {} as never, {} as never, {} as never);
   return { service, queries };
 }
 

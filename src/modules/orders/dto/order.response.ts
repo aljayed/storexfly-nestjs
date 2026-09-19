@@ -141,6 +141,8 @@ export class OrderResponse {
     description: 'Courier that booked the parcel (absent = none yet)',
   })
   courierProvider?: string;
+  @ApiPropertyOptional({ enum: ['manual', 'carrybee'] }) deliveryMode?: 'manual' | 'carrybee';
+  @ApiPropertyOptional() courierBookingState?: string;
   @ApiPropertyOptional({ description: 'Courier consignment id' })
   courierConsignmentId?: string;
   @ApiPropertyOptional({ description: 'Courier tracking code' })
@@ -211,6 +213,8 @@ export class OrderResponse {
       delivery: centsToDollars(row.deliveryCents),
       couponCode: row.couponCode ?? undefined,
       discount: centsToDollars(row.discountCents),
+      deliveryMode: row.deliveryMode ?? undefined,
+      courierBookingState: row.courierBookingState ?? undefined,
       courierProvider:
         row.courierProvider ??
         (row.courierConsignmentId ? 'steadfast' : undefined),

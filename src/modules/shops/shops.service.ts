@@ -55,6 +55,7 @@ import {
 import { isUniqueViolationOn } from '../../common/utils/postgres-error.util';
 import { EmailOtpService } from '../auth/email-otp.service';
 import { BlockedWordsService } from '../blocked-words/blocked-words.service';
+import { ShopDeliveryService } from './shop-delivery.service';
 import { ShopCourierStoresService } from '../gateways/shop-courier-stores.service';
 import { StorageService } from '../storage/storage.service';
 import { ProductResponse } from '../products/dto/product.response';
@@ -135,6 +136,7 @@ export class ShopsService {
     private readonly storage: StorageService,
     private readonly emailOtp: EmailOtpService,
     private readonly courierStores: ShopCourierStoresService,
+    private readonly delivery: ShopDeliveryService,
   ) {}
 
   /**
@@ -218,6 +220,7 @@ export class ShopsService {
     if (await this.handleTakenByOther(handle, ownerId)) {
       throw ShopsService.handleTaken();
     }
+    await this.delivery.validate(dto);
     const swatch = BRAND_SWATCHES[dto.brandId];
     const values: NewShopRow = {
       name: dto.name,
@@ -225,6 +228,14 @@ export class ShopsService {
       tagline: dto.tagline,
       supportEmail: dto.supportEmail,
       supportPhone: dto.supportPhone,
+      deliveryMode: dto.deliveryMode,
+      pickupDistrict: dto.pickupDistrict,
+      pickupContactName: dto.pickupContactName,
+      pickupPhone: dto.pickupPhone,
+      pickupAddress: dto.pickupAddress,
+      pickupCityId: dto.pickupCityId,
+      pickupZoneId: dto.pickupZoneId,
+      pickupAreaId: dto.pickupAreaId,
       cat: dto.cat,
       brandId: dto.brandId,
       brand: swatch.c,
@@ -243,7 +254,7 @@ export class ShopsService {
       await this.subscriptionsService.openForNewShop(ownerId, created.id, tx);
       return created;
     });
-    return ShopResponse.fromRow(row);
+    return ShopResponse.fromRowForConsole(row);
   }
 
   /**
@@ -545,6 +556,16 @@ export class ShopsService {
     if (dto.requireBuyerLogin !== undefined) {
       patch.requireBuyerLogin = dto.requireBuyerLogin;
     }
+    const deliveryKeys = ['deliveryMode', 'pickupDistrict', 'pickupContactName', 'pickupPhone', 'pickupAddress', 'pickupCityId', 'pickupZoneId', 'pickupAreaId'] as const;
+    if (deliveryKeys.some(key => dto[key] !== undefined)) {
+      await this.delivery.validate({ ...current, ...dto, deliveryMode: dto.deliveryMode ?? current.deliveryMode ?? undefined,
+        pickupDistrict: dto.pickupDistrict ?? current.pickupDistrict ?? undefined,
+        pickupContactName: dto.pickupContactName ?? current.pickupContactName ?? undefined,
+        pickupPhone: dto.pickupPhone ?? current.pickupPhone ?? undefined,
+        pickupAddress: dto.pickupAddress ?? current.pickupAddress ?? undefined });
+    }
+    if (dto.deliveryMode !== undefined) patch.deliveryMode = dto.deliveryMode;
+    if (dto.pickupDistrict !== undefined) patch.pickupDistrict = dto.pickupDistrict;
     // Pickup address. Empty clears, same as the support contacts.
     if (dto.pickupContactName !== undefined) {
       patch.pickupContactName = dto.pickupContactName.trim() || null;
@@ -561,11 +582,9 @@ export class ShopsService {
     // A pickup store is registered with the courier from this address and
     // cannot be re-addressed through their API, so a seller who moves needs a
     // fresh one. Dropping the cached id makes the next booking register it.
-    const movedPickup =
-      dto.pickupAddress !== undefined ||
-      dto.pickupCityId !== undefined ||
-      dto.pickupZoneId !== undefined ||
-      dto.pickupAreaId !== undefined;
+    const movedPickup = deliveryKeys.filter(key => key !== 'deliveryMode').some(
+      key => dto[key] !== undefined && dto[key] !== current[key],
+    );
     if (dto.brandId) {
       const swatch = BRAND_SWATCHES[dto.brandId];
       patch.brandId = dto.brandId;

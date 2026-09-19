@@ -6,6 +6,7 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  ServiceUnavailableException,
   type OnModuleDestroy,
   type OnModuleInit,
 } from '@nestjs/common';
@@ -69,7 +70,7 @@ import {
   GatewayCheckoutService,
   type CollectingGateway,
 } from '../gateways/gateway-checkout.service';
-import { CarrybeeService } from '../gateways/carrybee.service';
+import { CarrybeeBookingUncertain, CarrybeeService } from '../gateways/carrybee.service';
 import {
   CARRYBEE_EVENTS,
   CARRYBEE_STATUS_EFFECTS,
@@ -568,6 +569,7 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
       const [shop] = await tx
         .select({
           live: shops.live,
+          deliveryMode: shops.deliveryMode,
           plan: shops.plan,
           ownerId: shops.ownerId,
           codAdvanceEnabled: shops.codAdvanceEnabled,
@@ -703,6 +705,7 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
         .values({
           reference,
           shopId: dto.shopId,
+          deliveryMode: shop.deliveryMode,
           customerId,
           // Who placed it, when they were signed in. This is what makes the
           // order theirs for good - the email below records what they typed,
@@ -996,6 +999,7 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
       const [shop] = await tx
         .select({
           live: shops.live,
+          deliveryMode: shops.deliveryMode,
           plan: shops.plan,
           ownerId: shops.ownerId,
           paymentMethods: shops.paymentMethods,
@@ -1128,6 +1132,7 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
         .values({
           reference,
           shopId: offer.shopId,
+          deliveryMode: shop.deliveryMode,
           customerId,
           // An offer is only ever accepted by a signed-in buyer.
           userId: args.buyer.id,
@@ -2116,6 +2121,7 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
     shopId: string,
     id: string,
     next: OrderStatus,
+    place?: { cityId?: number; zoneId?: number; areaId?: number },
   ): Promise<OrderResponse> {
     const order = await this.requireOwned(shopId, id);
     if (TERMINAL_STATUSES.includes(order.status)) {
@@ -2146,6 +2152,13 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
         `This parcel is with ${this.courierLabel(order.courierProvider)} now - it moves to ${next} when the courier reports it, not from here.`,
       );
     }
+    if (order.courierBookingState) {
+      throw new ConflictException('A courier booking is being checked. Please wait before changing this order.');
+    }
+    if (next === 'HandedOver' && order.deliveryMode === 'carrybee') {
+      if (order.status !== 'Packed') throw new BadRequestException('Pack the order before handing it over to CarryBee.');
+      return this.bookCourier(shopId, id, place);
+    }
     if (next === 'HandedOver') {
       await this.assertHandoverAllowed(order);
     }
@@ -2167,8 +2180,9 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
         ...(next === 'HandedOver' && { handedOverAt: new Date() }),
         ...(codCollected && { pay: 'Paid' as const }),
       })
-      .where(eq(orders.id, order.id))
+      .where(and(eq(orders.id, order.id), eq(orders.status, order.status), isNull(orders.courierBookingState)))
       .returning();
+    if (!row) throw new ConflictException('This order changed while you were editing it. Refresh and try again.');
     const copy = STATUS_NOTIFICATION[next];
     if (copy) {
       await this.notifications.orderEvent(
@@ -2998,6 +3012,7 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
           address: order.address,
           confirmedAt: new Date(),
           exchangedFromOrderId: order.id,
+          deliveryMode: order.deliveryMode,
         })
         .returning();
 
@@ -3220,6 +3235,9 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
     opts: { reason?: CancelReason; restock?: boolean } = {},
   ): Promise<OrderRow> {
     const { reason, restock = true } = opts;
+    const [current] = await tx.select({ bookingState: orders.courierBookingState }).from(orders)
+      .where(eq(orders.id, order.id)).for('update');
+    if (current?.bookingState) throw new ConflictException('The courier booking must be checked before cancelling this order.');
     const items = await tx.query.orderItems.findMany({
       where: eq(orderItems.orderId, order.id),
     });
@@ -3496,6 +3514,7 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
   private async sellerMayAdvance(order: OrderRow): Promise<boolean> {
     if (SELLER_ADVANCEABLE.includes(order.status)) return true;
     if (order.courierConsignmentId) return false;
+    if (order.deliveryMode) return order.deliveryMode === 'manual';
     return !(await this.courierSettings.courierRequired());
   }
 
@@ -3511,7 +3530,7 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
         'Confirm the 15% advance payment before handing over this order.',
       );
     }
-    if (order.courierConsignmentId) return;
+    if (order.courierConsignmentId || order.deliveryMode === 'manual') return;
     if (!(await this.courierSettings.courierRequired())) return;
     throw new BadRequestException(
       'Book the parcel with the courier before marking it handed over.',
@@ -3527,7 +3546,33 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
    * ids; CarryBee can usually derive them from the written address, and the
    * booking modal supplies them when it can't.
    */
-  async bookCourier(
+  async bookCourier(shopId: string, id: string, opts?: { cityId?: number; zoneId?: number; areaId?: number }): Promise<OrderResponse> {
+    const order = await this.requireOwned(shopId, id);
+    if (order.courierConsignmentId) {
+      const items = await this.db.query.orderItems.findMany({ where: eq(orderItems.orderId, order.id) });
+      return OrderResponse.fromRow(order, items);
+    }
+    if (order.deliveryMode === 'manual') throw new BadRequestException('This order uses manual delivery. Arrange delivery yourself.');
+    if (order.deliveryMode === 'carrybee' && order.status !== 'Packed') throw new BadRequestException('Pack the order before handing it over to CarryBee.');
+    if (!COURIER_BOOKABLE.includes(order.status)) throw new BadRequestException('Confirm and pack the order before booking a courier.');
+    const [claimed] = await this.db.update(orders).set({ courierBookingState: 'creating' }).where(and(
+      eq(orders.id, order.id), eq(orders.status, order.status), isNull(orders.courierConsignmentId), isNull(orders.courierBookingState),
+    )).returning();
+    if (!claimed) throw new ConflictException('A courier booking is already in progress or needs checking. Refresh the order before trying again.');
+    try {
+      return await this.performCourierBooking(shopId, id, opts);
+    } catch (error) {
+      // A timeout might have created a parcel. Never blindly send a second one.
+      await this.db.update(orders).set({ courierBookingState: error instanceof CarrybeeBookingUncertain ? 'uncertain' : null })
+        .where(and(eq(orders.id, order.id), isNull(orders.courierConsignmentId)));
+      if (order.deliveryMode === 'carrybee' && !(error instanceof BadRequestException) && !(error instanceof ConflictException) && !(error instanceof CarrybeeBookingUncertain)) {
+        throw new ServiceUnavailableException('Failed to create parcel in CarryBee. Your order is still packed. Please check the pickup and delivery details, then try again.');
+      }
+      throw error;
+    }
+  }
+
+  private async performCourierBooking(
     shopId: string,
     id: string,
     opts?: { cityId?: number; zoneId?: number; areaId?: number },
@@ -3543,6 +3588,7 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
         'Book the courier once the order is confirmed or packed.',
       );
     }
+    if (order.pay === 'Pending' || order.pay === 'Refunded') throw new BadRequestException('Confirm payment before booking a courier for this order.');
     if (!order.phone) {
       throw new BadRequestException('This order has no delivery phone number.');
     }
@@ -3567,6 +3613,10 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
         'No courier is set up on the platform yet - the operator configures it in the platform console.',
       );
     }
+    if (order.deliveryMode === 'carrybee' && active.provider !== 'carrybee') {
+      throw new BadRequestException('CarryBee is currently unavailable. Your order remains packed. Please try again later.');
+    }
+    const items = await this.db.query.orderItems.findMany({ where: eq(orderItems.orderId, order.id) });
     const shipment = {
       invoice: `${order.reference.replace('#', '')}-${order.id.slice(0, 8)}`,
       recipientName: order.customerName,
@@ -3657,9 +3707,11 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
         codFeeCents: null,
       };
     }
-    const [row] = await this.db
+    const [saved] = await this.db
       .update(orders)
       .set({
+        ...(order.deliveryMode === 'carrybee' ? { status: 'HandedOver' as const, handedOverAt: new Date() } : {}),
+        courierBookingState: null,
         courierProvider: active.provider,
         courierConsignmentId: booked.consignmentId,
         courierTrackingCode: booked.trackingCode,
@@ -3668,11 +3720,17 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
         courierDeliveryFeeCents: booked.deliveryFeeCents,
         courierCodFeeCents: booked.codFeeCents,
       })
-      .where(eq(orders.id, order.id))
-      .returning();
-    const items = await this.db.query.orderItems.findMany({
-      where: eq(orderItems.orderId, order.id),
-    });
+      .where(and(eq(orders.id, order.id), isNull(orders.courierConsignmentId)))
+      .returning().catch(() => { throw new CarrybeeBookingUncertain(); });
+    const row = saved ?? await this.requireOwned(shopId, id);
+    if (saved && order.deliveryMode === 'carrybee') {
+      try {
+        await this.notifications.orderEvent(this.db, row, 'order_status',
+          `Order ${row.reference} is awaiting courier pickup`, 'Your order is packed and a CarryBee pickup has been requested.');
+      } catch (error) {
+        this.logger.warn(`Pickup notification failed for ${row.id}: ${String(error)}`);
+      }
+    }
     return OrderResponse.fromRow(row, items);
   }
 
@@ -3807,9 +3865,23 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
     if (!consignmentId || !body.event) return null;
     const rule = CARRYBEE_EVENTS[body.event];
     if (!rule) return null;
-    const order = await this.db.query.orders.findFirst({
+    let order = await this.db.query.orders.findFirst({
       where: eq(orders.courierConsignmentId, consignmentId),
     });
+    if (!order && body.merchant_order_id) {
+      const candidate = await this.db.query.orders.findFirst({ where: and(
+        isNull(orders.courierConsignmentId), isNotNull(orders.courierBookingState),
+        eq(orders.deliveryMode, 'carrybee'),
+        sql`concat(replace(${orders.reference}, '#', ''), '-', left(${orders.id}::text, 8)) = ${body.merchant_order_id}`,
+      ) });
+      if (candidate) {
+        [order] = await this.db.update(orders).set({
+          courierProvider: 'carrybee', courierConsignmentId: consignmentId, courierTrackingCode: consignmentId,
+          courierBookingState: null,
+          ...(candidate.status === 'Packed' ? { status: 'HandedOver' as const, handedOverAt: new Date() } : {}),
+        }).where(and(eq(orders.id, candidate.id), isNull(orders.courierConsignmentId))).returning();
+      }
+    }
     if (!order) return null;
     const at = body.timestamptz ? new Date(body.timestamptz) : new Date();
     await this.applyCourierEffect(order.id, {

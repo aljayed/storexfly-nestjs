@@ -631,6 +631,13 @@
       "when": 1793664000000,
       "tag": "0092_buyer_addresses",
       "breakpoints": true
+    },
+    {
+      "idx": 93,
+      "version": "7",
+      "when": 1793750400000,
+      "tag": "0093_shop_delivery_preferences",
+      "breakpoints": true
     }
   ]
 }

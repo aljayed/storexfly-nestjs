@@ -1,3 +1,5 @@
+import { ShopDeliveryController } from './shop-delivery.controller';
+import { ShopDeliveryService } from './shop-delivery.service';
 import { Module } from '@nestjs/common';
 import { EmailOtpService } from '../auth/email-otp.service';
 import { BlockedWordsModule } from '../blocked-words/blocked-words.module';
@@ -19,8 +21,8 @@ import { ShopsService } from './shops.service';
     GatewaysModule,
     MailModule,
   ],
-  controllers: [ShopsController, ShopCourierController],
-  providers: [ShopsService, EmailOtpService],
+  controllers: [ShopsController, ShopCourierController, ShopDeliveryController],
+  providers: [ShopsService, EmailOtpService, ShopDeliveryService],
   exports: [ShopsService],
 })
 export class ShopsModule {}

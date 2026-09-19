@@ -5,6 +5,12 @@ import {
   ServiceUnavailableException,
 } from '@nestjs/common';
 
+export class CarrybeeBookingUncertain extends ServiceUnavailableException {
+  constructor() {
+    super('CarryBee has not confirmed whether the parcel was created. The order status has not changed. Please contact Hoomri support to check the booking before trying again.');
+  }
+}
+
 const CARRYBEE_BASE = 'https://developers.carrybee.com';
 const CARRYBEE_SANDBOX_BASE = 'https://sandbox.carrybee.com';
 const REQUEST_TIMEOUT_MS = 30_000;
@@ -91,12 +97,16 @@ export class CarrybeeService {
       },
       ...(init?.body ? { body: JSON.stringify(init.body) } : {}),
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    }).catch((error: unknown) => {
+      if (path === '/api/v2/orders' && init?.method === 'POST') throw new CarrybeeBookingUncertain();
+      throw error;
     });
     const payload = (await res.json().catch(() => ({}))) as {
       error?: boolean;
       message?: string;
       causes?: Record<string, { type?: string }[]>;
     };
+    if (path === '/api/v2/orders' && init?.method === 'POST' && res.status >= 500) throw new CarrybeeBookingUncertain();
     if (!res.ok || payload.error) {
       throw new Error(
         `CarryBee HTTP ${res.status} from ${path}: ${describe(payload)}`,
@@ -265,7 +275,7 @@ export class CarrybeeService {
         area_id: input.areaId,
       },
     });
-    const created = (await this.stores(config)).find((s) => !before.has(s.id));
+    const created = (await this.stores(config)).find((s) => !before.has(s.id) && s.name === input.name.slice(0, 30) && s.address === padStoreAddress(input.address));
     if (!created) {
       throw new ServiceUnavailableException(
         'CarryBee accepted the pickup store but did not list it - try booking again in a moment.',
@@ -348,7 +358,7 @@ export class CarrybeeService {
       });
       const order = data.data?.order;
       if (!order?.consignment_id) {
-        throw new Error(`CarryBee rejected the booking: ${data.message ?? ''}`);
+        throw new CarrybeeBookingUncertain();
       }
       return {
         consignmentId: String(order.consignment_id),
@@ -356,10 +366,10 @@ export class CarrybeeService {
         codFeeCents: takaToCents(order.cod_fee),
       };
     } catch (err) {
-      if (err instanceof BadRequestException) throw err;
+      if (err instanceof BadRequestException || err instanceof CarrybeeBookingUncertain) throw err;
       this.logger.error('CarryBee booking failed', err as Error);
       throw new ServiceUnavailableException(
-        'Could not book the courier - please try again in a moment.',
+        'Failed to create parcel in CarryBee. Your order status has not changed. Please check the delivery details and try again.',
       );
     }
   }

@@ -61,6 +61,9 @@ export const shops = pgTable(
     // courier's own numeric ids and not free text.
     //
     // Never shown to buyers - it is a warehouse door, not a shopfront.
+    // Null preserves the platform policy for shops created before delivery preferences.
+    deliveryMode: varchar('delivery_mode', { length: 16 }).$type<'manual' | 'carrybee'>(),
+    pickupDistrict: varchar('pickup_district', { length: 80 }),
     pickupContactName: varchar('pickup_contact_name', { length: 60 }),
     pickupPhone: varchar('pickup_phone', { length: 24 }),
     pickupAddress: varchar('pickup_address', { length: 200 }),

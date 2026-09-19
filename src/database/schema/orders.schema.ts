@@ -67,6 +67,9 @@ export const orders = pgTable(
     totalCents: integer('total_cents').notNull(),
     // Delivery charge included in `totalCents` (also present as a line item).
     deliveryCents: integer('delivery_cents').notNull().default(0),
+    // Snapshot: changing shop settings never reroutes an existing order.
+    deliveryMode: varchar('delivery_mode', { length: 16 }).$type<'manual' | 'carrybee'>(),
+    courierBookingState: varchar('courier_booking_state', { length: 16 }).$type<'creating' | 'uncertain'>(),
     status: orderStatusEnum('status').notNull().default('New'),
     pay: paymentStatusEnum('pay').notNull().default('Paid'),
     // Code of the `payment_methods` row the buyer paid with ('cod', 'mbank',

@@ -55,6 +55,7 @@ function harness() {
     {} as never,
     {} as never,
     {} as never,
+    { validate: jest.fn() } as never,
   );
   return { service, db, billing, tx, values };
 }

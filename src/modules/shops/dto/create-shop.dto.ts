@@ -16,12 +16,13 @@ import {
   brandSwatchEnum,
   shopCategoryEnum,
 } from '../../../database/schema/enums';
+import { DeliverySettingsDto } from './delivery-settings.dto';
 import { SubmitKycDto } from './kyc.dto';
 
 type ShopCategory = (typeof shopCategoryEnum.enumValues)[number];
 
 /** Create-shop wizard submission (README §2). */
-export class CreateShopDto {
+export class CreateShopDto extends DeliverySettingsDto {
   @ApiProperty({ example: 'Mango Shop' })
   @IsString()
   @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))

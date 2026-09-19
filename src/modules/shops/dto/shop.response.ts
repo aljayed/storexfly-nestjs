@@ -13,6 +13,8 @@ export class ShopResponse {
   // Pickup address for the courier. Console-only - the storefront DTO shares
   // this class, and where a seller warehouses stock is not a buyer's business,
   // so these are filled in by fromRowForConsole alone.
+  @ApiPropertyOptional({ enum: ['manual', 'carrybee'] }) deliveryMode?: 'manual' | 'carrybee';
+  @ApiPropertyOptional() pickupDistrict?: string;
   @ApiPropertyOptional() pickupContactName?: string;
   @ApiPropertyOptional() pickupPhone?: string;
   @ApiPropertyOptional() pickupAddress?: string;
@@ -109,6 +111,8 @@ export class ShopResponse {
     return {
       ...ShopResponse.fromRow(row),
       botChatEnabled: row.botChatEnabled,
+      deliveryMode: row.deliveryMode ?? undefined,
+      pickupDistrict: row.pickupDistrict ?? undefined,
       pickupContactName: row.pickupContactName ?? undefined,
       pickupPhone: row.pickupPhone ?? undefined,
       pickupAddress: row.pickupAddress ?? undefined,
