@@ -44,6 +44,7 @@ function harness() {
         findMany: jest.fn().mockResolvedValue([]),
         findFirst: jest.fn().mockResolvedValue(undefined),
       },
+      shopDrafts: { findFirst: jest.fn().mockResolvedValue(undefined) },
     },
     transaction: jest.fn(async (fn: (executor: unknown) => unknown) => fn(tx)),
   };
@@ -60,10 +61,22 @@ function harness() {
   return { service, db, billing, tx, values };
 }
 
+/**
+ * What the wizard's submit used to be in one call. Opening a shop is two
+ * moments now - everything is checked when the seller submits, and the row is
+ * written when the pack that pays for it is collected - so the test drives
+ * both halves to assert on what happens between them.
+ */
+function createShop(service: ShopsService, ownerId: string, dto: CreateShopDto) {
+  return service
+    .prepareShop(ownerId, dto)
+    .then((values) => service.createPreparedShop(ownerId, values));
+}
+
 describe('shop onboarding persistence', () => {
   it('saves support contacts and opens billing inside the same transaction', async () => {
     const h = harness();
-    await h.service.create(contact.id, payload);
+    await createShop(h.service, contact.id, payload);
     expect(h.values).toHaveBeenCalledWith(expect.objectContaining(payload));
     expect(h.billing.openForNewShop).toHaveBeenCalledWith(
       contact.id,
@@ -77,7 +90,7 @@ describe('shop onboarding persistence', () => {
     h.billing.openForNewShop.mockRejectedValue(
       new Error('Billing insert failed'),
     );
-    await expect(h.service.create(contact.id, payload)).rejects.toThrow(
+    await expect(createShop(h.service, contact.id, payload)).rejects.toThrow(
       'Billing insert failed',
     );
     expect(h.db.transaction).toHaveBeenCalledTimes(1);
@@ -89,7 +102,7 @@ describe('shop onboarding persistence', () => {
       h.db.query.users.findFirst
         .mockReset()
         .mockResolvedValue({ ...contact, [flag]: false });
-      await expect(h.service.create(contact.id, payload)).rejects.toThrow(
+      await expect(createShop(h.service, contact.id, payload)).rejects.toThrow(
         ForbiddenException,
       );
       expect(h.db.transaction).not.toHaveBeenCalled();
@@ -98,7 +111,7 @@ describe('shop onboarding persistence', () => {
   it('refuses incomplete KYC before inserting a shop', async () => {
     const h = harness();
     await expect(
-      h.service.create(contact.id, {
+      createShop(h.service, contact.id, {
         ...payload,
         kyc: { legalName: 'Incomplete' },
       }),

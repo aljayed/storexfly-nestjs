@@ -73,6 +73,21 @@ export class SubscriptionsController {
   }
 
   @ApiBearerAuth()
+  @Get('billing/gateways')
+  @ApiOperation({
+    summary:
+      'Which gateways can collect a platform payment now. Unlike the console ' +
+      'route below it needs no shop - opening one is paid for before there is one.',
+  })
+  async openingGateways() {
+    const gateways = await this.gatewayCheckout.available();
+    return gateways.map((g) => ({
+      gateway: g,
+      label: this.gatewayCheckout.label(g),
+    }));
+  }
+
+  @ApiBearerAuth()
   @Get('billing/coupon-preview')
   @ApiOperation({ summary: 'Dry-run a coupon against a credit pack' })
   @ApiOkResponse({ type: CouponPreviewResponse })

@@ -11,7 +11,7 @@ import { SslcommerzService } from './sslcommerz.service';
 export type CollectingGateway = 'bkash' | 'sslcommerz';
 
 /** What a session is collecting for. */
-export type PaymentPurpose = 'order' | 'credit_pack';
+export type PaymentPurpose = 'order' | 'credit_pack' | 'shop_opening';
 
 export interface GatewayCustomer {
   name: string;
@@ -39,6 +39,8 @@ export interface OpenSessionInput {
   customer: GatewayCustomer;
   orderId?: string;
   shopId?: string;
+  /** purpose='shop_opening': the filled-in shop this pack pays to open. */
+  shopDraftId?: string;
   packCode?: string;
   couponCode?: string;
   discountCents?: number;
@@ -58,10 +60,10 @@ export interface OpenSessionResult {
  * and a seller paying the platform for sales credit. Both want the same
  * session bookkeeping and the same return leg, so neither should own it.
  *
- * Deliberately knows nothing about what happens on success - granting credit
- * or confirming an order is the settling side's job (PaymentsService). This
- * only gets the payer to the page and leaves a row saying what they went
- * there to do.
+ * Deliberately knows nothing about what happens on success - granting credit,
+ * confirming an order or opening a shop is the settling side's job
+ * (PaymentsService). This only gets the payer to the page and leaves a row
+ * saying what they went there to do.
  */
 @Injectable()
 export class GatewayCheckoutService {
@@ -120,6 +122,7 @@ export class GatewayCheckoutService {
       purpose: input.purpose,
       orderId: input.orderId ?? null,
       shopId: input.shopId ?? null,
+      shopDraftId: input.shopDraftId ?? null,
       packCode: input.packCode ?? null,
       couponCode: input.couponCode ?? null,
       discountCents: input.discountCents ?? 0,

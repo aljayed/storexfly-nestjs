@@ -8,6 +8,7 @@ import {
   varchar,
 } from 'drizzle-orm/pg-core';
 import { orders } from './orders.schema';
+import { shopDrafts } from './shop-drafts.schema';
 import { shops } from './shops.schema';
 
 /**
@@ -31,7 +32,8 @@ import { shops } from './shops.schema';
  * paying a shop, and carries `orderId`. 'credit_pack' is a seller paying the
  * platform for sales credit, and carries the shop plus what was being bought
  * - held here rather than granted up front so an abandoned checkout grants
- * nothing.
+ * nothing. 'shop_opening' is the pack that opens a shop that does not exist
+ * yet, and carries the draft holding its name instead of a shop.
  */
 export const gatewayPayments = pgTable(
   'gateway_payments',
@@ -46,6 +48,10 @@ export const gatewayPayments = pgTable(
     // purpose='credit_pack': the shop buying, and the pack it picked. The
     // coupon is held rather than redeemed until the money actually lands.
     shopId: uuid('shop_id').references(() => shops.id, { onDelete: 'cascade' }),
+    // purpose='shop_opening': the filled-in shop this pack pays to open.
+    shopDraftId: uuid('shop_draft_id').references(() => shopDrafts.id, {
+      onDelete: 'cascade',
+    }),
     packCode: varchar('pack_code', { length: 32 }),
     couponCode: varchar('coupon_code', { length: 40 }),
     discountCents: integer('discount_cents').notNull().default(0),
@@ -73,6 +79,7 @@ export const gatewayPayments = pgTable(
   (table) => [
     index('gateway_payments_order_idx').on(table.orderId),
     index('gateway_payments_shop_idx').on(table.shopId),
+    index('gateway_payments_draft_idx').on(table.shopDraftId),
     index('gateway_payments_payment_idx').on(table.paymentId),
     index('gateway_payments_status_idx').on(table.status, table.createdAt),
   ],

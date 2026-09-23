@@ -33,6 +33,7 @@ import {
   orders,
   products,
   settlements,
+  shopDrafts,
   shops,
   subscriptionPayments,
   subscriptions,
@@ -97,7 +98,11 @@ const LICENSE_INDEX = 'shops_kyc_license_unique_idx';
 /** Whether a seller who already owns a shop may open another one. */
 export interface ShopEligibility {
   shopCount: number;
-  /** The free trial is the first shop only. */
+  /**
+   * Retired. Every shop, including the first, opens on a credit pack now;
+   * the field stays false so an older client stops offering a free tier
+   * instead of showing one that would be refused at checkout.
+   */
   freeTrialAvailable: boolean;
   /** Any shop of theirs with a verified trade licence. */
   hasVerifiedBusiness: boolean;
@@ -169,7 +174,7 @@ export class ShopsService {
     handle: string,
     ownerId?: string,
   ): Promise<boolean> {
-    const [byShop, byAccount] = await Promise.all([
+    const [byShop, byAccount, byDraft] = await Promise.all([
       this.db.query.shops.findFirst({
         where: eq(shops.handle, handle),
         columns: { ownerId: true },
@@ -178,39 +183,50 @@ export class ShopsService {
         where: eq(users.handle, handle),
         columns: { id: true },
       }),
+      // A shop being paid for holds its name for the hour it has to pay in.
+      // Read against the clock rather than the status alone: the hold lapses
+      // on the hour, whether or not the sweep has been round yet.
+      this.db.query.shopDrafts.findFirst({
+        where: and(
+          eq(shopDrafts.handle, handle),
+          eq(shopDrafts.status, 'pending'),
+          gt(shopDrafts.expiresAt, new Date()),
+        ),
+        columns: { ownerId: true },
+      }),
     ]);
     if (byShop) return true;
     if (byAccount && byAccount.id !== ownerId) return true;
+    // Your own unfinished draft is not a stranger holding the name - the
+    // wizard is allowed to come back to it and pay.
+    if (byDraft && byDraft.ownerId !== ownerId) return true;
     return false;
   }
 
-  async create(ownerId: string, dto: CreateShopDto): Promise<ShopResponse> {
-    const plan = dto.plan ?? 'paid';
-    // Both a verified email and a verified phone, whatever the plan - an
-    // account nobody can be reached on has no business opening a storefront.
+  /**
+   * Everything that has to be true before a shop may be written, and the row
+   * it would be written as.
+   *
+   * Split out because opening a shop is now two moments rather than one: the
+   * seller submits the wizard, and some minutes later a gateway says they
+   * have paid for it. The first moment is where a mistake can still be
+   * pointed at the field that caused it, so all the checking happens there -
+   * and it runs again on the way in, because an hour is long enough for a
+   * licence to be claimed or a name to be taken.
+   */
+  async prepareShop(ownerId: string, dto: CreateShopDto): Promise<NewShopRow> {
+    // Both a verified email and a verified phone - an account nobody can be
+    // reached on has no business opening a storefront.
     await this.assertContactVerified(ownerId);
     const owned = await this.db.query.shops.findMany({
       where: eq(shops.ownerId, ownerId),
       columns: { id: true, kycStatus: true },
     });
     if (owned.length) {
-      // Whether a second shop is allowed at all comes first: while it is
-      // switched off, "the free trial is only for your first shop" would send
-      // the seller after a paid track that does not exist yet.
       await this.assertSecondShopAllowed(ownerId, owned);
-      // The free tier is a first-shop trial, not a way to run a fleet of
-      // capped shops: any existing shop (free or paid) means this one is paid.
-      if (plan === 'free') {
-        throw new ForbiddenException(
-          'The free trial is only for your first shop - a second one starts on a paid track.',
-        );
-      }
     }
-    // Nothing is charged to open a shop. The seller picks how they pay for
-    // sales - a credit pack, or the verified commission track - from the
-    // console once the shop exists.
-    // Before anything is written: a licence that is already vouching for
-    // another shop cannot vouch for this one too.
+    // A licence that is already vouching for another shop cannot vouch for
+    // this one too.
     if (dto.kyc?.licenseNo) {
       await this.assertLicenseUnclaimed(dto.kyc.licenseNo);
     }
@@ -222,7 +238,7 @@ export class ShopsService {
     }
     await this.delivery.validate(dto);
     const swatch = BRAND_SWATCHES[dto.brandId];
-    const values: NewShopRow = {
+    return {
       name: dto.name,
       handle,
       tagline: dto.tagline,
@@ -241,20 +257,29 @@ export class ShopsService {
       brand: swatch.c,
       brandSoft: swatch.soft,
       ownerId,
-      plan,
+      // Every shop opens on a credit pack now, so there is no free tier to
+      // choose between: the seller has paid for this one before it exists.
+      plan: 'paid',
       // Optional KYC supplied during onboarding - skipped sellers start
       // 'unsubmitted' (the column default).
       ...kycSubmissionPatch(dto.kyc),
     };
-    // Every shop gets a billing record straight away: the credits track with
-    // a zero balance, so the console has something to show and the meter
-    // starts counting from the shop's first day.
-    const row = await this.db.transaction(async (tx) => {
+  }
+
+  /**
+   * Write the shop and open its billing. Called once the pack that pays for
+   * it has been collected (ShopOpeningService); the money, not the form, is
+   * what brings a shop into existence.
+   */
+  async createPreparedShop(
+    ownerId: string,
+    values: NewShopRow,
+  ): Promise<ShopRow> {
+    return this.db.transaction(async (tx) => {
       const created = await this.insertShop(values, tx);
       await this.subscriptionsService.openForNewShop(ownerId, created.id, tx);
       return created;
     });
-    return ShopResponse.fromRowForConsole(row);
   }
 
   /**
@@ -331,7 +356,7 @@ export class ShopsService {
     const hasVerifiedBusiness = owned.some((s) => s.kycStatus === 'verified');
     return {
       shopCount: owned.length,
-      freeTrialAvailable: owned.length === 0,
+      freeTrialAvailable: false,
       hasVerifiedBusiness,
       creditPacksBought,
       creditPacksUsed,

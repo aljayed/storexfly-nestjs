@@ -6,6 +6,7 @@
 export * from './enums';
 export * from './users.schema';
 export * from './shops.schema';
+export * from './shop-drafts.schema';
 export * from './admin-users.schema';
 export * from './admin-invites.schema';
 export * from './products.schema';

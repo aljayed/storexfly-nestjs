@@ -20,6 +20,7 @@ import {
   SslcommerzService,
   type SslcommerzCallbackBody,
 } from '../gateways/sslcommerz.service';
+import { ShopOpeningService } from '../shops/shop-opening.service';
 import { SubscriptionsService } from '../subscriptions/subscriptions.service';
 import { OrdersService } from './orders.service';
 
@@ -85,6 +86,7 @@ export class PaymentsService implements OnModuleInit, OnModuleDestroy {
     @Inject(DRIZZLE) private readonly db: DrizzleDB,
     private readonly ordersService: OrdersService,
     private readonly subscriptions: SubscriptionsService,
+    private readonly shopOpening: ShopOpeningService,
     private readonly bkash: BkashService,
     private readonly sslcommerz: SslcommerzService,
     private readonly config: ConfigService,
@@ -342,6 +344,13 @@ export class PaymentsService implements OnModuleInit, OnModuleDestroy {
         transactionId,
         gatewayTxnId: charge.gatewayTxnId,
       });
+    } else if (attempt.purpose === 'shop_opening') {
+      // The one purpose where what was bought does not exist yet: this is
+      // the moment a filled-in wizard becomes a shop.
+      await this.shopOpening.settlePaidDraft(attempt, {
+        transactionId,
+        gatewayTxnId: charge.gatewayTxnId,
+      });
     } else if (attempt.orderId) {
       await this.ordersService.confirmGatewayPayment(attempt.orderId);
     }
@@ -451,9 +460,10 @@ export class PaymentsService implements OnModuleInit, OnModuleDestroy {
       )
       .returning({ id: gatewayPayments.id });
     if (!claimed) return;
-    // A credit pack holds nothing until it is paid for, so there is nothing
-    // to give back; an order was created up front and has to be voided.
-    if (attempt.purpose !== 'credit_pack' && attempt.orderId) {
+    // A credit pack and a shop opening both hold nothing until they are paid
+    // for - the draft's hour runs out on its own, and the handle goes back to
+    // the pool. An order was created up front and has to be voided.
+    if (attempt.purpose === 'order' && attempt.orderId) {
       await this.ordersService.voidPendingOrder(attempt.orderId);
     }
   }
@@ -494,6 +504,17 @@ export class PaymentsService implements OnModuleInit, OnModuleDestroy {
     if (attempt.purpose === 'credit_pack') {
       return this.billingUrl({
         credit: status,
+        pack: attempt.packCode ?? '',
+        amount: String(attempt.amountCents / 100),
+        trx: trx ?? '',
+      });
+    }
+    // A shop opening goes back to the wizard it came from, which knows how to
+    // wait for the shop and how to offer the packs again if nothing landed.
+    if (attempt.purpose === 'shop_opening') {
+      return this.webUrl('/onboarding', {
+        opening: status,
+        draft: attempt.shopDraftId ?? '',
         pack: attempt.packCode ?? '',
         amount: String(attempt.amountCents / 100),
         trx: trx ?? '',

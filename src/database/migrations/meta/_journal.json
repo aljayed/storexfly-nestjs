@@ -638,6 +638,13 @@
       "when": 1793750400000,
       "tag": "0093_shop_delivery_preferences",
       "breakpoints": true
+    },
+    {
+      "idx": 94,
+      "version": "7",
+      "when": 1793836800000,
+      "tag": "0094_shop_drafts",
+      "breakpoints": true
     }
   ]
 }

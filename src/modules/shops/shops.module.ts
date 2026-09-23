@@ -2,12 +2,15 @@ import { ShopDeliveryController } from './shop-delivery.controller';
 import { ShopDeliveryService } from './shop-delivery.service';
 import { Module } from '@nestjs/common';
 import { EmailOtpService } from '../auth/email-otp.service';
+import { BillingModule } from '../billing/billing.module';
 import { BlockedWordsModule } from '../blocked-words/blocked-words.module';
+import { CouponsModule } from '../coupons/coupons.module';
 import { GatewaysModule } from '../gateways/gateways.module';
 import { MailModule } from '../mail/mail.module';
 import { SubscriptionsModule } from '../subscriptions/subscriptions.module';
 import { ShopCourierController } from './shop-courier.controller';
 import { ShopsController } from './shops.controller';
+import { ShopOpeningService } from './shop-opening.service';
 import { ShopsService } from './shops.service';
 
 @Module({
@@ -18,11 +21,18 @@ import { ShopsService } from './shops.service';
   imports: [
     SubscriptionsModule,
     BlockedWordsModule,
+    BillingModule,
+    CouponsModule,
     GatewaysModule,
     MailModule,
   ],
   controllers: [ShopsController, ShopCourierController, ShopDeliveryController],
-  providers: [ShopsService, EmailOtpService, ShopDeliveryService],
-  exports: [ShopsService],
+  providers: [
+    ShopsService,
+    ShopOpeningService,
+    EmailOtpService,
+    ShopDeliveryService,
+  ],
+  exports: [ShopsService, ShopOpeningService],
 })
 export class ShopsModule {}

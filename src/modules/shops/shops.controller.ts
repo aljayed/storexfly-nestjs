@@ -27,6 +27,7 @@ import { SHOP_CATEGORIES } from '../../database/schema/enums';
 import type { SellerPrincipal } from '../../common/types/principal';
 import { CheckHandleQuery } from './dto/check-handle.query';
 import { CreateShopDto } from './dto/create-shop.dto';
+import { PayShopDraftDto } from './dto/pay-shop-draft.dto';
 import { DeleteShopDto } from './dto/delete-shop.dto';
 import { PayoutBankDto } from './dto/payout-bank.dto';
 import { DiscoverResponse } from './dto/discover.response';
@@ -35,12 +36,16 @@ import { SubmitKycDto } from './dto/kyc.dto';
 import { KycResponse } from './dto/kyc.response';
 import { ShopResponse } from './dto/shop.response';
 import { UpdateShopDto } from './dto/update-shop.dto';
+import { ShopOpeningService } from './shop-opening.service';
 import { ShopsService } from './shops.service';
 
 @ApiTags('shops')
 @Controller('shops')
 export class ShopsController {
-  constructor(private readonly shops: ShopsService) {}
+  constructor(
+    private readonly shops: ShopsService,
+    private readonly opening: ShopOpeningService,
+  ) {}
 
   // Authenticated, unlike the other lookups here: the answer depends on who
   // is asking. Your own username is available *to you* - naming a storefront
@@ -74,16 +79,63 @@ export class ShopsController {
     return this.shops.discover(query);
   }
 
-  // Not @StorefrontSession(): opening a shop is the line between shopping and
-  // running a business. The service also demands a verified email *and* phone,
-  // and proving either of those is what upgrades the session in the first
-  // place - so by the time this can succeed, the scope check is already met.
+  /* ── Opening a shop ───────────────────────────────────────────────
+     A shop costs a credit pack, so the wizard's submit does not make one: it
+     makes a draft that holds the handle for an hour, and the shop is written
+     when the gateway says the pack was paid for. Declared above `:handle` so
+     "draft" never resolves as a storefront.
+
+     Not @StorefrontSession(): opening a shop is the line between shopping and
+     running a business. The service also demands a verified email *and*
+     phone, and proving either of those is what upgrades the session in the
+     first place - so by the time this can succeed, the scope check is
+     already met. */
   @ApiBearerAuth()
-  @Post()
-  @ApiOperation({ summary: 'Create a shop (create-shop wizard submit)' })
-  @ApiOkResponse({ type: ShopResponse })
-  create(@CurrentUser() user: SellerPrincipal, @Body() dto: CreateShopDto) {
-    return this.shops.create(user.id, dto);
+  @Post('draft')
+  @ApiOperation({
+    summary:
+      'Submit the create-shop wizard: validates everything and holds the handle for an hour',
+  })
+  startDraft(@CurrentUser() user: SellerPrincipal, @Body() dto: CreateShopDto) {
+    return this.opening.start(user.id, dto);
+  }
+
+  @ApiBearerAuth()
+  @Get('draft')
+  @ApiOperation({ summary: "The seller's unpaid shop, if they left one" })
+  myDraft(@CurrentUser() user: SellerPrincipal) {
+    return this.opening.mine(user.id);
+  }
+
+  @ApiBearerAuth()
+  @Get('draft/:id')
+  @ApiOperation({
+    summary: 'What became of one draft - what the wizard polls after paying',
+  })
+  draftStatus(@CurrentUser() user: SellerPrincipal, @Param('id') id: string) {
+    return this.opening.statusFor(user.id, id);
+  }
+
+  @ApiBearerAuth()
+  @Post('draft/:id/pay')
+  @ApiOperation({
+    summary:
+      'Buy the pack that opens this shop. Returns a paymentUrl to finish on ' +
+      'the gateway; the shop is created only once the money lands.',
+  })
+  payDraft(
+    @CurrentUser() user: SellerPrincipal,
+    @Param('id') id: string,
+    @Body() dto: PayShopDraftDto,
+  ) {
+    return this.opening.pay(user.id, id, dto);
+  }
+
+  @ApiBearerAuth()
+  @Delete('draft/:id')
+  @ApiOperation({ summary: 'Give the handle back before the hour is up' })
+  cancelDraft(@CurrentUser() user: SellerPrincipal, @Param('id') id: string) {
+    return this.opening.cancel(user.id, id);
   }
 
   // A read of the caller's own shops, which a shopper session simply has none

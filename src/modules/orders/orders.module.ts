@@ -6,6 +6,7 @@ import { GatewaysModule } from '../gateways/gateways.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { SettlementsModule } from '../settlements/settlements.module';
 import { ShopCouponsModule } from '../shop-coupons/shop-coupons.module';
+import { ShopsModule } from '../shops/shops.module';
 import { SubscriptionsModule } from '../subscriptions/subscriptions.module';
 import { CourierWebhookController } from './courier-webhook.controller';
 import { OrdersController } from './orders.controller';
@@ -23,8 +24,10 @@ import { PaymentsService } from './payments.service';
     NotificationsModule,
     ChatModule,
     ShopCouponsModule,
-    // The return leg settles credit-pack purchases as well as orders.
+    // The return leg settles credit-pack purchases as well as orders, and
+    // opens the shop a seller has just paid the opening pack for.
     SubscriptionsModule,
+    ShopsModule,
   ],
   controllers: [OrdersController, PaymentsController, CourierWebhookController],
   providers: [OrdersService, PaymentsService, RefundsService],
