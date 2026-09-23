@@ -119,6 +119,13 @@ export const orders = pgTable(
     // When the seller physically handed the parcel over - the moment the
     // order stops being theirs to advance.
     handedOverAt: timestamp('handed_over_at', { withTimezone: true }),
+    // When the parcel reached the buyer, as the courier reported it. This is
+    // what a payout is scheduled on: money is settled once the goods have
+    // arrived, so the settlement cycle an order falls into is decided here
+    // rather than by the date of sale. Null on an order that has not arrived,
+    // and on a manually delivered one - nobody reports those, so settlement
+    // falls back to the handover for them.
+    deliveredAt: timestamp('delivered_at', { withTimezone: true }),
     // ── How an order ended ─────────────────────────────────────────
     // `cancelledAt` is the audit trail for a deadline that ran out; the
     // reason is what the buyer's notification is written from, because "the

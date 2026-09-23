@@ -48,6 +48,7 @@ import {
   emptyBuckets,
   payoutCents,
   periodOf,
+  settledOnOf,
   totalFeeCents,
   windowOf,
   type Buckets,
@@ -77,7 +78,7 @@ const DISCOVER_SHOPS = 6;
 // EmailOtpService namespace for the delete-shop confirmation codes.
 const DELETE_OTP_SCOPE = 'shop-delete';
 
-/** One unsettled earnings month owed to a shop being deleted. */
+/** One unsettled payout cycle owed to a shop being deleted. */
 interface OwedMonth {
   period: string;
   core: MonthCore;
@@ -1042,9 +1043,9 @@ export class ShopsService {
   }
 
   /**
-   * Every earnings month (current month included) whose online payout is
-   * still unpaid - the money the platform owes this seller. Mirrors
-   * SettlementsService month math via the shared settlement-core helpers.
+   * Every payout cycle (the open one included) whose online payout is still
+   * unpaid - the money the platform owes this seller. Mirrors
+   * SettlementsService cycle math via the shared settlement-core helpers.
    */
   private async owedSettlements(shopId: string): Promise<OwedMonth[]> {
     const [methodRows, orderRows, paidRows] = await Promise.all([
@@ -1061,7 +1062,9 @@ export class ShopsService {
           paymentMethod: true,
           advanceCents: true,
           pay: true,
-          placedAt: true,
+          deliveredAt: true,
+          handedOverAt: true,
+          deliveryMode: true,
         },
       }),
       this.db.query.settlements.findMany({
@@ -1072,7 +1075,11 @@ export class ShopsService {
     const catalog = new Map(methodRows.map((m) => [m.code, m]));
     const byPeriod = new Map<string, Buckets>();
     for (const r of orderRows) {
-      const period = periodOf(r.placedAt);
+      // Undelivered money is not owed yet - it joins the payout cycle the
+      // parcel arrives in, which may be after this shop is gone.
+      const arrived = settledOnOf(r);
+      if (!arrived) continue;
+      const period = periodOf(arrived);
       const b = byPeriod.get(period) ?? emptyBuckets();
       if (r.advanceCents > 0) {
         addOrder(b, r.paymentMethod, r.advanceCents, 1);

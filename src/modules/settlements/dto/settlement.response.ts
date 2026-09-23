@@ -2,7 +2,7 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { PaymentMethodResponse } from '../payment-methods.controller';
 import type { SettlementStatus } from '../settlement.constants';
 
-/** One online payment method's slice of a settlement month. */
+/** One online payment method's slice of a payout. */
 export class SettlementMethodResponse {
   @ApiProperty({ example: 'mbank' }) code!: string;
   @ApiProperty({ example: 'Mobile banking' }) title!: string;
@@ -14,9 +14,15 @@ export class SettlementMethodResponse {
   fee!: number;
 }
 
-/** One earnings month of a shop, either computed live or a paid snapshot. */
+/** One payout cycle of a shop, either computed live or a paid snapshot. */
 export class SettlementMonthResponse {
-  @ApiProperty({ example: '2026-06', description: 'Earnings month "YYYY-MM"' })
+  @ApiProperty({
+    example: '2026-06',
+    description:
+      'The payout cycle, named for the month it is paid in ("YYYY-MM"). ' +
+      'It covers everything delivered from the 15th of the month before to ' +
+      'the 14th of this one.',
+  })
   period!: string;
   @ApiProperty() ordersCount!: number;
   @ApiProperty({ description: 'All paid orders (every method)' })

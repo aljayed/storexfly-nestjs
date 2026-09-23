@@ -3992,6 +3992,12 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
           ...(nextStatus && { status: nextStatus }),
           ...(nextStatus === 'Shipped' &&
             !order.handedOverAt && { handedOverAt: observed.at }),
+          // The moment the payout clock starts: a delivery before the 15th
+          // is settled that month, and one after it waits for the next.
+          // Stamped with the courier's own time, not ours, so a webhook that
+          // arrives late still lands in the cycle the parcel arrived in.
+          ...(nextStatus === 'Delivered' &&
+            !order.deliveredAt && { deliveredAt: observed.at }),
           ...(codCollected && { pay: 'Paid' as const }),
         })
         .where(eq(orders.id, order.id))

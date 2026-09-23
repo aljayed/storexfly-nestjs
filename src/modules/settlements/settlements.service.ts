@@ -43,6 +43,7 @@ import {
   monthRange,
   payoutCents,
   periodOf,
+  settledOnOf,
   previousPeriod,
   snapshotCore,
   statusOf,
@@ -104,7 +105,18 @@ export class SettlementsService {
     private readonly methods: PaymentMethodsService,
   ) {}
 
-  /** Shop admin: every earnings month, newest first. */
+  /**
+   * When an order joins a payout cycle.
+   *
+   * The courier's delivery stamp, because a payout follows the goods. A
+   * manually delivered order has no such stamp - nobody reports those - so it
+   * falls back to the handover, which is the last thing the platform can see
+   * of it. An order with neither has not been delivered and is in no cycle
+   * yet; it will join the one it arrives in.
+   */
+  private static readonly settledOn = sql`coalesce(${orders.deliveredAt}, case when ${orders.deliveryMode} = 'manual' then ${orders.handedOverAt} end)`;
+
+  /** Shop admin: every payout cycle, newest first. */
   async forShop(shopId: string): Promise<ShopSettlementsResponse> {
     await this.shops.requireById(shopId);
     const [catalog, methodViews, banner, rows, paidRows] = await Promise.all([
@@ -127,7 +139,9 @@ export class SettlementsService {
           paymentMethod: true,
           advanceCents: true,
           pay: true,
-          placedAt: true,
+          deliveredAt: true,
+          handedOverAt: true,
+          deliveryMode: true,
         },
       }),
       this.db.query.settlements.findMany({
@@ -137,7 +151,11 @@ export class SettlementsService {
 
     const byPeriod = new Map<string, Buckets>();
     for (const r of rows) {
-      const period = periodOf(r.placedAt);
+      // Undelivered money is nobody's payout yet - it joins the cycle the
+      // parcel arrives in, whenever that turns out to be.
+      const arrived = settledOnOf(r);
+      if (!arrived) continue;
+      const period = periodOf(arrived);
       const b = byPeriod.get(period) ?? emptyBuckets();
       addOrderForSettlement(b, r);
       byPeriod.set(period, b);
@@ -159,7 +177,7 @@ export class SettlementsService {
     return { methods: methodViews, banner, months };
   }
 
-  /** Platform admin: every shop's numbers for one earnings month. */
+  /** Platform admin: every shop's numbers for one payout cycle. */
   async forPlatform(period?: string): Promise<PlatformSettlementsResponse> {
     const selected = period ?? previousPeriod(currentPeriod());
     const [from, end] = monthRange(selected);
@@ -175,8 +193,8 @@ export class SettlementsService {
           // replaces, which has already been settled. Paying out on both
           // would pay the shop twice for one sale.
           isNull(orders.exchangedFromOrderId),
-          gte(orders.placedAt, from),
-          lt(orders.placedAt, end),
+          gte(SettlementsService.settledOn, from),
+          lt(SettlementsService.settledOn, end),
         ),
         columns: {
           shopId: true,
@@ -380,8 +398,8 @@ export class SettlementsService {
         ne(orders.status, 'Cancelled'),
         ne(orders.pay, 'Refunded'),
         isNull(orders.exchangedFromOrderId),
-        gte(orders.placedAt, from),
-        lt(orders.placedAt, end),
+        gte(SettlementsService.settledOn, from),
+        lt(SettlementsService.settledOn, end),
       ),
       columns: {
         totalCents: true,

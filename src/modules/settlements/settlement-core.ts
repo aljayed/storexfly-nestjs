@@ -6,6 +6,7 @@ import type {
 import {
   CARD_FEE_BP,
   MBANK_FEE_BP,
+  SETTLEMENT_CUTOFF_DAY,
   SETTLEMENT_WINDOW_END_DAY,
   SETTLEMENT_WINDOW_START_DAY,
   feeCents,
@@ -135,11 +136,36 @@ export function payoutCents(core: MonthCore): number {
   return core.online.reduce((sum, m) => sum + m.cents - m.feeCents, 0);
 }
 
-/* ── Calendar helpers (the seller's months, matching the dashboard) ─ */
+/**
+ * When one order becomes payable: the courier's delivery stamp, or the
+ * handover for a manually delivered order, which nobody reports. Null means
+ * it has not arrived, so it belongs to no cycle yet.
+ *
+ * SettlementsService keeps the same rule as SQL for the queries that filter
+ * in the database; this is for the rows it buckets in memory.
+ */
+export function settledOnOf(order: {
+  deliveredAt: Date | null;
+  handedOverAt: Date | null;
+  deliveryMode: 'manual' | 'carrybee' | null;
+}): Date | null {
+  if (order.deliveredAt) return order.deliveredAt;
+  return order.deliveryMode === 'manual' ? order.handedOverAt : null;
+}
 
+/* ── The payout cycle ──────────────────────────────────────────────
+   A cycle is named for the month it is paid out in, and runs from the 15th
+   of the month before to the 15th of that month. So "2026-09" means
+   everything delivered between 15 August and 14 September, paid between the
+   15th and the 21st of September. Dates are read on the seller's calendar,
+   not the server's: a delivery at 1am on the 15th in Dhaka is the 15th. */
+
+/** Which cycle a delivery is paid out in. */
 export function periodOf(d: Date): string {
   const p = zonedParts(d);
-  return `${p.year}-${String(p.month).padStart(2, '0')}`;
+  const month = `${p.year}-${String(p.month).padStart(2, '0')}`;
+  // On or after the cut-off it has missed this month's payout and waits.
+  return p.day < SETTLEMENT_CUTOFF_DAY ? month : shiftPeriod(month, 1);
 }
 
 /** "YYYY-MM" plus a number of months, as plain calendar arithmetic. */
@@ -149,6 +175,7 @@ function shiftPeriod(period: string, months: number): string {
   return `${Math.floor(zero / 12)}-${String((zero % 12) + 1).padStart(2, '0')}`;
 }
 
+/** The cycle now collecting deliveries. */
 export function currentPeriod(): string {
   return periodOf(new Date());
 }
@@ -158,19 +185,20 @@ export function previousPeriod(period: string): string {
 }
 
 /**
- * [start, end) instants of one "YYYY-MM" month on the seller's calendar. A
- * sale made at 1am on the 1st belongs to the month the seller made it in, not
- * to the previous one because the server happens to run in UTC.
+ * [start, end) instants of one cycle: the 15th of the month before, to the
+ * 15th of the cycle's own month, both at midnight on the seller's calendar.
  */
 export function monthRange(period: string): [Date, Date] {
   const [y, m] = period.split('-').map(Number);
-  return [zonedTime(y, m, 1), zonedTime(y, m + 1, 1)];
+  return [
+    zonedTime(y, m - 1, SETTLEMENT_CUTOFF_DAY),
+    zonedTime(y, m, SETTLEMENT_CUTOFF_DAY),
+  ];
 }
 
-/** The 15th-21st payout window in the month after the earnings month. */
+/** The 15th-21st payout window, in the cycle's own month. */
 export function windowOf(period: string): { from: string; to: string } {
-  const next = shiftPeriod(period, 1); // the following month
-  const iso = (day: number) => `${next}-${String(day).padStart(2, '0')}`;
+  const iso = (day: number) => `${period}-${String(day).padStart(2, '0')}`;
   return {
     from: iso(SETTLEMENT_WINDOW_START_DAY),
     to: iso(SETTLEMENT_WINDOW_END_DAY),
@@ -183,11 +211,14 @@ export function statusOf(
   payout: number,
 ): SettlementStatus {
   if (paid) return 'paid';
+  // The cycle is still taking deliveries.
   if (period >= currentPeriod()) return 'accruing';
   if (payout <= 0) return 'none';
   const { from, to } = windowOf(period);
-  const today =
-    periodOf(new Date()) + '-' + String(new Date().getDate()).padStart(2, '0');
+  // Today on the seller's calendar. Not derived from periodOf: that answers
+  // "which payout is this delivery in", which after the 15th is next month.
+  const now = zonedParts(new Date());
+  const today = `${now.year}-${String(now.month).padStart(2, '0')}-${String(now.day).padStart(2, '0')}`;
   if (today < from) return 'scheduled';
   if (today <= to) return 'due';
   return 'overdue';

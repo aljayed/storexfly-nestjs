@@ -21,7 +21,7 @@ export class PlatformSettlementTotalResponse {
 
 /**
  * Money owed to a shop that has been deleted: one row per unsettled
- * earnings month, snapshotted when the shop was removed. Amounts in major
+ * payout cycle, snapshotted when the shop was removed. Amounts in major
  * units of `currency`.
  */
 export class DeletedShopSettlementResponse {
