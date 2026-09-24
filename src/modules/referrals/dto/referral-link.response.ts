@@ -1,10 +1,13 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import type { CouponRow, ReferralLinkRow } from '../../../database/schema';
+import { couponOff } from '../../coupons/coupon-discount';
 
 class ReferralCouponView {
   @ApiProperty() id!: string;
   @ApiProperty({ example: 'HOOMRI75' }) code!: string;
-  @ApiProperty({ example: 75 }) percentOff!: number;
+  @ApiPropertyOptional({ example: 75 }) percentOff?: number;
+  @ApiPropertyOptional({ example: 500, description: 'Fixed amount off, ৳' })
+  amountOff?: number;
   @ApiProperty() active!: boolean;
   @ApiProperty() firstPurchaseOnly!: boolean;
   @ApiPropertyOptional({ example: ['credit-200k'] }) packCodes?: string[];
@@ -38,7 +41,7 @@ export class ReferralLinkResponse {
       coupon: {
         id: row.coupon.id,
         code: row.coupon.code,
-        percentOff: row.coupon.percentOff,
+        ...couponOff(row.coupon),
         active: row.coupon.active,
         firstPurchaseOnly: row.coupon.firstPurchaseOnly,
         packCodes: row.coupon.packCodes?.length
@@ -61,7 +64,16 @@ export class ReferralLinkResponse {
 export class ReferralResolveResponse {
   @ApiProperty({ example: 'rahim-fb' }) slug!: string;
   @ApiProperty({ example: 'HOOMRI75' }) code!: string;
-  @ApiProperty({ example: 75 }) percentOff!: number;
+  @ApiPropertyOptional({
+    example: 75,
+    description: 'Set on a percentage coupon',
+  })
+  percentOff?: number;
+  @ApiPropertyOptional({
+    example: 500,
+    description: 'Set on a fixed-amount coupon, in ৳',
+  })
+  amountOff?: number;
   @ApiProperty({
     description: "Only good on a seller's first platform purchase",
   })

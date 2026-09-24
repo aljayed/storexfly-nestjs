@@ -24,6 +24,11 @@ import { BillingSettingsService } from '../billing/billing-settings.service';
 import { normalizeHandle } from '../buyer/handle.util';
 import type { CreateCouponDto, UpdateCouponDto } from './dto/create-coupon.dto';
 import {
+  couponDiscountCents,
+  couponOff,
+  type CouponOff,
+} from './coupon-discount';
+import {
   CouponPreviewResponse,
   CouponResponse,
   type CouponUserView,
@@ -91,13 +96,7 @@ export interface CouponPack {
   priceCents: number;
 }
 
-/** Discount rounded up to a whole taka (৳599 at 75% → ৳450 off, pay ৳149). */
-export function couponDiscountCents(
-  amountCents: number,
-  percentOff: number,
-): number {
-  return Math.ceil((amountCents * percentOff) / 100 / 100) * 100;
-}
+export { couponDiscountCents, couponOff } from './coupon-discount';
 
 const USER_COLUMNS = {
   id: true,
@@ -151,6 +150,7 @@ export class CouponsService implements OnModuleInit {
   }
 
   async create(dto: CreateCouponDto): Promise<CouponResponse> {
+    const discount = CouponsService.discountFields(dto, true);
     const user = dto.user ? await this.resolveSeller(dto.user) : null;
     const packCodes = await this.validPackCodes(dto.packCodes);
     try {
@@ -158,7 +158,7 @@ export class CouponsService implements OnModuleInit {
         .insert(coupons)
         .values({
           code: dto.code.toUpperCase(),
-          percentOff: dto.percentOff,
+          ...discount,
           description: dto.description,
           maxRedemptions: dto.maxRedemptions,
           expiresAt: dto.expiresAt ? new Date(dto.expiresAt) : undefined,
@@ -184,7 +184,7 @@ export class CouponsService implements OnModuleInit {
   async update(id: string, dto: UpdateCouponDto): Promise<CouponResponse> {
     const set: Partial<typeof coupons.$inferInsert> = {};
     if (dto.active !== undefined) set.active = dto.active;
-    if (dto.percentOff !== undefined) set.percentOff = dto.percentOff;
+    Object.assign(set, CouponsService.discountFields(dto, false));
     if (dto.description !== undefined) {
       set.description = dto.description?.trim() || null;
     }
@@ -221,6 +221,34 @@ export class CouponsService implements OnModuleInit {
       throw new NotFoundException('Coupon not found');
     }
     return CouponResponse.fromRow(row);
+  }
+
+  /**
+   * A coupon takes a percentage *or* a fixed amount off, never both - the
+   * database refuses a row with both or neither. Giving one on an edit
+   * switches the coupon over and clears the other.
+   */
+  private static discountFields(
+    dto: { percentOff?: number; amountOff?: number },
+    required: boolean,
+  ): { percentOff?: number | null; amountOffCents?: number | null } {
+    const hasPercent = dto.percentOff !== undefined;
+    const hasAmount = dto.amountOff !== undefined;
+    if (hasPercent && hasAmount) {
+      throw new BadRequestException(
+        'A coupon takes a percentage or a fixed amount off, not both.',
+      );
+    }
+    if (hasPercent) return { percentOff: dto.percentOff, amountOffCents: null };
+    if (hasAmount) {
+      return { percentOff: null, amountOffCents: dto.amountOff! * 100 };
+    }
+    if (required) {
+      throw new BadRequestException(
+        'Give the coupon a percentage or a fixed amount off.',
+      );
+    }
+    return {};
   }
 
   async setActive(id: string, active: boolean): Promise<CouponResponse> {
@@ -290,7 +318,7 @@ export class CouponsService implements OnModuleInit {
    * this, so the landing page never advertises a code that would be refused
    * at checkout.
    */
-  async launchOffer(): Promise<{ code: string; percentOff: number } | null> {
+  async launchOffer(): Promise<({ code: string } & CouponOff) | null> {
     try {
       const row = await this.db.query.coupons.findFirst({
         where: eq(coupons.code, LAUNCH_COUPON.code),
@@ -305,7 +333,7 @@ export class CouponsService implements OnModuleInit {
       ) {
         return null;
       }
-      return { code: row.code, percentOff: row.percentOff };
+      return { code: row.code, ...couponOff(row) };
     } catch {
       // A catalogue hiccup should quiet the offer, never break the page.
       return null;
@@ -393,10 +421,7 @@ export class CouponsService implements OnModuleInit {
 
     // Round the discount up to a whole taka so the price after the coupon is
     // a whole amount.
-    const discountCents = couponDiscountCents(
-      pack.priceCents,
-      coupon.percentOff,
-    );
+    const discountCents = couponDiscountCents(pack.priceCents, coupon);
     return { ok: true, coupon, discountCents };
   }
 
@@ -467,7 +492,7 @@ export class CouponsService implements OnModuleInit {
     return {
       valid: true,
       code: check.coupon.code,
-      percentOff: check.coupon.percentOff,
+      ...couponOff(check.coupon),
       amount: feeCents / 100,
       discount: check.discountCents / 100,
       total: (feeCents - check.discountCents) / 100,

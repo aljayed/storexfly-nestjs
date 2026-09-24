@@ -687,6 +687,13 @@
       "when": 1794355200000,
       "tag": "0100_shop_handle_pending",
       "breakpoints": true
+    },
+    {
+      "idx": 101,
+      "version": "7",
+      "when": 1794441600000,
+      "tag": "0101_coupon_fixed_amount",
+      "breakpoints": true
     }
   ]
 }

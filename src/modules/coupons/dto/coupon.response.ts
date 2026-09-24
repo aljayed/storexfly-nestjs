@@ -1,5 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import type { CouponRow } from '../../../database/schema';
+import { couponOff } from '../coupon-discount';
 
 /** The one seller a personal coupon belongs to. */
 export class CouponUserView {
@@ -15,7 +16,16 @@ export class CouponResponse {
   @ApiProperty() id!: string;
   @ApiProperty({ example: 'HOOMRI75' }) code!: string;
   @ApiPropertyOptional() description?: string;
-  @ApiProperty({ example: 75 }) percentOff!: number;
+  @ApiPropertyOptional({
+    example: 75,
+    description: 'Set on a percentage coupon',
+  })
+  percentOff?: number;
+  @ApiPropertyOptional({
+    example: 500,
+    description: 'Set on a fixed-amount coupon, in ৳',
+  })
+  amountOff?: number;
   @ApiProperty() active!: boolean;
   @ApiPropertyOptional() maxRedemptions?: number;
   @ApiProperty() redemptions!: number;
@@ -43,7 +53,7 @@ export class CouponResponse {
       id: row.id,
       code: row.code,
       description: row.description ?? undefined,
-      percentOff: row.percentOff,
+      ...couponOff(row),
       active: row.active,
       maxRedemptions: row.maxRedemptions ?? undefined,
       redemptions: row.redemptions,
@@ -68,6 +78,11 @@ export class CouponPreviewResponse {
   @ApiProperty() valid!: boolean;
   @ApiPropertyOptional({ example: 'HOOMRI75' }) code?: string;
   @ApiPropertyOptional({ example: 75 }) percentOff?: number;
+  @ApiPropertyOptional({
+    example: 500,
+    description: 'Fixed-amount coupon, in ৳',
+  })
+  amountOff?: number;
   /** Fee before discount, major units (৳). */
   @ApiProperty({ example: 599 }) amount!: number;
   @ApiPropertyOptional({ example: 899.25 }) discount?: number;

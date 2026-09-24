@@ -1,4 +1,5 @@
 import type { CouponRow } from '../../database/schema';
+import { couponDiscountCents } from './coupon-discount';
 import { CouponsService } from './coupons.service';
 
 /**
@@ -16,6 +17,7 @@ describe('CouponsService.check - targeting', () => {
     code: 'WELCOME',
     description: null,
     percentOff: 50,
+    amountOffCents: null,
     active: true,
     maxRedemptions: null,
     redemptions: 0,
@@ -106,5 +108,25 @@ describe('CouponsService.check - targeting', () => {
   it('accepts a first-purchase coupon from a seller with no payments', async () => {
     const svc = setup({ ...baseCoupon, firstPurchaseOnly: true });
     expect((await svc.check('WELCOME', SELLER, pack100k)).ok).toBe(true);
+  });
+});
+
+describe('couponDiscountCents', () => {
+  const pct = (percentOff: number) => ({ percentOff, amountOffCents: null });
+  const fixed = (taka: number) => ({
+    percentOff: null,
+    amountOffCents: taka * 100,
+  });
+
+  it('rounds a percentage up to a whole taka', () => {
+    expect(couponDiscountCents(59900, pct(75))).toBe(45000);
+  });
+
+  it('takes a fixed amount off as it is', () => {
+    expect(couponDiscountCents(189900, fixed(500))).toBe(50000);
+  });
+
+  it('never takes more than the price - a big fixed code makes it free', () => {
+    expect(couponDiscountCents(189900, fixed(2000))).toBe(189900);
   });
 });

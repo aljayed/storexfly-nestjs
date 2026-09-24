@@ -14,6 +14,7 @@ import { users } from './users.schema';
 
 /**
  * Platform-level discount coupons, managed from the platform admin console.
+ * A coupon takes either a percentage or a fixed amount off.
  * A coupon discounts one subscription payment - the one-off shop-creation fee
  * or, applied from the shop console, a subscription's next renewal - and each
  * seller can redeem a given code once. Codes are stored uppercase and matched
@@ -25,8 +26,11 @@ export const coupons = pgTable(
     id: uuid('id').primaryKey().defaultRandom(),
     code: varchar('code', { length: 40 }).notNull(),
     description: varchar('description', { length: 200 }),
-    // Whole-number percentage discount, 1..100.
-    percentOff: integer('percent_off').notNull(),
+    // Exactly one of these two is set (coupons_one_discount_chk):
+    // a whole-number percentage, 1..100 ...
+    percentOff: integer('percent_off'),
+    // ... or a fixed amount off, in paisa (whole taka).
+    amountOffCents: integer('amount_off_cents'),
     active: boolean('active').notNull().default(true),
     // Optional global redemption cap; null = unlimited.
     maxRedemptions: integer('max_redemptions'),

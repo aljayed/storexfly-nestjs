@@ -13,7 +13,7 @@ import { DRIZZLE } from '../../database/database.constants';
 import type { DrizzleDB } from '../../database/drizzle.types';
 import { coupons, referralLinks } from '../../database/schema';
 import { BillingSettingsService } from '../billing/billing-settings.service';
-import { couponDiscountCents } from '../coupons/coupons.service';
+import { couponDiscountCents, couponOff } from '../coupons/coupon-discount';
 import type { CreateReferralLinkDto } from './dto/create-referral-link.dto';
 import {
   ReferralLinkResponse,
@@ -147,11 +147,11 @@ export class ReferralsService {
       .where(eq(referralLinks.id, link.id));
 
     const feeCents = pack.priceCents;
-    const discountCents = couponDiscountCents(feeCents, coupon.percentOff);
+    const discountCents = couponDiscountCents(feeCents, coupon);
     return {
       slug: link.slug,
       code: coupon.code,
-      percentOff: coupon.percentOff,
+      ...couponOff(coupon),
       firstPurchaseOnly: coupon.firstPurchaseOnly,
       packCodes: allowed ? allowed.map((p) => p.code) : undefined,
       packCode: pack.code,

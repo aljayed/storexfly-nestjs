@@ -26,11 +26,25 @@ export class CreateCouponDto {
   })
   code!: string;
 
-  @ApiProperty({ example: 75, description: 'Whole-number percent, 1-100' })
+  @ApiPropertyOptional({
+    example: 75,
+    description: 'Whole-number percent, 1-100. Give this or amountOff.',
+  })
+  @IsOptional()
   @IsInt()
   @Min(1)
   @Max(100)
-  percentOff!: number;
+  percentOff?: number;
+
+  @ApiPropertyOptional({
+    example: 500,
+    description: 'A fixed amount off, in whole ৳. Give this or percentOff.',
+  })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(1_000_000)
+  amountOff?: number;
 
   @ApiPropertyOptional({ example: '75% off the first shop payment' })
   @IsOptional()
@@ -94,12 +108,25 @@ export class UpdateCouponDto {
   @IsBoolean()
   active?: boolean;
 
-  @ApiPropertyOptional({ example: 75 })
+  @ApiPropertyOptional({
+    example: 75,
+    description: 'Switches the coupon to a percentage',
+  })
   @IsOptional()
   @IsInt()
   @Min(1)
   @Max(100)
   percentOff?: number;
+
+  @ApiPropertyOptional({
+    example: 500,
+    description: 'Switches the coupon to a fixed amount off, in whole ৳',
+  })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(1_000_000)
+  amountOff?: number;
 
   @ApiPropertyOptional({ nullable: true })
   @IsOptional()
