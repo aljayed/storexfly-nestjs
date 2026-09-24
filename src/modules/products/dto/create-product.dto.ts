@@ -25,6 +25,10 @@ import {
   paymentMethodEnum,
   productTagEnum,
 } from '../../../database/schema/enums';
+import {
+  MAX_DELIVERY_DAYS,
+  MIN_DELIVERY_DAYS,
+} from '../../../common/constants/delivery';
 
 type ProductTag = (typeof productTagEnum.enumValues)[number];
 type PaymentMethod = (typeof paymentMethodEnum.enumValues)[number];
@@ -280,6 +284,40 @@ export class CreateProductDto {
   @IsNumber({ maxDecimalPlaces: 2 })
   @Min(0)
   deliveryOutside?: number;
+
+  /*
+   * How long this one item takes, in days. Null is the normal state and means
+   * "however long this shop takes" - it is how the seller hands the item back
+   * to the shop-wide window after overriding it, so null has to travel and
+   * cannot be collapsed into "absent". Absent leaves whatever is stored.
+   */
+  @ApiPropertyOptional({
+    example: 3,
+    nullable: true,
+    description:
+      "Delivery days inside Dhaka for this item. Null uses the shop's window.",
+  })
+  @IsOptional()
+  @ValidateIf((_object, value) => value !== null)
+  @Type(() => Number)
+  @IsInt()
+  @Min(MIN_DELIVERY_DAYS)
+  @Max(MAX_DELIVERY_DAYS)
+  deliveryInsideDays?: number | null;
+
+  @ApiPropertyOptional({
+    example: 7,
+    nullable: true,
+    description:
+      "Delivery days outside Dhaka for this item. Null uses the shop's window.",
+  })
+  @IsOptional()
+  @ValidateIf((_object, value) => value !== null)
+  @Type(() => Number)
+  @IsInt()
+  @Min(MIN_DELIVERY_DAYS)
+  @Max(MAX_DELIVERY_DAYS)
+  deliveryOutsideDays?: number | null;
 
   @ApiPropertyOptional({ example: '🥭' })
   @IsOptional()

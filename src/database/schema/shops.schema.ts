@@ -11,6 +11,7 @@ import {
   varchar,
 } from 'drizzle-orm/pg-core';
 import type { TrustBadge } from '../../common/constants/trust-badges';
+import { DELIVERY_DAYS } from '../../common/constants/delivery';
 import {
   brandSwatchEnum,
   kycStatusEnum,
@@ -70,6 +71,21 @@ export const shops = pgTable(
     pickupCityId: integer('pickup_city_id'),
     pickupZoneId: integer('pickup_zone_id'),
     pickupAreaId: integer('pickup_area_id'),
+    // ── How long this shop takes to deliver ────────────────────────
+    // Unlike the pickup address above, this IS a buyer's business: the
+    // gateway requires a delivery time on the live site, and a buyer wants it
+    // before they pay. Days from the order being placed, split by the same
+    // two zones the delivery charge uses.
+    //
+    // Not null: every shop has a window, and a shop that never opened the
+    // setting has the platform default (DELIVERY_DAYS). A single product can
+    // still override it - see products.deliveryInsideDays.
+    deliveryInsideDays: integer('delivery_inside_days')
+      .notNull()
+      .default(DELIVERY_DAYS.inside),
+    deliveryOutsideDays: integer('delivery_outside_days')
+      .notNull()
+      .default(DELIVERY_DAYS.outside),
     // Storefront hero banner images, stored inline as data URLs (same approach
     // as product images). Ordered; the storefront rotates through them.
     bannerImages: text('banner_images').array(),

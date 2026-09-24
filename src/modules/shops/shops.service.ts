@@ -589,6 +589,16 @@ export class ShopsService {
     if (dto.requireBuyerLogin !== undefined) {
       patch.requireBuyerLogin = dto.requireBuyerLogin;
     }
+    // The buyer-facing delivery window. Deliberately not in `deliveryKeys`
+    // below: those are the courier pickup address, and validating a whole
+    // pickup store because a seller changed "5 days" to "4" would refuse a
+    // save that has nothing to do with it.
+    if (dto.deliveryInsideDays !== undefined) {
+      patch.deliveryInsideDays = dto.deliveryInsideDays;
+    }
+    if (dto.deliveryOutsideDays !== undefined) {
+      patch.deliveryOutsideDays = dto.deliveryOutsideDays;
+    }
     const deliveryKeys = ['deliveryMode', 'pickupDistrict', 'pickupContactName', 'pickupPhone', 'pickupAddress', 'pickupCityId', 'pickupZoneId', 'pickupAreaId'] as const;
     if (deliveryKeys.some(key => dto[key] !== undefined)) {
       await this.delivery.validate({ ...current, ...dto, deliveryMode: dto.deliveryMode ?? current.deliveryMode ?? undefined,

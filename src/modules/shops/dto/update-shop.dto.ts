@@ -12,6 +12,7 @@ import {
   IsInt,
   IsOptional,
   IsString,
+  Max,
   MaxLength,
   Min,
   MinLength,
@@ -30,6 +31,10 @@ import {
   SUPPORTED_CURRENCIES,
   type CurrencyCode,
 } from '../../../common/constants/currencies';
+import {
+  MAX_DELIVERY_DAYS,
+  MIN_DELIVERY_DAYS,
+} from '../../../common/constants/delivery';
 import {
   brandSwatchEnum,
   paymentMethodEnum,
@@ -197,4 +202,36 @@ export class UpdateShopDto extends DeliverySettingsDto {
   @ValidateNested({ each: true })
   @Type(() => TrustBadgeDto)
   trustBadges?: TrustBadgeDto[];
+
+  /*
+   * How long this shop takes to deliver, in days from the order being placed.
+   * Buyer-facing and required by the payment gateway, which is why it is here
+   * rather than on DeliverySettingsDto with the courier pickup address: that
+   * one is shared with onboarding, where nobody is asked this yet, and a new
+   * shop simply starts on the platform window.
+   *
+   * Every product in the shop quotes these unless it carries its own
+   * override, so changing one of them moves the whole catalogue.
+   */
+  @ApiPropertyOptional({
+    example: 5,
+    description: 'Delivery time inside Dhaka, in days. Shop-wide default.',
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(MIN_DELIVERY_DAYS)
+  @Max(MAX_DELIVERY_DAYS)
+  deliveryInsideDays?: number;
+
+  @ApiPropertyOptional({
+    example: 10,
+    description: 'Delivery time outside Dhaka, in days. Shop-wide default.',
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(MIN_DELIVERY_DAYS)
+  @Max(MAX_DELIVERY_DAYS)
+  deliveryOutsideDays?: number;
 }

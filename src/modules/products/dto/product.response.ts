@@ -78,6 +78,24 @@ export class ProductResponse {
     description: 'Delivery charge outside Dhaka (0 = free)',
   })
   deliveryOutside!: number;
+
+  /**
+   * This item's own delivery window, in days, or null when it simply takes as
+   * long as the shop takes. Null is the common case: a storefront resolves it
+   * against the shop it already has, rather than every product row carrying a
+   * copy of the shop's promise that would go stale the moment it changed.
+   */
+  @ApiPropertyOptional({
+    nullable: true,
+    description: "Delivery days inside Dhaka; null = the shop's window",
+  })
+  deliveryInsideDays!: number | null;
+
+  @ApiPropertyOptional({
+    nullable: true,
+    description: "Delivery days outside Dhaka; null = the shop's window",
+  })
+  deliveryOutsideDays!: number | null;
   @ApiProperty() emoji!: string;
   @ApiProperty() tone!: string;
   @ApiPropertyOptional() tag?: string;
@@ -122,6 +140,8 @@ export class ProductResponse {
       stock: row.stock,
       deliveryDhaka: centsToDollars(row.deliveryDhakaCents),
       deliveryOutside: centsToDollars(row.deliveryOutsideCents),
+      deliveryInsideDays: row.deliveryInsideDays,
+      deliveryOutsideDays: row.deliveryOutsideDays,
       emoji: row.emoji,
       tone: row.tone,
       tag: row.tag ?? undefined,

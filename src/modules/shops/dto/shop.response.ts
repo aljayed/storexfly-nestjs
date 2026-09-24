@@ -47,6 +47,15 @@ export class ShopResponse {
   })
   requireBuyerLogin!: boolean;
   @ApiProperty({ enum: ['free', 'paid'] }) plan!: string;
+  /**
+   * How long this shop takes to deliver, in days. Public, unlike the pickup
+   * address above: the gateway requires the delivery time on the live site,
+   * and every product page quotes these unless the item overrides them.
+   */
+  @ApiProperty({ example: 5, description: 'Delivery days inside Dhaka' })
+  deliveryInsideDays!: number;
+  @ApiProperty({ example: 10, description: 'Delivery days outside Dhaka' })
+  deliveryOutsideDays!: number;
   @ApiPropertyOptional({
     type: [String],
     description: 'Storefront hero banner images (data URLs), in display order',
@@ -98,6 +107,8 @@ export class ShopResponse {
       codAdvanceEnabled: row.codAdvanceEnabled,
       requireBuyerLogin: row.requireBuyerLogin,
       plan: row.plan,
+      deliveryInsideDays: row.deliveryInsideDays,
+      deliveryOutsideDays: row.deliveryOutsideDays,
       bannerImages: row.bannerImages ?? undefined,
       floatingImages: row.floatingImages ?? undefined,
       trustBadges: row.trustBadges ?? undefined,

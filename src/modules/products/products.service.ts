@@ -393,6 +393,10 @@ export class ProductsService {
           dto.deliveryOutside !== undefined
             ? dollarsToCents(dto.deliveryOutside)
             : undefined,
+        // Null and absent both mean "take as long as the shop takes", which
+        // is the column default - so neither needs writing on create.
+        deliveryInsideDays: dto.deliveryInsideDays ?? undefined,
+        deliveryOutsideDays: dto.deliveryOutsideDays ?? undefined,
         emoji: dto.emoji ?? '📦',
         tone: dto.tone ?? '#f3f1ec',
         tag: dto.tag,
@@ -478,6 +482,15 @@ export class ProductsService {
     }
     if (dto.deliveryOutside !== undefined) {
       patch.deliveryOutsideCents = dollarsToCents(dto.deliveryOutside);
+    }
+    // Here null is meaningful and absent is not: null is how the seller hands
+    // the item back to the shop-wide window after overriding it, so it has to
+    // reach the column rather than being coalesced away.
+    if (dto.deliveryInsideDays !== undefined) {
+      patch.deliveryInsideDays = dto.deliveryInsideDays;
+    }
+    if (dto.deliveryOutsideDays !== undefined) {
+      patch.deliveryOutsideDays = dto.deliveryOutsideDays;
     }
     if (effective.length) {
       patch.stock = this.combinationStock(effective);

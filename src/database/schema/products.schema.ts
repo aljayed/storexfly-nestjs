@@ -123,6 +123,14 @@ export const products = pgTable(
     deliveryOutsideCents: integer('delivery_outside_cents')
       .notNull()
       .default(12000),
+    // How long this one item takes, in days, split by the same two zones.
+    // Null - the default - means "however long this shop normally takes", so
+    // a seller who changes the shop's window moves the whole catalogue with
+    // it. A number here is an override for this item alone, for the made-to-
+    // order or shipped-from-abroad exception. Never read these directly:
+    // resolve through the shop (see common/constants/delivery.ts).
+    deliveryInsideDays: integer('delivery_inside_days'),
+    deliveryOutsideDays: integer('delivery_outside_days'),
     emoji: varchar('emoji', { length: 16 }).notNull().default('📦'),
     tone: varchar('tone', { length: 9 }).notNull().default('#f3f1ec'),
     tag: productTagEnum('tag'),
