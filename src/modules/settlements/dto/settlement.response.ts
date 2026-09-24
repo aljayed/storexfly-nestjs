@@ -14,6 +14,33 @@ export class SettlementMethodResponse {
   fee!: number;
 }
 
+/**
+ * A receipt in a list: what it is and what it settled, but not the file.
+ * The document itself comes from the per-receipt route, because a history
+ * carries one row per month and each document is megabytes.
+ */
+export class SettlementReceiptResponse {
+  @ApiProperty({ description: "Position in this cycle's receipts" })
+  index!: number;
+  @ApiPropertyOptional({ example: 'bkash-sept-payout.pdf' })
+  name?: string;
+  @ApiProperty({ description: 'When the operator recorded this transfer' })
+  at!: string;
+  @ApiProperty({ description: 'What the payout stood at, in major units' })
+  payout!: number;
+  @ApiProperty({ example: 'application/pdf' })
+  mime!: string;
+}
+
+/** One receipt, document and all. */
+export class SettlementProofResponse extends SettlementReceiptResponse {
+  @ApiProperty({
+    description: 'The receipt as a base64 data URL',
+    example: 'data:application/pdf;base64,…',
+  })
+  data!: string;
+}
+
 /** One payout cycle of a shop, either computed live or a paid snapshot. */
 export class SettlementMonthResponse {
   @ApiProperty({
@@ -51,6 +78,11 @@ export class SettlementMonthResponse {
       'only when a settled cycle has kept taking deliveries',
   })
   unrecorded?: number;
+  @ApiPropertyOptional({
+    type: [SettlementReceiptResponse],
+    description: 'Proof of every transfer recorded against this cycle',
+  })
+  receipts?: SettlementReceiptResponse[];
   @ApiProperty({
     enum: ['accruing', 'scheduled', 'due', 'overdue', 'paid', 'none'],
   })

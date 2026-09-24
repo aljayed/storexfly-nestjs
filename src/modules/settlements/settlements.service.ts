@@ -28,6 +28,7 @@ import {
 } from '../../database/schema';
 import type {
   DeletedShopSettlementRow,
+  SettlementProof,
   SettlementRow,
 } from '../../database/schema';
 import { ShopsService } from '../shops/shops.service';
@@ -53,6 +54,8 @@ import {
 } from './settlement-core';
 import type {
   SettlementMonthResponse,
+  SettlementProofResponse,
+  SettlementReceiptResponse,
   ShopSettlementsResponse,
 } from './dto/settlement.response';
 import type {
@@ -333,6 +336,7 @@ export class SettlementsService {
     period: string,
     paid: boolean,
     note?: string,
+    proof?: { data: string; name?: string },
   ): Promise<PlatformSettlementRowResponse> {
     const shop = await this.shops.requireById(shopId);
     // A payout is recorded when the money is actually transferred, and that
@@ -353,6 +357,15 @@ export class SettlementsService {
       return this.platformRow(shop, period);
     }
 
+    if (!proof?.data) {
+      throw new BadRequestException({
+        error: 'PayoutProofRequired',
+        message:
+          'Attach the receipt for this transfer - the seller is shown it as ' +
+          'the proof they were paid.',
+      });
+    }
+
     const catalog = await this.methods.byCode();
     const buckets = await this.bucketsFor(shopId, period);
     const core = classify(buckets, catalog);
@@ -362,6 +375,27 @@ export class SettlementsService {
         'No online payments this month - there is nothing to pay out.',
       );
     }
+
+    // Receipts append. A cycle still taking deliveries can be paid more than
+    // once, and each transfer is its own document; replacing would leave the
+    // seller with a receipt that does not account for what they were sent
+    // the first time.
+    const existing = await this.db.query.settlements.findFirst({
+      where: and(
+        eq(settlements.shopId, shopId),
+        eq(settlements.period, period),
+      ),
+      columns: { proofs: true },
+    });
+    const proofs: SettlementProof[] = [
+      ...(existing?.proofs ?? []),
+      {
+        data: proof.data,
+        name: proof.name?.trim() || undefined,
+        payoutCents: payout,
+        at: new Date().toISOString(),
+      },
+    ];
     // The mbank/card columns predate dynamic methods; they are still filled
     // (grouped by method kind) so older tooling keeps reading sane numbers.
     const kindCents = (kind: 'mbank' | 'card') =>
@@ -381,6 +415,7 @@ export class SettlementsService {
       cardFeeBp: catalog.get('card')?.feeBp ?? CARD_FEE_BP,
       breakdown: core.online,
       note: note?.trim() || null,
+      proofs,
       paidAt: new Date(),
     };
     await this.db
@@ -391,6 +426,38 @@ export class SettlementsService {
         set: snapshot,
       });
     return this.platformRow(shop, period);
+  }
+
+  /**
+   * One receipt, for whoever is entitled to it - the operator who recorded
+   * the payout, or the seller it was paid to. The caller has already been
+   * checked; this only finds the document.
+   */
+  async proofFor(
+    shopId: string,
+    period: string,
+    index: number,
+  ): Promise<SettlementProofResponse> {
+    const row = await this.db.query.settlements.findFirst({
+      where: and(
+        eq(settlements.shopId, shopId),
+        eq(settlements.period, period),
+      ),
+      columns: { proofs: true },
+    });
+    return pickProof(row?.proofs, index);
+  }
+
+  /** The same, for a payout owed to a shop that no longer exists. */
+  async deletedProofFor(
+    id: string,
+    index: number,
+  ): Promise<SettlementProofResponse> {
+    const row = await this.db.query.deletedShopSettlements.findFirst({
+      where: eq(deletedShopSettlements.id, id),
+      columns: { proofs: true },
+    });
+    return pickProof(row?.proofs, index);
   }
 
   /**
@@ -410,12 +477,36 @@ export class SettlementsService {
     id: string,
     paid: boolean,
     note?: string,
+    proof?: { data: string; name?: string },
   ): Promise<DeletedShopSettlementResponse> {
+    // The shop is gone, so there is no seller console for a receipt to
+    // appear in. One is kept when the operator has it - it is the platform's
+    // own record of the transfer - but not demanded, unlike a live shop's.
+    const existing = await this.db.query.deletedShopSettlements.findFirst({
+      where: eq(deletedShopSettlements.id, id),
+      columns: { proofs: true, payoutCents: true },
+    });
+    const proofs =
+      paid && proof?.data
+        ? [
+            ...(existing?.proofs ?? []),
+            {
+              data: proof.data,
+              name: proof.name?.trim() || undefined,
+              payoutCents: existing?.payoutCents ?? 0,
+              at: new Date().toISOString(),
+            },
+          ]
+        : paid
+          ? (existing?.proofs ?? null)
+          : null;
+
     const [row] = await this.db
       .update(deletedShopSettlements)
       .set({
         paidAt: paid ? new Date() : null,
         note: paid ? note?.trim() || null : null,
+        proofs,
       })
       .where(eq(deletedShopSettlements.id, id))
       .returning();
@@ -510,6 +601,7 @@ export class SettlementsService {
       fees: centsToDollars(totalFeeCents(core)),
       payout: centsToDollars(payout),
       unrecorded: unrecorded ? centsToDollars(unrecorded) : undefined,
+      receipts: receiptsOf(paid?.proofs),
       status: statusOf(period, !!paid, payout),
       windowFrom: window.from,
       windowTo: window.to,
@@ -517,6 +609,46 @@ export class SettlementsService {
       note: paid?.note ?? undefined,
     };
   }
+}
+
+/**
+ * What a receipt looks like in a list: enough to name it and say what it
+ * settled, never the file. The documents are megabytes each and a history
+ * carries a row per month, so they are fetched one at a time instead.
+ */
+/** One receipt's bytes, or a 404 if that is not a receipt anybody recorded. */
+function pickProof(
+  proofs: SettlementProof[] | null | undefined,
+  index: number,
+): SettlementProofResponse {
+  const proof = proofs?.[index];
+  if (!proof) throw new NotFoundException('No such receipt.');
+  return {
+    index,
+    name: proof.name,
+    at: proof.at,
+    payout: centsToDollars(proof.payoutCents),
+    mime: mimeOfDataUrl(proof.data),
+    data: proof.data,
+  };
+}
+
+function receiptsOf(
+  proofs: SettlementProof[] | null | undefined,
+): SettlementReceiptResponse[] | undefined {
+  if (!proofs?.length) return undefined;
+  return proofs.map((p, index) => ({
+    index,
+    name: p.name,
+    at: p.at,
+    payout: centsToDollars(p.payoutCents),
+    mime: mimeOfDataUrl(p.data),
+  }));
+}
+
+/** The media type a data URL declares, for a viewer that has not fetched it. */
+function mimeOfDataUrl(data: string): string {
+  return /^data:([a-z0-9.+-]+\/[a-z0-9.+-]+);/i.exec(data)?.[1] ?? '';
 }
 
 /** API shape for one owed month of a deleted shop. */
@@ -544,6 +676,7 @@ function deletedResponse(
       fee: centsToDollars(m.feeCents),
     })),
     payoutBank: row.payoutBank ?? undefined,
+    receipts: receiptsOf(row.proofs),
     windowFrom: window.from,
     windowTo: window.to,
     owedAt: row.owedAt.toISOString(),

@@ -1,6 +1,9 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import type { PayoutBank } from '../../../database/schema';
-import { SettlementMonthResponse } from './settlement.response';
+import {
+  SettlementMonthResponse,
+  SettlementReceiptResponse,
+} from './settlement.response';
 
 /** One shop's numbers for the selected period, in the shop's own currency. */
 export class PlatformSettlementRowResponse extends SettlementMonthResponse {
@@ -57,6 +60,11 @@ export class DeletedShopSettlementResponse {
   @ApiProperty() owedAt!: string;
   @ApiPropertyOptional() paidAt?: string;
   @ApiPropertyOptional() note?: string;
+  @ApiPropertyOptional({
+    type: [SettlementReceiptResponse],
+    description: 'Proof of every transfer recorded against this debt',
+  })
+  receipts?: SettlementReceiptResponse[];
   @ApiProperty({ enum: ['owed', 'paid'] }) status!: 'owed' | 'paid';
 }
 

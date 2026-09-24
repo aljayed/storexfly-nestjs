@@ -21,6 +21,21 @@ export interface SettlementMethodSnapshot {
 }
 
 /**
+ * One receipt for one transfer: the proof an operator uploads when they
+ * record a payout, and the only thing the seller has to check the money
+ * against. `data` is a base64 image or PDF data URL - held inline rather
+ * than in the media bucket, which is public, because this is a payment
+ * document. `payoutCents` is what the cycle stood at when it was uploaded,
+ * so a trail of receipts reads as the running total it settled up to.
+ */
+export interface SettlementProof {
+  data: string;
+  name?: string;
+  payoutCents: number;
+  at: string;
+}
+
+/**
  * A completed monthly payout of a shop's prepaid (online) order revenue.
  * Pending settlements are always computed live from `orders`; a row is only
  * written when a platform operator marks the month as paid, snapshotting the
@@ -57,6 +72,10 @@ export const settlements = pgTable(
     breakdown: jsonb('breakdown').$type<SettlementMethodSnapshot[]>(),
     // Free-form payment reference (bank transfer id, bKash trx id, …).
     note: varchar('note', { length: 200 }),
+    // Every receipt recorded against this cycle, oldest first. A cycle still
+    // taking deliveries can be paid more than once, and each transfer brings
+    // its own proof, so these append rather than replace.
+    proofs: jsonb('proofs').$type<SettlementProof[]>(),
     paidAt: timestamp('paid_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [

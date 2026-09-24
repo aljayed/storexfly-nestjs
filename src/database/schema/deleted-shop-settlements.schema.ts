@@ -7,7 +7,10 @@ import {
   uuid,
   varchar,
 } from 'drizzle-orm/pg-core';
-import type { SettlementMethodSnapshot } from './settlements.schema';
+import type {
+  SettlementMethodSnapshot,
+  SettlementProof,
+} from './settlements.schema';
 import type { PayoutBank } from './shops.schema';
 import { users } from './users.schema';
 
@@ -48,6 +51,10 @@ export const deletedShopSettlements = pgTable(
     // Set when the operator records the transfer; null = still owed.
     paidAt: timestamp('paid_at', { withTimezone: true }),
     note: varchar('note', { length: 200 }),
+    // Receipts for the transfers that cleared this debt. Optional here: the
+    // shop is gone, so there is no console left to show them in - they are
+    // kept as the platform's own record.
+    proofs: jsonb('proofs').$type<SettlementProof[]>(),
   },
   (table) => [
     index('deleted_shop_settlements_paid_idx').on(table.paidAt),

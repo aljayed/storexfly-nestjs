@@ -33,6 +33,36 @@ export class SettlementDecisionDto {
   @IsString()
   @MaxLength(200)
   note?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Receipt for the transfer as a data URL (image or PDF). Required ' +
+      'when recording a payout - the seller is shown it as the proof they ' +
+      'were paid.',
+    example: 'data:application/pdf;base64,…',
+  })
+  @IsOptional()
+  @IsString()
+  // Strict shape check: this string is later rendered in two consoles, so
+  // only base64 image/PDF data URLs are ever accepted - never markup or
+  // another URL scheme.
+  @Matches(
+    /^data:(image\/(png|jpeg|jpg|webp)|application\/pdf);base64,[A-Za-z0-9+/]+=*$/,
+    { message: 'proof must be a base64 image or PDF data URL' },
+  )
+  // ~3 MiB of file. A receipt is a screenshot or a one-page invoice, and
+  // these live inline in the row rather than in object storage.
+  @MaxLength(4_000_000)
+  proof?: string;
+
+  @ApiPropertyOptional({
+    description: 'Original filename of the receipt, shown to the seller',
+    example: 'bkash-sept-payout.pdf',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(160)
+  proofName?: string;
 }
 
 export { PERIOD_PATTERN };

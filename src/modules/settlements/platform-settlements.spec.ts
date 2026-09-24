@@ -1,3 +1,4 @@
+import { BadRequestException } from '@nestjs/common';
 import { SettlementsService } from './settlements.service';
 import type { DrizzleDB } from '../../database/drizzle.types';
 import type { ShopsService } from '../shops/shops.service';
@@ -26,6 +27,33 @@ const order = (shopId: string, deliveredOn: string, cents: number) => ({
   handedOverAt: null,
   deliveryMode: 'carrybee' as const,
 });
+
+/** One recorded payout of that cycle, as the snapshot row holds it. */
+const PAID_SNAPSHOT = {
+  shopId: 'shop-a',
+  period: '2026-10',
+  ordersCount: 1,
+  totalCents: 5000,
+  codCents: 0,
+  mbankCents: 5000,
+  cardCents: 0,
+  otherCents: 0,
+  feeCents: 150,
+  payoutCents: 4850,
+  mbankFeeBp: 300,
+  cardFeeBp: 350,
+  breakdown: [
+    {
+      code: 'mbank',
+      title: 'Mobile banking',
+      cents: 5000,
+      feeBp: 300,
+      feeCents: 150,
+    },
+  ],
+  note: null,
+  paidAt: new Date('2026-09-22T06:00:00.000Z'),
+};
 
 const SHOPS = [
   { id: 'shop-a', name: 'Anar', handle: 'anar', currency: 'BDT' },
@@ -148,33 +176,7 @@ describe('the cycles the settlements screen offers', () => {
   it('leaves a settled cycle out of the ones still owing', async () => {
     const service = serviceWith({
       orders: [order('shop-a', '2026-09-20', 5000)],
-      settlements: [
-        {
-          shopId: 'shop-a',
-          period: '2026-10',
-          ordersCount: 1,
-          totalCents: 5000,
-          codCents: 0,
-          mbankCents: 5000,
-          cardCents: 0,
-          otherCents: 0,
-          feeCents: 150,
-          payoutCents: 4850,
-          mbankFeeBp: 300,
-          cardFeeBp: 350,
-          breakdown: [
-            {
-              code: 'mbank',
-              title: 'Mobile banking',
-              cents: 5000,
-              feeBp: 300,
-              feeCents: 150,
-            },
-          ],
-          note: null,
-          paidAt: new Date('2026-09-22T06:00:00.000Z'),
-        },
-      ],
+      settlements: [PAID_SNAPSHOT],
     });
 
     const { unsettled, rows } = await service.forPlatform();
@@ -190,33 +192,7 @@ describe('the cycles the settlements screen offers', () => {
         order('shop-a', '2026-09-20', 5000), // covered by the snapshot below
         order('shop-a', '2026-09-23', 2000), // delivered after it was paid
       ],
-      settlements: [
-        {
-          shopId: 'shop-a',
-          period: '2026-10',
-          ordersCount: 1,
-          totalCents: 5000,
-          codCents: 0,
-          mbankCents: 5000,
-          cardCents: 0,
-          otherCents: 0,
-          feeCents: 150,
-          payoutCents: 4850,
-          mbankFeeBp: 300,
-          cardFeeBp: 350,
-          breakdown: [
-            {
-              code: 'mbank',
-              title: 'Mobile banking',
-              cents: 5000,
-              feeBp: 300,
-              feeCents: 150,
-            },
-          ],
-          note: null,
-          paidAt: new Date('2026-09-22T06:00:00.000Z'),
-        },
-      ],
+      settlements: [PAID_SNAPSHOT],
     });
 
     const { rows, totals, unsettled } = await service.forPlatform();
@@ -231,6 +207,49 @@ describe('the cycles the settlements screen offers', () => {
     expect(unsettled).toEqual(['2026-10']);
   });
 
+  it('carries a receipt as a name and an amount, never as the file', async () => {
+    const service = serviceWith({
+      orders: [order('shop-a', '2026-09-20', 5000)],
+      settlements: [
+        {
+          ...PAID_SNAPSHOT,
+          proofs: [
+            {
+              data: 'data:application/pdf;base64,JVBERi0=',
+              name: 'bkash-oct.pdf',
+              payoutCents: 4850,
+              at: '2026-09-22T06:00:00.000Z',
+            },
+          ],
+        },
+      ],
+    });
+
+    const { rows } = await service.forPlatform();
+
+    expect(rows[0].receipts).toEqual([
+      {
+        index: 0,
+        name: 'bkash-oct.pdf',
+        at: '2026-09-22T06:00:00.000Z',
+        payout: 48.5,
+        mime: 'application/pdf',
+      },
+    ]);
+    // The document is megabytes and a history is a row per month.
+    expect(JSON.stringify(rows[0])).not.toContain('JVBERi0=');
+  });
+
+  it('leaves receipts off a cycle nobody has been paid for', async () => {
+    const service = serviceWith({
+      orders: [order('shop-a', '2026-09-20', 5000)],
+    });
+
+    const { rows } = await service.forPlatform();
+
+    expect(rows[0].receipts).toBeUndefined();
+  });
+
   it('ignores an order that has not been delivered yet', async () => {
     const undelivered = {
       ...order('shop-a', '2026-09-20', 5000),
@@ -242,5 +261,52 @@ describe('the cycles the settlements screen offers', () => {
 
     expect(unsettled).toEqual([]);
     expect(rows).toEqual([]);
+  });
+});
+
+/**
+ * The receipt is the seller's only way to check that money they were told
+ * about actually arrived, so a payout cannot be recorded without one. The
+ * guard runs before any of the payout maths, which is why this needs nothing
+ * of the database.
+ */
+describe('recording a payout', () => {
+  const service = () =>
+    new SettlementsService(
+      { query: {} } as never,
+      { requireById: jest.fn().mockResolvedValue(SHOPS[0]) } as never,
+      {} as never,
+    );
+
+  it('refuses without a receipt for the transfer', async () => {
+    await expect(
+      service().decide('shop-a', '2026-09', true),
+    ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('names what is missing rather than failing vaguely', async () => {
+    await expect(service().decide('shop-a', '2026-09', true)).rejects.toThrow(
+      /receipt/i,
+    );
+  });
+
+  it('asks for nothing extra to undo one', async () => {
+    // Undoing deletes the row - there is no transfer to evidence.
+    const db = {
+      query: {},
+      delete: () => ({
+        where: () => ({ returning: () => Promise.resolve([]) }),
+      }),
+    };
+    const undo = new SettlementsService(
+      db as never,
+      { requireById: jest.fn().mockResolvedValue(SHOPS[0]) } as never,
+      {} as never,
+    );
+
+    // Reaches the "nothing to undo" case, so it got past any proof check.
+    await expect(undo.decide('shop-a', '2026-09', false)).rejects.toThrow(
+      /has not been marked paid/i,
+    );
   });
 });
