@@ -95,11 +95,10 @@ describe('shop onboarding persistence', () => {
     );
     expect(h.db.transaction).toHaveBeenCalledTimes(1);
   });
-  // One proven way of reaching the seller is the floor. Demanding both was
-  // two codes before they had seen anything of the product - and unreachable
-  // for a seller whose SMS never arrives.
+  // Both proven ways of reaching the seller are the floor: one alone - a
+  // verified email with a number only saved from a checkout, say - is refused.
   it.each(['emailVerified', 'phoneVerified'])(
-    'opens a shop for an account that has proved %s alone',
+    'refuses an account that has proved %s alone',
     async (flag) => {
       const h = harness();
       h.db.query.users.findFirst.mockReset().mockResolvedValue({
@@ -107,10 +106,10 @@ describe('shop onboarding persistence', () => {
         emailVerified: flag === 'emailVerified',
         phoneVerified: flag === 'phoneVerified',
       });
-      await expect(
-        createShop(h.service, contact.id, payload),
-      ).resolves.toBeDefined();
-      expect(h.db.transaction).toHaveBeenCalledTimes(1);
+      await expect(createShop(h.service, contact.id, payload)).rejects.toThrow(
+        ForbiddenException,
+      );
+      expect(h.db.transaction).not.toHaveBeenCalled();
     },
   );
 

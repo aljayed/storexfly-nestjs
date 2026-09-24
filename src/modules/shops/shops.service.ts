@@ -221,16 +221,17 @@ export class ShopsService {
     dto: CreateShopDto,
     opts: {
       /**
-       * Open on a temporary link rather than refuse when the name is taken.
-       * Only for a shop that has already been paid for: the money is in, so
-       * a lost name is something to fix afterwards, not a reason to keep it.
+       * The shop has already been paid for. The money is in, so what was
+       * settled when the name was held is not asked again: a lost name opens
+       * on a temporary link instead of refusing, and the contact check - run
+       * when the name was held and again at the pay button - is not repeated.
        */
-      temporaryHandleIfTaken?: boolean;
+      paid?: boolean;
     } = {},
   ): Promise<NewShopRow> {
     // Both a verified email and a verified phone - an account nobody can be
     // reached on has no business opening a storefront.
-    await this.assertContactVerified(ownerId);
+    if (!opts.paid) await this.assertContactVerified(ownerId);
     const owned = await this.db.query.shops.findMany({
       where: eq(shops.ownerId, ownerId),
       columns: { id: true, kycStatus: true },
@@ -248,7 +249,7 @@ export class ShopsService {
     await this.blockedWords.assertClean(dto.name);
     await this.blockedWords.assertClean(handle);
     if (await this.handleTakenByOther(handle, ownerId)) {
-      if (!opts.temporaryHandleIfTaken) {
+      if (!opts.paid) {
         throw ShopsService.handleTaken();
       }
       handle = await this.temporaryHandle(ownerId);
@@ -469,13 +470,13 @@ export class ShopsService {
   }
 
   /**
-   * Shop creation requires one proven way of reaching the account - a
-   * verified email or a verified phone number. The 403 carries a
+   * Shop creation requires both proven ways of reaching the account - a
+   * verified email and a verified phone number. The 403 carries a
    * machine-readable `error` so the wizard can drop the seller back onto the
    * verification step (which re-reads /auth/verify/status for the per-field
    * detail) instead of matching on the message text.
    */
-  private async assertContactVerified(ownerId: string): Promise<void> {
+  async assertContactVerified(ownerId: string): Promise<void> {
     const user = await this.db.query.users.findFirst({
       where: eq(users.id, ownerId),
       columns: {
@@ -493,7 +494,7 @@ export class ShopsService {
         statusCode: HttpStatus.FORBIDDEN,
         error: 'ContactVerificationRequired',
         message:
-          'Verify your email address or your phone number before creating a shop.',
+          'Verify both your email address and your phone number before creating a shop.',
       });
     }
   }

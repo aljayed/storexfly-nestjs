@@ -222,6 +222,9 @@ export class ShopOpeningService implements OnModuleInit, OnModuleDestroy {
     },
   ): Promise<{ paymentUrl: string | null; shop?: ShopResponse }> {
     const draft = await this.requireLive(ownerId, id);
+    // Asked again here, not only when the name was held: a hold made before
+    // both contacts were required must not reach the gateway without them.
+    await this.shops.assertContactVerified(ownerId);
     const pack = await this.billing.packByCode(input.packCode);
     if (!pack || !pack.active) {
       throw new BadRequestException('That credit pack is not available.');
@@ -459,7 +462,7 @@ export class ShopOpeningService implements OnModuleInit, OnModuleDestroy {
       // Paid for, so a name lost in the meantime opens on a temporary link
       // rather than keeping the money.
       const values = await this.shops.prepareShop(draft.ownerId, dto, {
-        temporaryHandleIfTaken: true,
+        paid: true,
       });
       const row = await this.shops.createPreparedShop(draft.ownerId, values);
       shopId = row.id;

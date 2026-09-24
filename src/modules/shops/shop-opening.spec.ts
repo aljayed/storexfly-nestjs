@@ -109,6 +109,7 @@ function harness(
   };
   const shops = {
     prepareShop: jest.fn().mockResolvedValue({ handle: 'test-shop', ownerId: OWNER }),
+    assertContactVerified: jest.fn().mockResolvedValue(undefined),
     createPreparedShop: jest.fn().mockResolvedValue({
       id: 'shop-1',
       ...payload,
@@ -222,7 +223,7 @@ describe('opening a shop is a purchase', () => {
       gatewayTxnId: 'BANK-1',
     });
     expect(h.shops.prepareShop).toHaveBeenCalledWith(OWNER, expect.anything(), {
-      temporaryHandleIfTaken: true,
+      paid: true,
     });
     expect(h.shops.createPreparedShop).toHaveBeenCalledTimes(1);
   });
