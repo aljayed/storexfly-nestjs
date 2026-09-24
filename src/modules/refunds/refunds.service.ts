@@ -9,11 +9,13 @@ import { and, desc, eq, inArray, lt } from 'drizzle-orm';
 import { randomBytes } from 'node:crypto';
 import { DRIZZLE } from '../../database/database.constants';
 import type { DrizzleDB } from '../../database/drizzle.types';
+import { isUniqueViolation } from '../../common/utils/postgres-error.util';
 import {
   orders,
   paymentRefunds,
   paymentTransactions,
   type PaymentRefundRow,
+  type SubscriptionPaymentRow,
 } from '../../database/schema';
 import { SslcommerzService } from '../gateways/sslcommerz.service';
 
@@ -130,7 +132,12 @@ export class RefundsService implements OnModuleInit, OnModuleDestroy {
       where: eq(orders.id, orderId),
     });
     if (!order) {
-      return { filed: false, manual: false, status: 'failed', reason: 'Order not found' };
+      return {
+        filed: false,
+        manual: false,
+        status: 'failed',
+        reason: 'Order not found',
+      };
     }
 
     // The charge to reverse: the most recent settled transaction for this
@@ -168,6 +175,99 @@ export class RefundsService implements OnModuleInit, OnModuleDestroy {
     return this.fileWithGateway(row, order.reference);
   }
 
+  /**
+   * Give a seller back a platform payment that bought nothing - an opening
+   * pack a later payment replaced. Same rules as an order: SSLCommerz charges
+   * are filed with the gateway, anything else is recorded 'manual' for a
+   * person to pay back.
+   *
+   * Idempotent per payment: a live refund is reported rather than filed
+   * again, and the database refuses a second one even if two requests race.
+   */
+  async refundPlatformPayment(
+    payment: Pick<
+      SubscriptionPaymentRow,
+      'id' | 'amountCents' | 'gateway' | 'gatewayTxnId' | 'paymentTransactionId'
+    >,
+    opts: { reason: string },
+  ): Promise<RefundOutcome> {
+    const live = await this.livePlatformRefund(payment.id);
+    if (live) return RefundsService.outcomeOf(live);
+
+    const charge = payment.paymentTransactionId
+      ? await this.db.query.paymentTransactions.findFirst({
+          where: eq(paymentTransactions.id, payment.paymentTransactionId),
+        })
+      : undefined;
+    const provider = charge?.provider ?? payment.gateway ?? 'none';
+    const bankTranId = charge?.gatewayTxnId ?? payment.gatewayTxnId;
+
+    let row: PaymentRefundRow;
+    try {
+      [row] = await this.db
+        .insert(paymentRefunds)
+        .values({
+          subscriptionPaymentId: payment.id,
+          transactionId: charge?.id,
+          provider,
+          refundTransId: RefundsService.mintRefundId(),
+          bankTranId,
+          amountCents: charge?.amountCents ?? payment.amountCents,
+          reason: opts.reason.slice(0, 255),
+          initiatedBy: 'seller',
+          status:
+            provider === 'sslcommerz' && bankTranId ? 'requested' : 'manual',
+        })
+        .returning();
+    } catch (err) {
+      if (!isUniqueViolation(err)) throw err;
+      // Another request filed it a moment ago.
+      const existing = await this.livePlatformRefund(payment.id);
+      if (existing) return RefundsService.outcomeOf(existing);
+      throw err;
+    }
+
+    const label = `platform payment ${bankTranId ?? payment.id}`;
+    if (row.status === 'manual') {
+      this.logger.warn(
+        `Refund of ${label}: ${formatReason(provider === 'none' ? undefined : provider)} - ${row.amountCents} recorded for manual payout`,
+      );
+      return { filed: false, manual: true, status: 'manual' };
+    }
+    return this.fileWithGateway(row, label);
+  }
+
+  /** Refunds against these platform payments, newest first. */
+  async forPlatformPayments(ids: string[]): Promise<PaymentRefundRow[]> {
+    if (!ids.length) return [];
+    return this.db.query.paymentRefunds.findMany({
+      where: inArray(paymentRefunds.subscriptionPaymentId, ids),
+      orderBy: [desc(paymentRefunds.requestedAt)],
+    });
+  }
+
+  private livePlatformRefund(paymentId: string) {
+    return this.db.query.paymentRefunds.findFirst({
+      where: and(
+        eq(paymentRefunds.subscriptionPaymentId, paymentId),
+        inArray(paymentRefunds.status, [
+          'requested',
+          'processing',
+          'refunded',
+          'manual',
+        ]),
+      ),
+    });
+  }
+
+  private static outcomeOf(row: PaymentRefundRow): RefundOutcome {
+    return {
+      filed: row.status !== 'manual',
+      manual: row.status === 'manual',
+      status: row.status,
+    };
+  }
+
   /** Hand one 'requested' refund to SSLCommerz and record what it said. */
   private async fileWithGateway(
     row: PaymentRefundRow,
@@ -187,7 +287,12 @@ export class RefundsService implements OnModuleInit, OnModuleDestroy {
       this.logger.warn(
         `Order ${reference}: refund could not be filed yet (${result.reason ?? 'unreachable'}) - will retry`,
       );
-      return { filed: false, manual: false, status: 'requested', reason: result.reason };
+      return {
+        filed: false,
+        manual: false,
+        status: 'requested',
+        reason: result.reason,
+      };
     }
 
     const status = result.status === 'failed' ? 'failed' : 'processing';
@@ -232,7 +337,10 @@ export class RefundsService implements OnModuleInit, OnModuleDestroy {
                 where: eq(orders.id, row.orderId),
               })
             : null;
-          await this.fileWithGateway(row, order?.reference ?? row.refundTransId);
+          await this.fileWithGateway(
+            row,
+            order?.reference ?? row.refundTransId,
+          );
           continue;
         }
         if (!row.refundRefId) continue;
@@ -247,7 +355,10 @@ export class RefundsService implements OnModuleInit, OnModuleDestroy {
             .update(paymentRefunds)
             .set({
               status: 'failed',
-              errorReason: (state.reason ?? 'Cancelled at the gateway').slice(0, 500),
+              errorReason: (state.reason ?? 'Cancelled at the gateway').slice(
+                0,
+                500,
+              ),
             })
             .where(eq(paymentRefunds.id, row.id));
           this.logger.error(

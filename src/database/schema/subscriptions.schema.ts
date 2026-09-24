@@ -18,6 +18,7 @@ import {
 } from './enums';
 import { coupons } from './coupons.schema';
 import { paymentTransactions } from './payment-transactions.schema';
+import { shopDrafts } from './shop-drafts.schema';
 import { shops } from './shops.schema';
 import { users } from './users.schema';
 
@@ -199,10 +200,31 @@ export const subscriptionPayments = pgTable(
     paidAt: timestamp('paid_at', { withTimezone: true }).notNull().defaultNow(),
     // Retired shop_creation rows only: when the credit was used to open a shop.
     consumedAt: timestamp('consumed_at', { withTimezone: true }),
+    /**
+     * The held shop an opening payment was for. A seller can pay for one
+     * held shop twice (two tabs, two payment pages); this is how the later
+     * payment finds the pack it takes the place of.
+     */
+    shopDraftId: uuid('shop_draft_id').references(() => shopDrafts.id, {
+      onDelete: 'set null',
+    }),
+    /**
+     * Set on a payment that bought nothing: the money was taken but no
+     * credit stands behind it, so the seller may ask for it back. Invalid
+     * rows stay in the history and never count as a purchase.
+     */
+    voidedAt: timestamp('voided_at', { withTimezone: true }),
+    /**
+     * 'replaced'  - a later payment for the same shop opening took its place.
+     * 'duplicate' - this payment arrived after the shop opened and could not
+     *               take over (see SubscriptionsService.settleRepeatOpening).
+     */
+    voidReason: varchar('void_reason', { length: 40 }),
   },
   (table) => [
     index('subscription_payments_user_idx').on(table.userId),
     index('subscription_payments_subscription_idx').on(table.subscriptionId),
+    index('subscription_payments_draft_idx').on(table.shopDraftId),
   ],
 );
 

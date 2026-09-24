@@ -37,6 +37,7 @@ import {
   type CollectingGateway,
 } from '../gateways/gateway-checkout.service';
 import { ReferralsService } from '../referrals/referrals.service';
+import { RefundsService } from '../refunds/refunds.service';
 import {
   FreeTierUsageResponse,
   SubscriptionResponse,
@@ -131,6 +132,7 @@ export class SubscriptionsService implements OnModuleInit, OnModuleDestroy {
     private readonly billing: BillingSettingsService,
     private readonly referrals: ReferralsService,
     private readonly gatewayCheckout: GatewayCheckoutService,
+    private readonly refunds: RefundsService,
   ) {}
 
   onModuleInit(): void {
@@ -385,6 +387,8 @@ export class SubscriptionsService implements OnModuleInit, OnModuleDestroy {
       couponCode: string | null;
       refSlug: string | null;
       provider: string;
+      /** Set when this pack opened a held shop. */
+      shopDraftId?: string | null;
     },
     charge: { transactionId: string | null; gatewayTxnId: string },
   ): Promise<void> {
@@ -414,7 +418,196 @@ export class SubscriptionsService implements OnModuleInit, OnModuleDestroy {
       gateway: attempt.provider,
       paymentTransactionId: charge.transactionId,
       gatewayTxnId: charge.gatewayTxnId,
+      shopDraftId: attempt.shopDraftId ?? null,
     });
+  }
+
+  /**
+   * Another payment for a held shop that has already opened.
+   *
+   * A seller can open the payment page twice - two tabs, a back button - and
+   * pay on both. Only one pack may stand behind the opening, and it is the
+   * latest one: this payment takes the place of the pack that opened the
+   * shop, which stays in the history marked invalid for the seller to ask
+   * back. The swap is refused only when it would leave the seller owing - the
+   * shop has already sold more than this pack covers, or the balance would
+   * pass the cap - and then it is *this* payment that is marked invalid.
+   *
+   * Either way the money is on the ledger: a payment is never kept without a
+   * row the seller can see and get refunded from.
+   */
+  async settleRepeatOpening(input: {
+    ownerId: string;
+    shopId: string | null;
+    shopDraftId: string;
+    packCode: string | null;
+    amountCents: number;
+    discountCents: number;
+    couponCode: string | null;
+    provider: string;
+    transactionId: string | null;
+    gatewayTxnId: string;
+  }): Promise<'replaced' | 'invalid'> {
+    const pack = await this.billing.packByCode(input.packCode);
+    const sub = input.shopId
+      ? await this.db.query.subscriptions.findFirst({
+          where: eq(subscriptions.shopId, input.shopId),
+        })
+      : undefined;
+
+    const ledgerRow = {
+      userId: input.ownerId,
+      subscriptionId: sub?.id ?? null,
+      shopId: input.shopId,
+      type: 'credit_pack' as const,
+      method: 'manual' as const,
+      planCode: pack?.code ?? input.packCode,
+      planName: pack?.name ?? null,
+      amountCents: input.amountCents,
+      salesCreditCents: pack?.salesCreditCents ?? null,
+      currency: sub?.currency ?? PLATFORM_CURRENCY,
+      couponCode: input.couponCode,
+      discountCents: input.discountCents,
+      gateway: input.provider || null,
+      paymentTransactionId: input.transactionId,
+      gatewayTxnId: input.gatewayTxnId || null,
+      shopDraftId: input.shopDraftId,
+    };
+    const markInvalid = async (why: string): Promise<'invalid'> => {
+      await this.db.insert(subscriptionPayments).values({
+        ...ledgerRow,
+        voidedAt: new Date(),
+        voidReason: 'duplicate',
+      });
+      const log = `Repeat payment ${input.gatewayTxnId} for held shop ${input.shopDraftId} recorded as invalid and refundable: ${why}`;
+      // No shop means no console to ask for it back from - a person has to.
+      if (sub) this.logger.warn(log);
+      else this.logger.error(`${log} - no shop to show it in, refund by hand`);
+      return 'invalid';
+    };
+    if (!sub) return markInvalid('the shop is not open');
+    if (!pack) return markInvalid(`pack ${input.packCode} no longer exists`);
+
+    // A few tries in case two more payments land at once: each round swaps
+    // out whichever pack currently stands, so the last to commit wins.
+    for (let round = 0; round < 3; round++) {
+      const current = await this.db.query.subscriptionPayments.findFirst({
+        where: and(
+          eq(subscriptionPayments.subscriptionId, sub.id),
+          eq(subscriptionPayments.shopDraftId, input.shopDraftId),
+          eq(subscriptionPayments.type, 'credit_pack'),
+          isNull(subscriptionPayments.voidedAt),
+        ),
+        orderBy: [desc(subscriptionPayments.paidAt)],
+      });
+      if (!current || current.salesCreditCents === null) {
+        return markInvalid('no opening pack on the ledger to replace');
+      }
+
+      // This payment's coupon is judged as if the one it replaces had never
+      // been made - otherwise a first-purchase code could never carry over.
+      let couponId: string | undefined;
+      if (input.couponCode) {
+        const check = await this.coupons.check(
+          input.couponCode,
+          input.ownerId,
+          pack,
+          { exceptPaymentId: current.id },
+        );
+        if (check.ok) couponId = check.coupon.id;
+      }
+      const { used } = await this.creditState(sub);
+
+      const outcome = await this.db.transaction(async (tx) => {
+        const [locked] = await tx
+          .select()
+          .from(subscriptions)
+          .where(eq(subscriptions.id, sub.id))
+          .for('update');
+        const [stillCurrent] = await tx
+          .select({ id: subscriptionPayments.id })
+          .from(subscriptionPayments)
+          .where(
+            and(
+              eq(subscriptionPayments.id, current.id),
+              isNull(subscriptionPayments.voidedAt),
+            ),
+          )
+          .for('update');
+        if (!locked) return 'refused' as const;
+        if (!stillCurrent) return 'raced' as const;
+        const granted =
+          locked.creditGrantedCents -
+          current.salesCreditCents! +
+          pack.salesCreditCents;
+        if (used > granted || granted - used > CREDIT_BALANCE_CAP_CENTS) {
+          return 'refused' as const;
+        }
+        await tx
+          .update(subscriptionPayments)
+          .set({ voidedAt: new Date(), voidReason: 'replaced' })
+          .where(eq(subscriptionPayments.id, current.id));
+        await tx
+          .update(subscriptions)
+          .set({ creditGrantedCents: granted, creditExhaustedAt: null })
+          .where(eq(subscriptions.id, locked.id));
+        await tx
+          .insert(subscriptionPayments)
+          .values({ ...ledgerRow, couponId });
+        return 'replaced' as const;
+      });
+
+      if (outcome === 'raced') continue;
+      if (outcome === 'refused') {
+        return markInvalid(
+          `the shop has already sold more than ${pack.code} covers, or it would pass the credit cap`,
+        );
+      }
+      // The replaced pack's coupon use is handed back; this one's is spent.
+      if (current.couponId) await this.coupons.release(current.couponId);
+      if (couponId) await this.coupons.markRedeemed(couponId);
+      this.logger.log(
+        `Shop ${sub.shopId}: opening pack ${current.planCode} (${current.gatewayTxnId ?? current.id}) replaced by ${pack.code} (${input.gatewayTxnId}); the earlier payment is now refundable`,
+      );
+      return 'replaced';
+    }
+    return markInvalid('the opening pack kept changing underneath it');
+  }
+
+  /**
+   * Ask for an invalid payment back. Only a payment that bought nothing can
+   * be refunded from the console - a pack that stands behind the shop's
+   * credit is the shop's.
+   */
+  async refundInvalidPayment(
+    shopId: string,
+    paymentId: string,
+  ): Promise<SubscriptionResponse> {
+    const sub = await this.requireByShop(shopId);
+    const payment = await this.db.query.subscriptionPayments.findFirst({
+      where: and(
+        eq(subscriptionPayments.id, paymentId),
+        eq(subscriptionPayments.subscriptionId, sub.id),
+      ),
+    });
+    if (!payment) {
+      throw new NotFoundException('Payment not found');
+    }
+    if (!payment.voidedAt) {
+      throw new BadRequestException(
+        'Only a payment that bought nothing can be refunded here.',
+      );
+    }
+    if (payment.amountCents <= 0) {
+      throw new BadRequestException('Nothing was charged for this payment.');
+    }
+    await this.refunds.refundPlatformPayment(payment, {
+      reason:
+        payment.voidReason === 'replaced'
+          ? 'Shop opening paid more than once - replaced by a later payment'
+          : 'Shop opening paid more than once',
+    });
+    return this.getForShop(shopId);
   }
 
   /**
@@ -435,6 +628,7 @@ export class SubscriptionsService implements OnModuleInit, OnModuleDestroy {
     gateway: string | null;
     paymentTransactionId: string | null;
     gatewayTxnId?: string | null;
+    shopDraftId?: string | null;
   }): Promise<SubscriptionRow> {
     const { sub, pack } = input;
     const [updated] = await this.db
@@ -486,6 +680,7 @@ export class SubscriptionsService implements OnModuleInit, OnModuleDestroy {
       gateway: input.gateway,
       paymentTransactionId: input.paymentTransactionId,
       gatewayTxnId: input.gatewayTxnId ?? null,
+      shopDraftId: input.shopDraftId ?? null,
     });
 
     if (couponId) {
@@ -1422,7 +1617,19 @@ export class SubscriptionsService implements OnModuleInit, OnModuleDestroy {
         this.billableSalesCents(sub, period.start, new Date()),
       ]);
     const tier = shop?.plan ?? 'free';
+    // Only an invalid payment can have been refunded; the newest refund per
+    // payment is the one that says where the money is.
+    const refundRows = await this.refunds.forPlatformPayments(
+      payments.filter((p) => p.voidedAt).map((p) => p.id),
+    );
+    const refunds = new Map<string, (typeof refundRows)[number]>();
+    for (const r of refundRows) {
+      if (r.subscriptionPaymentId && !refunds.has(r.subscriptionPaymentId)) {
+        refunds.set(r.subscriptionPaymentId, r);
+      }
+    }
     return SubscriptionResponse.fromRows(sub, shop?.live ?? false, payments, {
+      refunds,
       tier,
       freeTier:
         tier === 'free' ? await this.freeTierUsage(sub.shopId) : undefined,

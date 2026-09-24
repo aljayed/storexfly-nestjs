@@ -17,6 +17,7 @@ import {
   desc,
   eq,
   isNotNull,
+  isNull,
   ne,
   notInArray,
   or,
@@ -357,6 +358,8 @@ export class ShopsService {
         and(
           eq(subscriptionPayments.userId, ownerId),
           eq(subscriptionPayments.type, 'credit_pack'),
+          // A payment that bought nothing unlocks nothing.
+          isNull(subscriptionPayments.voidedAt),
         ),
       );
     const creditPacksBought = Number(n);

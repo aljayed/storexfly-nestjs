@@ -43,6 +43,13 @@ export interface ShopDraftView {
 }
 
 /**
+ * How long a repeat payment waits for the first one to finish writing the
+ * shop, and how often it looks. Opening a shop takes well under a second.
+ */
+const REPEAT_WAIT_MS = 20_000;
+const REPEAT_POLL_MS = 1_000;
+
+/**
  * Opening a shop, which is a purchase.
  *
  * A shop costs a credit pack. That means the wizard cannot end with a shop -
@@ -330,7 +337,10 @@ export class ShopOpeningService implements OnModuleInit, OnModuleDestroy {
         ),
       )
       .returning();
-    if (!draft) return;
+    if (!draft) {
+      await this.settleRepeatPayment(attempt, charge);
+      return;
+    }
 
     await this.openShop(draft, {
       packCode: attempt.packCode,
@@ -338,6 +348,54 @@ export class ShopOpeningService implements OnModuleInit, OnModuleDestroy {
       discountCents: attempt.discountCents,
       couponCode: attempt.couponCode,
       refSlug: attempt.refSlug,
+      provider: attempt.provider,
+      transactionId: charge.transactionId,
+      gatewayTxnId: charge.gatewayTxnId,
+    });
+  }
+
+  /**
+   * A payment for a held shop somebody has already paid for - the seller had
+   * the payment page open twice and finished both. The latest payment's pack
+   * takes over and the earlier one is marked invalid and refundable (see
+   * SubscriptionsService.settleRepeatOpening).
+   *
+   * Both payments can land within a second of each other, so the first one
+   * may still be writing the shop when this one arrives; it is given a short
+   * while to finish before this payment is recorded without a shop.
+   */
+  private async settleRepeatPayment(
+    attempt: GatewayPaymentRow,
+    charge: { transactionId: string | null; gatewayTxnId: string },
+  ): Promise<void> {
+    const draftId = attempt.shopDraftId!;
+    let draft = await this.db.query.shopDrafts.findFirst({
+      where: eq(shopDrafts.id, draftId),
+    });
+    for (
+      let waited = 0;
+      draft?.status === 'paid' && !draft.shopId && waited < REPEAT_WAIT_MS;
+      waited += REPEAT_POLL_MS
+    ) {
+      await new Promise((r) => setTimeout(r, REPEAT_POLL_MS));
+      draft = await this.db.query.shopDrafts.findFirst({
+        where: eq(shopDrafts.id, draftId),
+      });
+    }
+    if (!draft) {
+      this.logger.error(
+        `Payment ${charge.gatewayTxnId} settled for held shop ${draftId}, which no longer exists - refund by hand`,
+      );
+      return;
+    }
+    await this.subscriptions.settleRepeatOpening({
+      ownerId: draft.ownerId,
+      shopId: draft.shopId,
+      shopDraftId: draft.id,
+      packCode: attempt.packCode,
+      amountCents: attempt.amountCents,
+      discountCents: attempt.discountCents,
+      couponCode: attempt.couponCode,
       provider: attempt.provider,
       transactionId: charge.transactionId,
       gatewayTxnId: charge.gatewayTxnId,
@@ -400,6 +458,7 @@ export class ShopOpeningService implements OnModuleInit, OnModuleDestroy {
             couponCode: purchase.couponCode,
             refSlug: purchase.refSlug,
             provider: purchase.provider ?? '',
+            shopDraftId: draft.id,
           },
           {
             transactionId: purchase.transactionId,

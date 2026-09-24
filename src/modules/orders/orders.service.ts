@@ -96,7 +96,7 @@ import { BuyerOrderDetailResponse } from './dto/buyer-order-detail.response';
 import { CheckoutResultResponse } from './dto/checkout-result.response';
 import { OrderListResponse } from './dto/order-list.response';
 import type { CancelReason } from '../../database/schema/enums';
-import { RefundsService } from './refunds.service';
+import { RefundsService } from '../refunds/refunds.service';
 import { OrderResponse } from './dto/order.response';
 import {
   summarizeSellerOrders,

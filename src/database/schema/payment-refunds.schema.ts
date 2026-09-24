@@ -1,4 +1,4 @@
-import { relations } from 'drizzle-orm';
+import { relations, sql } from 'drizzle-orm';
 import {
   index,
   integer,
@@ -10,9 +10,12 @@ import {
 } from 'drizzle-orm/pg-core';
 import { orders } from './orders.schema';
 import { paymentTransactions } from './payment-transactions.schema';
+import { subscriptionPayments } from './subscriptions.schema';
 
 /**
- * One attempt to send a buyer's money back through the gateway that took it.
+ * One attempt to send money back through the gateway that took it - a buyer's
+ * order (`orderId`), or a seller's platform payment that bought nothing
+ * (`subscriptionPaymentId`).
  *
  * A refund is not an event, it is a process: SSLCommerz answers 'success' to
  * mean "accepted for processing", and the money reaches the cardholder days
@@ -33,6 +36,11 @@ export const paymentRefunds = pgTable(
     orderId: uuid('order_id').references(() => orders.id, {
       onDelete: 'set null',
     }),
+    /** The platform payment being given back, when this is not an order. */
+    subscriptionPaymentId: uuid('subscription_payment_id').references(
+      () => subscriptionPayments.id,
+      { onDelete: 'set null' },
+    ),
     /** The charge being reversed. Null once a transaction row is cleaned up. */
     transactionId: uuid('transaction_id').references(
       () => paymentTransactions.id,
@@ -78,6 +86,15 @@ export const paymentRefunds = pgTable(
   (table) => [
     uniqueIndex('payment_refunds_trans_unique_idx').on(table.refundTransId),
     index('payment_refunds_order_idx').on(table.orderId),
+    index('payment_refunds_platform_payment_idx').on(
+      table.subscriptionPaymentId,
+    ),
+    // One live refund per platform payment; a 'failed' one may be retried.
+    uniqueIndex('payment_refunds_platform_payment_live_idx')
+      .on(table.subscriptionPaymentId)
+      .where(
+        sql`${table.subscriptionPaymentId} IS NOT NULL AND ${table.status} <> 'failed'`,
+      ),
     // The poll that chases 'processing' refunds to a conclusion.
     index('payment_refunds_status_idx').on(table.status, table.requestedAt),
   ],

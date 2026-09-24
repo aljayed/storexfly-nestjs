@@ -2,6 +2,7 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import type { CreditPackView } from '../../billing/billing-settings.service';
 import type {
   ShopRow,
+  PaymentRefundRow,
   SubscriptionPaymentRow,
   SubscriptionRow,
 } from '../../../database/schema';
@@ -36,6 +37,35 @@ export class CreditPackResponse {
       sortOrder: pack.sortOrder,
     };
   }
+}
+
+/** Why a payment bought nothing, and since when. */
+export class PaymentInvalidView {
+  @ApiProperty({
+    enum: ['replaced', 'duplicate'],
+    description:
+      "'replaced' - a later payment for the same shop opening took its place. " +
+      "'duplicate' - it arrived after the shop opened and could not take over.",
+  })
+  reason!: string;
+  @ApiProperty() at!: string;
+}
+
+/** Where the money for an invalid payment is on its way back. */
+export class PaymentRefundView {
+  @ApiProperty({
+    enum: ['requested', 'processing', 'refunded', 'failed', 'manual'],
+    description:
+      "'requested'/'processing' - on its way; 'refunded' - the gateway says it is back; " +
+      "'failed' - the gateway refused, it may be asked for again; " +
+      "'manual' - the platform pays it back by hand.",
+  })
+  status!: string;
+  @ApiProperty({ example: 1899 }) amount!: number;
+  @ApiProperty() requestedAt!: string;
+  @ApiPropertyOptional() settledAt?: string;
+  @ApiPropertyOptional({ description: "The gateway's words when it refused" })
+  error?: string;
 }
 
 /** One row of the platform-payment ledger. Amounts in major units (৳). */
@@ -84,8 +114,27 @@ export class SubscriptionPaymentResponse {
   })
   transactionId?: string;
   @ApiProperty() paidAt!: string;
+  @ApiPropertyOptional({
+    type: PaymentInvalidView,
+    description: 'Set when the money was taken but bought nothing',
+  })
+  invalid?: PaymentInvalidView;
+  @ApiPropertyOptional({
+    type: PaymentRefundView,
+    description: 'The latest refund asked for on this payment',
+  })
+  refund?: PaymentRefundView;
+  @ApiProperty({
+    description:
+      'Whether the seller may ask for this payment back right now: it is ' +
+      'invalid, money was taken, and no refund is already under way',
+  })
+  refundable!: boolean;
 
-  static fromRow(row: SubscriptionPaymentRow): SubscriptionPaymentResponse {
+  static fromRow(
+    row: SubscriptionPaymentRow,
+    refund?: PaymentRefundRow,
+  ): SubscriptionPaymentResponse {
     return {
       id: row.id,
       type: row.type,
@@ -107,6 +156,25 @@ export class SubscriptionPaymentResponse {
       gateway: row.gateway ?? undefined,
       transactionId: row.gatewayTxnId ?? undefined,
       paidAt: row.paidAt.toISOString(),
+      invalid: row.voidedAt
+        ? {
+            reason: row.voidReason ?? 'duplicate',
+            at: row.voidedAt.toISOString(),
+          }
+        : undefined,
+      refund: refund
+        ? {
+            status: refund.status,
+            amount: refund.amountCents / 100,
+            requestedAt: refund.requestedAt.toISOString(),
+            settledAt: refund.settledAt?.toISOString(),
+            error: refund.errorReason ?? undefined,
+          }
+        : undefined,
+      refundable:
+        !!row.voidedAt &&
+        row.amountCents > 0 &&
+        (!refund || refund.status === 'failed'),
     };
   }
 }
@@ -229,6 +297,8 @@ export class SubscriptionResponse {
     shopLive: boolean,
     payments: SubscriptionPaymentRow[],
     view: {
+      /** The latest refund per payment id, for invalid payments. */
+      refunds?: Map<string, PaymentRefundRow>;
       tier: string;
       freeTier?: FreeTierUsageResponse;
       kycStatus: string;
@@ -299,7 +369,9 @@ export class SubscriptionResponse {
       cancelledAt: sub.cancelledAt?.toISOString(),
       dueNow: sub.status !== 'cancelled' && sub.dueCents > 0,
       shopLive,
-      payments: payments.map(SubscriptionPaymentResponse.fromRow),
+      payments: payments.map((p) =>
+        SubscriptionPaymentResponse.fromRow(p, view.refunds?.get(p.id)),
+      ),
     };
   }
 

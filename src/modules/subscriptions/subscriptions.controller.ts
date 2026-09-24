@@ -3,6 +3,7 @@ import {
   Controller,
   Get,
   Param,
+  ParseUUIDPipe,
   Patch,
   Post,
   Query,
@@ -149,6 +150,24 @@ export class SubscriptionsController {
         label: this.gatewayCheckout.label(g),
       })),
     );
+  }
+
+  @Public()
+  @UseGuards(AdminJwtAuthGuard, ShopScopeGuard, RolesGuard)
+  @RequirePerm('subscription.manage')
+  @ApiBearerAuth()
+  @Post('shops/:shopId/subscription/payments/:paymentId/refund')
+  @ApiOperation({
+    summary:
+      'Admin: ask for an invalid payment back - one a later payment for the ' +
+      'same shop opening replaced. Idempotent; returns the refreshed billing state.',
+  })
+  @ApiOkResponse({ type: SubscriptionResponse })
+  refundPayment(
+    @Param('shopId') shopId: string,
+    @Param('paymentId', ParseUUIDPipe) paymentId: string,
+  ) {
+    return this.subscriptions.refundInvalidPayment(shopId, paymentId);
   }
 
   @Public()

@@ -7,7 +7,7 @@ import {
   NotFoundException,
   type OnModuleInit,
 } from '@nestjs/common';
-import { and, desc, eq, gte, or, sql } from 'drizzle-orm';
+import { and, desc, eq, gte, isNull, ne, or, sql } from 'drizzle-orm';
 import { PLATFORM_CURRENCY } from '../../common/constants/billing';
 import { isUniqueViolation } from '../../common/utils/postgres-error.util';
 import { DRIZZLE } from '../../database/database.constants';
@@ -330,6 +330,13 @@ export class CouponsService implements OnModuleInit {
     code: string,
     userId: string,
     pack: CouponPack,
+    opts: {
+      /**
+       * A payment to leave out of "has this seller paid before" - the one a
+       * replacement payment is about to take the place of.
+       */
+      exceptPaymentId?: string;
+    } = {},
   ): Promise<CouponCheck> {
     const coupon = await this.db.query.coupons.findFirst({
       where: eq(coupons.code, code.trim().toUpperCase()),
@@ -359,7 +366,10 @@ export class CouponsService implements OnModuleInit {
     if (coupon.packCodes?.length && !coupon.packCodes.includes(pack.code)) {
       return reject('wrong_pack');
     }
-    if (coupon.firstPurchaseOnly && (await this.hasPaidBefore(userId))) {
+    if (
+      coupon.firstPurchaseOnly &&
+      (await this.hasPaidBefore(userId, opts.exceptPaymentId))
+    ) {
       return reject('not_first_purchase');
     }
     const since = new Date(Date.now() - THIRTY_DAYS_MS);
@@ -393,13 +403,25 @@ export class CouponsService implements OnModuleInit {
   /**
    * Has this account ever had a platform payment - a credit pack on any of
    * its shops (free ones included, so a 100%-off first-purchase code cannot
-   * be taken twice) or a commission bill? That is what "not new" means.
+   * be taken twice) or a commission bill? That is what "not new" means. An
+   * invalid payment - one that bought nothing - does not count.
    */
-  private async hasPaidBefore(userId: string): Promise<boolean> {
+  private async hasPaidBefore(
+    userId: string,
+    exceptPaymentId?: string,
+  ): Promise<boolean> {
     const [row] = await this.db
       .select({ id: subscriptionPayments.id })
       .from(subscriptionPayments)
-      .where(eq(subscriptionPayments.userId, userId))
+      .where(
+        and(
+          eq(subscriptionPayments.userId, userId),
+          isNull(subscriptionPayments.voidedAt),
+          exceptPaymentId
+            ? ne(subscriptionPayments.id, exceptPaymentId)
+            : undefined,
+        ),
+      )
       .limit(1);
     return !!row;
   }
