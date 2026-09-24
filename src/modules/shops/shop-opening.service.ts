@@ -119,7 +119,7 @@ export class ShopOpeningService implements OnModuleInit, OnModuleDestroy {
           ownerId,
           handle,
           name: dto.name.trim(),
-          payload: dto as unknown as Record<string, unknown>,
+          payload: dto,
           expiresAt,
         })
         .onConflictDoNothing()
@@ -149,7 +149,7 @@ export class ShopOpeningService implements OnModuleInit, OnModuleDestroy {
       .update(shopDrafts)
       .set({
         name: dto.name.trim(),
-        payload: dto as unknown as Record<string, unknown>,
+        payload: dto,
         expiresAt,
       })
       .where(eq(shopDrafts.id, existing.id))
@@ -191,9 +191,7 @@ export class ShopOpeningService implements OnModuleInit, OnModuleDestroy {
     await this.db
       .update(shopDrafts)
       .set({ status: 'cancelled' })
-      .where(
-        and(eq(shopDrafts.id, row.id), eq(shopDrafts.status, 'pending')),
-      );
+      .where(and(eq(shopDrafts.id, row.id), eq(shopDrafts.status, 'pending')));
   }
 
   /* ── Paying for it ─────────────────────────────────────────────── */
@@ -224,15 +222,9 @@ export class ShopOpeningService implements OnModuleInit, OnModuleDestroy {
     let coupon: { code: string } | undefined;
     let discountCents = 0;
     if (input.couponCode?.trim()) {
-      const check = await this.coupons.check(
-        input.couponCode,
-        ownerId,
-        pack.priceCents,
-      );
+      const check = await this.coupons.check(input.couponCode, ownerId, pack);
       if (!check.ok) {
-        throw new BadRequestException(
-          this.coupons.rejectionMessage(check.reason),
-        );
+        throw new BadRequestException(check.message);
       }
       coupon = check.coupon;
       discountCents = check.discountCents;
@@ -294,7 +286,8 @@ export class ShopOpeningService implements OnModuleInit, OnModuleDestroy {
       customer: {
         name: owner?.name ?? draft.name,
         email: owner?.email ?? payload.supportEmail ?? '',
-        phone: owner?.phone ?? payload.pickupPhone ?? payload.supportPhone ?? '',
+        phone:
+          owner?.phone ?? payload.pickupPhone ?? payload.supportPhone ?? '',
         address: payload.pickupAddress ?? draft.name,
         city: payload.pickupDistrict ?? 'Dhaka',
         postcode: '1000',
@@ -368,7 +361,7 @@ export class ShopOpeningService implements OnModuleInit, OnModuleDestroy {
       gatewayTxnId: string | null;
     },
   ): Promise<ShopResponse> {
-    const dto = draft.payload as unknown as CreateShopDto;
+    const dto = draft.payload as CreateShopDto;
     let shopId: string;
     let response: ShopResponse;
     try {
@@ -505,9 +498,7 @@ export class ShopOpeningService implements OnModuleInit, OnModuleDestroy {
   }
 
   private async view(row: ShopDraftRow): Promise<ShopDraftView> {
-    const shop = row.shopId
-      ? await this.shops.getById(row.shopId)
-      : undefined;
+    const shop = row.shopId ? await this.shops.getById(row.shopId) : undefined;
     return {
       id: row.id,
       name: row.name,

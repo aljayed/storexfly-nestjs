@@ -99,7 +99,7 @@ export class SubscriptionsController {
     const pack =
       (await this.billing.packByCode(packCode)) ??
       (await this.billing.entryPack());
-    return this.coupons.preview(code, user.id, pack?.priceCents);
+    return this.coupons.preview(code, user.id, pack);
   }
 
   // ── Admin console (Subscription page) ─────────────────────────
@@ -143,11 +143,12 @@ export class SubscriptionsController {
     summary: 'Admin: which gateways can collect a credit-pack payment now',
   })
   creditGateways() {
-    return this.gatewayCheckout
-      .available()
-      .then((gateways) =>
-        gateways.map((g) => ({ gateway: g, label: this.gatewayCheckout.label(g) })),
-      );
+    return this.gatewayCheckout.available().then((gateways) =>
+      gateways.map((g) => ({
+        gateway: g,
+        label: this.gatewayCheckout.label(g),
+      })),
+    );
   }
 
   @Public()

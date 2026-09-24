@@ -6,6 +6,12 @@ class ReferralCouponView {
   @ApiProperty({ example: 'HOOMRI75' }) code!: string;
   @ApiProperty({ example: 75 }) percentOff!: number;
   @ApiProperty() active!: boolean;
+  @ApiProperty() firstPurchaseOnly!: boolean;
+  @ApiPropertyOptional({ example: ['credit-200k'] }) packCodes?: string[];
+  @ApiPropertyOptional({
+    description: 'Set when the coupon belongs to one seller',
+  })
+  personal?: boolean;
 }
 
 /** Platform-admin console view of a referral link. */
@@ -34,6 +40,11 @@ export class ReferralLinkResponse {
         code: row.coupon.code,
         percentOff: row.coupon.percentOff,
         active: row.coupon.active,
+        firstPurchaseOnly: row.coupon.firstPurchaseOnly,
+        packCodes: row.coupon.packCodes?.length
+          ? row.coupon.packCodes
+          : undefined,
+        personal: row.coupon.userId ? true : undefined,
       },
       createdAt: row.createdAt.toISOString(),
     };
@@ -43,16 +54,32 @@ export class ReferralLinkResponse {
 /**
  * Public view of a referral link, quoted before anyone signs in. Amounts are
  * major units (৳) and are quoted against the entry credit pack, which is what
- * "from ৳X" means on the landing page. The discount covers only the seller's
- * first payment; packs bought afterwards cost `packPrice`.
+ * "from ৳X" means on the landing page - or, when the coupon only works on
+ * certain packs, against the cheapest of those. The storefront applies the
+ * code to one purchase; packs bought afterwards cost the list price.
  */
 export class ReferralResolveResponse {
   @ApiProperty({ example: 'rahim-fb' }) slug!: string;
   @ApiProperty({ example: 'HOOMRI75' }) code!: string;
   @ApiProperty({ example: 75 }) percentOff!: number;
   @ApiProperty({
+    description: "Only good on a seller's first platform purchase",
+  })
+  firstPurchaseOnly!: boolean;
+  @ApiPropertyOptional({
+    example: ['credit-200k'],
+    description: 'The packs on sale the code works on; absent = any pack',
+  })
+  packCodes?: string[];
+  @ApiProperty({
+    example: 'credit-100k',
+    description: 'The pack the quote is based on',
+  })
+  packCode!: string;
+  @ApiProperty({ example: '৳1,00,000 in sales' }) packName!: string;
+  @ApiProperty({
     example: 1899,
-    description: 'The entry pack the quote is based on, in ৳',
+    description: 'The pack the quote is based on, in ৳',
   })
   packPrice!: number;
   @ApiProperty({ example: 1425 }) discount!: number;

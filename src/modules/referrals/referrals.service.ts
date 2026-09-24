@@ -13,6 +13,7 @@ import { DRIZZLE } from '../../database/database.constants';
 import type { DrizzleDB } from '../../database/drizzle.types';
 import { coupons, referralLinks } from '../../database/schema';
 import { BillingSettingsService } from '../billing/billing-settings.service';
+import { couponDiscountCents } from '../coupons/coupons.service';
 import type { CreateReferralLinkDto } from './dto/create-referral-link.dto';
 import {
   ReferralLinkResponse,
@@ -105,10 +106,11 @@ export class ReferralsService {
 
   /**
    * Look up an active link by slug, count the click, and quote what its
-   * coupon does to the first month. 404s whenever the link (or its coupon)
+   * coupon does to the first purchase. 404s whenever the link (or its coupon)
    * can't currently give a discount, so the storefront simply renders the
-   * regular pricing. The seller-specific checks (high-sales cutoff) and the
-   * final price run again at payment time - this is only a quote.
+   * regular pricing. The seller-specific checks (one seller only, first
+   * purchase only, high-sales cutoff) and the final price run again at
+   * payment time - this is only a quote.
    */
   async resolve(slug: string): Promise<ReferralResolveResponse> {
     const link = await this.db.query.referralLinks.findFirst({
@@ -126,21 +128,34 @@ export class ReferralsService {
       throw new NotFoundException('Referral link not found');
     }
 
+    // Quoted against the entry pack - the cheapest way in, and what the
+    // landing page's "from ৳X" refers to - unless the coupon only works on
+    // certain packs, in which case against the cheapest of those still on
+    // sale. A coupon whose packs have all been retired discounts nothing.
+    const onSale = await this.billing.packs();
+    const allowed = coupon.packCodes?.length
+      ? onSale.filter((p) => coupon.packCodes!.includes(p.code))
+      : null;
+    const pack = allowed ? allowed[0] : await this.billing.entryPack();
+    if (!pack) {
+      throw new NotFoundException('Referral link not found');
+    }
+
     await this.db
       .update(referralLinks)
       .set({ clicks: sql`${referralLinks.clicks} + 1` })
       .where(eq(referralLinks.id, link.id));
 
-    // Quoted against the entry pack - the cheapest way in, and what the
-    // landing page's "from ৳X" refers to.
-    const feeCents = (await this.billing.entryPack())?.priceCents ?? 0;
-    // Same rounding as CouponsService.check: discount up to a whole taka.
-    const discountCents =
-      Math.ceil((feeCents * coupon.percentOff) / 100 / 100) * 100;
+    const feeCents = pack.priceCents;
+    const discountCents = couponDiscountCents(feeCents, coupon.percentOff);
     return {
       slug: link.slug,
       code: coupon.code,
       percentOff: coupon.percentOff,
+      firstPurchaseOnly: coupon.firstPurchaseOnly,
+      packCodes: allowed ? allowed.map((p) => p.code) : undefined,
+      packCode: pack.code,
+      packName: pack.name,
       packPrice: feeCents / 100,
       discount: discountCents / 100,
       firstPaymentTotal: (feeCents - discountCents) / 100,

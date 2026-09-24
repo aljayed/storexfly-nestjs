@@ -666,6 +666,13 @@
       "when": 1794096000000,
       "tag": "0097_delivery_time_days",
       "breakpoints": true
+    },
+    {
+      "idx": 98,
+      "version": "7",
+      "when": 1794182400000,
+      "tag": "0098_coupon_targeting",
+      "breakpoints": true
     }
   ]
 }

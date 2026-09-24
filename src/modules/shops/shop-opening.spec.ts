@@ -130,7 +130,6 @@ function harness(options: { claims?: ShopDraftRow[][]; found?: ShopDraftRow } = 
       coupon: { id: 'c1', code: 'LAUNCH100' },
       discountCents: 189900,
     }),
-    rejectionMessage: () => 'no',
   };
   const gatewayCheckout = {
     available: jest.fn().mockResolvedValue(['sslcommerz']),

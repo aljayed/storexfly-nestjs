@@ -275,15 +275,9 @@ export class SubscriptionsService implements OnModuleInit, OnModuleDestroy {
     let coupon: { id: string; code: string } | undefined;
     let discountCents = 0;
     if (couponCode?.trim()) {
-      const check = await this.coupons.check(
-        couponCode,
-        sub.ownerId,
-        pack.priceCents,
-      );
+      const check = await this.coupons.check(couponCode, sub.ownerId, pack);
       if (!check.ok) {
-        throw new BadRequestException(
-          this.coupons.rejectionMessage(check.reason),
-        );
+        throw new BadRequestException(check.message);
       }
       coupon = check.coupon;
       discountCents = check.discountCents;
@@ -470,7 +464,7 @@ export class SubscriptionsService implements OnModuleInit, OnModuleDestroy {
       const check = await this.coupons.check(
         input.couponCode,
         sub.ownerId,
-        pack.priceCents,
+        pack,
       );
       if (check.ok) couponId = check.coupon.id;
     }

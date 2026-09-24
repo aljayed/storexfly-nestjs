@@ -1,6 +1,15 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import type { CouponRow } from '../../../database/schema';
 
+/** The one seller a personal coupon belongs to. */
+export class CouponUserView {
+  @ApiProperty() id!: string;
+  @ApiProperty({ example: 'Rafiq Ahmed' }) name!: string;
+  @ApiPropertyOptional({ example: 'rafiq', nullable: true })
+  handle!: string | null;
+  @ApiProperty({ example: 'HM7K3PQR9X' }) publicId!: string;
+}
+
 /** Platform-admin console view of a coupon. */
 export class CouponResponse {
   @ApiProperty() id!: string;
@@ -11,9 +20,25 @@ export class CouponResponse {
   @ApiPropertyOptional() maxRedemptions?: number;
   @ApiProperty() redemptions!: number;
   @ApiPropertyOptional() expiresAt?: string;
+  @ApiProperty({
+    description: 'Only a seller with no platform payments yet may use it',
+  })
+  firstPurchaseOnly!: boolean;
+  @ApiPropertyOptional({
+    type: CouponUserView,
+    description: 'The only seller who may use it; absent = any seller',
+  })
+  user?: CouponUserView;
+  @ApiPropertyOptional({
+    example: ['credit-200k'],
+    description: 'The only packs it applies to; absent = any pack',
+  })
+  packCodes?: string[];
   @ApiProperty() createdAt!: string;
 
-  static fromRow(row: CouponRow): CouponResponse {
+  static fromRow(
+    row: CouponRow & { user?: CouponUserView | null },
+  ): CouponResponse {
     return {
       id: row.id,
       code: row.code,
@@ -23,6 +48,16 @@ export class CouponResponse {
       maxRedemptions: row.maxRedemptions ?? undefined,
       redemptions: row.redemptions,
       expiresAt: row.expiresAt?.toISOString(),
+      firstPurchaseOnly: row.firstPurchaseOnly,
+      user: row.user
+        ? {
+            id: row.user.id,
+            name: row.user.name,
+            handle: row.user.handle,
+            publicId: row.user.publicId,
+          }
+        : undefined,
+      packCodes: row.packCodes?.length ? row.packCodes : undefined,
       createdAt: row.createdAt.toISOString(),
     };
   }
