@@ -95,19 +95,44 @@ describe('shop onboarding persistence', () => {
     );
     expect(h.db.transaction).toHaveBeenCalledTimes(1);
   });
+  // One proven way of reaching the seller is the floor. Demanding both was
+  // two codes before they had seen anything of the product - and unreachable
+  // for a seller whose SMS never arrives.
   it.each(['emailVerified', 'phoneVerified'])(
-    'requires %s before any write',
+    'opens a shop for an account that has proved %s alone',
     async (flag) => {
       const h = harness();
-      h.db.query.users.findFirst
-        .mockReset()
-        .mockResolvedValue({ ...contact, [flag]: false });
-      await expect(createShop(h.service, contact.id, payload)).rejects.toThrow(
-        ForbiddenException,
-      );
-      expect(h.db.transaction).not.toHaveBeenCalled();
+      h.db.query.users.findFirst.mockReset().mockResolvedValue({
+        ...contact,
+        emailVerified: flag === 'emailVerified',
+        phoneVerified: flag === 'phoneVerified',
+      });
+      await expect(
+        createShop(h.service, contact.id, payload),
+      ).resolves.toBeDefined();
+      expect(h.db.transaction).toHaveBeenCalledTimes(1);
     },
   );
+
+  it('refuses an account that has proved neither', async () => {
+    const h = harness();
+    h.db.query.users.findFirst
+      .mockReset()
+      .mockResolvedValue({ ...contact, emailVerified: false, phoneVerified: false });
+    await expect(createShop(h.service, contact.id, payload)).rejects.toThrow(
+      ForbiddenException,
+    );
+    expect(h.db.transaction).not.toHaveBeenCalled();
+  });
+
+  it('asks for one public contact on the shop itself', async () => {
+    const h = harness();
+    const { supportEmail, supportPhone, ...noContact } = payload;
+    await expect(
+      createShop(h.service, contact.id, noContact as CreateShopDto),
+    ).rejects.toThrow('an email address or a phone number');
+    expect(h.db.transaction).not.toHaveBeenCalled();
+  });
   it('refuses incomplete KYC before inserting a shop', async () => {
     const h = harness();
     await expect(

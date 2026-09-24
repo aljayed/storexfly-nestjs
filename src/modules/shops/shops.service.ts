@@ -237,6 +237,13 @@ export class ShopsService {
     if (await this.handleTakenByOther(handle, ownerId)) {
       throw ShopsService.handleTaken();
     }
+    if (!dto.supportEmail?.trim() && !dto.supportPhone?.trim()) {
+      throw new BadRequestException({
+        error: 'SupportContactRequired',
+        message:
+          'Give buyers one way to reach the shop - an email address or a phone number.',
+      });
+    }
     await this.delivery.validate(dto);
     const swatch = BRAND_SWATCHES[dto.brandId];
     return {
@@ -370,11 +377,11 @@ export class ShopsService {
   }
 
   /**
-   * Shop creation requires a verified email and a verified phone number on
-   * the account. The 403 carries a machine-readable `error` so the wizard can
-   * drop the seller back onto the verification step (which re-reads
-   * /auth/verify/status for the per-field detail) instead of matching on the
-   * message text.
+   * Shop creation requires one proven way of reaching the account - a
+   * verified email or a verified phone number. The 403 carries a
+   * machine-readable `error` so the wizard can drop the seller back onto the
+   * verification step (which re-reads /auth/verify/status for the per-field
+   * detail) instead of matching on the message text.
    */
   private async assertContactVerified(ownerId: string): Promise<void> {
     const user = await this.db.query.users.findFirst({
@@ -394,7 +401,7 @@ export class ShopsService {
         statusCode: HttpStatus.FORBIDDEN,
         error: 'ContactVerificationRequired',
         message:
-          'Verify your email address and phone number before creating a shop.',
+          'Verify your email address or your phone number before creating a shop.',
       });
     }
   }
