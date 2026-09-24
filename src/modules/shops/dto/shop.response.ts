@@ -86,6 +86,11 @@ export class ShopResponse {
     description: 'AI auto-reply in the inbox. Console responses only.',
   })
   botChatEnabled?: boolean;
+  @ApiPropertyOptional({
+    description:
+      'The shop is on a temporary link and the seller has yet to choose one. Console responses only.',
+  })
+  handlePending?: boolean;
 
   static fromRow(row: ShopRow): ShopResponse {
     return {
@@ -121,6 +126,7 @@ export class ShopResponse {
   static fromRowForConsole(row: ShopRow): ShopResponse {
     return {
       ...ShopResponse.fromRow(row),
+      handlePending: row.handlePending,
       botChatEnabled: row.botChatEnabled,
       deliveryMode: row.deliveryMode ?? undefined,
       pickupDistrict: row.pickupDistrict ?? undefined,

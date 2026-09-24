@@ -62,13 +62,21 @@ function session(over: Partial<GatewayPaymentRow> = {}): GatewayPaymentRow {
  * asked. `claims` is the queue of rows successive claiming updates return,
  * which is how "two notifications about one payment" is expressed.
  */
-function harness(options: { claims?: ShopDraftRow[][]; found?: ShopDraftRow } = {}) {
+function harness(
+  options: {
+    claims?: ShopDraftRow[][];
+    found?: ShopDraftRow;
+    /** A shop this seller already opened under the draft's name. */
+    openShop?: { id: string };
+  } = {},
+) {
   const claims = options.claims ? [...options.claims] : [[draft()]];
   const updates: Record<string, unknown>[] = [];
   const inserted: Record<string, unknown>[] = [];
   const db = {
     query: {
       shopDrafts: { findFirst: jest.fn().mockResolvedValue(options.found) },
+      shops: { findFirst: jest.fn().mockResolvedValue(options.openShop) },
       users: {
         findFirst: jest.fn().mockResolvedValue({
           name: 'Seller',
@@ -114,7 +122,10 @@ function harness(options: { claims?: ShopDraftRow[][]; found?: ShopDraftRow } = 
     }),
     getById: jest.fn().mockResolvedValue({ id: 'shop-1' }),
   };
-  const subscriptions = { grantPurchasedCredit: jest.fn().mockResolvedValue(undefined) };
+  const subscriptions = {
+    grantPurchasedCredit: jest.fn().mockResolvedValue(undefined),
+    settleRepeatOpening: jest.fn().mockResolvedValue('replaced'),
+  };
   const billing = {
     packByCode: jest.fn().mockResolvedValue({
       code: 'credit-100k',
@@ -200,6 +211,54 @@ describe('opening a shop is a purchase', () => {
     expect(result.paymentUrl).toBeNull();
     expect(h.gatewayCheckout.open).not.toHaveBeenCalled();
     expect(h.shops.createPreparedShop).toHaveBeenCalledTimes(1);
+  });
+
+  // Past the hour the name may have gone to somebody else. The seller has
+  // paid, so the shop still opens - on a temporary link if it must.
+  it('opens the shop for a payment that lands after the hold lapsed', async () => {
+    const h = harness({ claims: [[draft({ status: 'paid' })]] });
+    await h.service.settlePaidDraft(session(), {
+      transactionId: 'txn-1',
+      gatewayTxnId: 'BANK-1',
+    });
+    expect(h.shops.prepareShop).toHaveBeenCalledWith(OWNER, expect.anything(), {
+      temporaryHandleIfTaken: true,
+    });
+    expect(h.shops.createPreparedShop).toHaveBeenCalledTimes(1);
+  });
+
+  // They started over, paid for the same name on a new hold, and then the
+  // old payment landed too: that is one shop paid for twice, not two shops.
+  it('does not open a second shop under a name the seller already opened', async () => {
+    const h = harness({ openShop: { id: 'shop-9' } });
+    await h.service.settlePaidDraft(session(), {
+      transactionId: 'txn-2',
+      gatewayTxnId: 'BANK-2',
+    });
+    expect(h.shops.createPreparedShop).not.toHaveBeenCalled();
+    expect(h.subscriptions.settleRepeatOpening).toHaveBeenCalledWith(
+      expect.objectContaining({ shopId: 'shop-9', gatewayTxnId: 'BANK-2' }),
+    );
+  });
+
+  // Two tabs, two payment pages, both paid: the second is not dropped.
+  it('hands a second payment for an opened shop to billing', async () => {
+    const h = harness({
+      claims: [[]],
+      found: draft({ status: 'paid', shopId: 'shop-1' }),
+    });
+    await h.service.settlePaidDraft(session(), {
+      transactionId: 'txn-3',
+      gatewayTxnId: 'BANK-3',
+    });
+    expect(h.shops.createPreparedShop).not.toHaveBeenCalled();
+    expect(h.subscriptions.settleRepeatOpening).toHaveBeenCalledWith(
+      expect.objectContaining({
+        shopId: 'shop-1',
+        shopDraftId: 'draft-1',
+        gatewayTxnId: 'BANK-3',
+      }),
+    );
   });
 
   it('never opens a shop the payment session does not name', async () => {

@@ -26,6 +26,7 @@ import { ShopScopeGuard } from '../../common/guards/shop-scope.guard';
 import { SHOP_CATEGORIES } from '../../database/schema/enums';
 import type { SellerPrincipal } from '../../common/types/principal';
 import { CheckHandleQuery } from './dto/check-handle.query';
+import { ChooseHandleDto } from './dto/choose-handle.dto';
 import { CreateShopDto } from './dto/create-shop.dto';
 import { PayShopDraftDto } from './dto/pay-shop-draft.dto';
 import { DeleteShopDto } from './dto/delete-shop.dto';
@@ -72,7 +73,8 @@ export class ShopsController {
   @Public()
   @Get('discover')
   @ApiOperation({
-    summary: 'Public marketplace: search, categories, availability and paginated products',
+    summary:
+      'Public marketplace: search, categories, availability and paginated products',
   })
   @ApiOkResponse({ type: DiscoverResponse })
   discover(@Query() query: DiscoverQuery) {
@@ -204,6 +206,20 @@ export class ShopsController {
   @ApiOkResponse({ type: ShopResponse })
   consoleUpdate(@Param('shopId') shopId: string, @Body() dto: UpdateShopDto) {
     return this.shops.updateFromConsole(shopId, dto);
+  }
+
+  @Public()
+  @UseGuards(AdminJwtAuthGuard, ShopScopeGuard, RolesGuard)
+  @RequirePerm('settings.manage')
+  @ApiBearerAuth()
+  @Patch(':shopId/console/handle')
+  @ApiOperation({
+    summary:
+      'Admin: choose the link for a shop opened on a temporary one. Once only.',
+  })
+  @ApiOkResponse({ type: ShopResponse })
+  chooseHandle(@Param('shopId') shopId: string, @Body() dto: ChooseHandleDto) {
+    return this.shops.chooseHandle(shopId, dto.handle);
   }
 
   // The console can outlive the account session. Use its own owner-scoped

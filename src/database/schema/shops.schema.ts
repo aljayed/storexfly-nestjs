@@ -50,6 +50,12 @@ export const shops = pgTable(
     id: uuid('id').primaryKey().defaultRandom(),
     name: varchar('name', { length: 160 }).notNull(),
     handle: varchar('handle', { length: 80 }).notNull(),
+    /**
+     * The shop is on a temporary link (shop-<owner's public id>) because its
+     * name was taken while the opening payment was still landing. The console
+     * asks the seller to choose a real one, once; choosing clears this.
+     */
+    handlePending: boolean('handle_pending').notNull().default(false),
     tagline: varchar('tagline', { length: 240 }),
     // Buyer-facing support contacts shown on the storefront. Optional.
     supportEmail: varchar('support_email', { length: 320 }),

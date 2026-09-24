@@ -216,7 +216,18 @@ export class ShopsService {
    * and it runs again on the way in, because an hour is long enough for a
    * licence to be claimed or a name to be taken.
    */
-  async prepareShop(ownerId: string, dto: CreateShopDto): Promise<NewShopRow> {
+  async prepareShop(
+    ownerId: string,
+    dto: CreateShopDto,
+    opts: {
+      /**
+       * Open on a temporary link rather than refuse when the name is taken.
+       * Only for a shop that has already been paid for: the money is in, so
+       * a lost name is something to fix afterwards, not a reason to keep it.
+       */
+      temporaryHandleIfTaken?: boolean;
+    } = {},
+  ): Promise<NewShopRow> {
     // Both a verified email and a verified phone - an account nobody can be
     // reached on has no business opening a storefront.
     await this.assertContactVerified(ownerId);
@@ -232,11 +243,16 @@ export class ShopsService {
     if (dto.kyc?.licenseNo) {
       await this.assertLicenseUnclaimed(dto.kyc.licenseNo);
     }
-    const handle = handleize(dto.handle);
+    let handle = handleize(dto.handle);
+    let handlePending = false;
     await this.blockedWords.assertClean(dto.name);
     await this.blockedWords.assertClean(handle);
     if (await this.handleTakenByOther(handle, ownerId)) {
-      throw ShopsService.handleTaken();
+      if (!opts.temporaryHandleIfTaken) {
+        throw ShopsService.handleTaken();
+      }
+      handle = await this.temporaryHandle(ownerId);
+      handlePending = true;
     }
     if (!dto.supportEmail?.trim() && !dto.supportPhone?.trim()) {
       throw new BadRequestException({
@@ -250,6 +266,7 @@ export class ShopsService {
     return {
       name: dto.name,
       handle,
+      handlePending,
       tagline: dto.tagline,
       supportEmail: dto.supportEmail,
       supportPhone: dto.supportPhone,
@@ -273,6 +290,78 @@ export class ShopsService {
       // 'unsubmitted' (the column default).
       ...kycSubmissionPatch(dto.kyc),
     };
+  }
+
+  /**
+   * A link nobody else holds, made from the owner's permanent account ID -
+   * "shop-hm7k3pqr9x", then "-2", "-3" for a seller with more than one. It is
+   * a stand-in until they choose a real name, and it cannot collide with a
+   * real one because account IDs are unique.
+   */
+  private async temporaryHandle(ownerId: string): Promise<string> {
+    const owner = await this.db.query.users.findFirst({
+      where: eq(users.id, ownerId),
+      columns: { publicId: true },
+    });
+    const base = `shop-${(owner?.publicId ?? ownerId.slice(0, 8)).toLowerCase()}`;
+    for (let n = 1; n <= 50; n++) {
+      const candidate = n === 1 ? base : `${base}-${n}`;
+      if (!(await this.handleTakenByOther(candidate))) return candidate;
+    }
+    // Fifty shops under one account is not a real case; a random tail keeps
+    // the shop opening rather than losing a payment over it.
+    return `${base}-${Date.now().toString(36)}`;
+  }
+
+  /**
+   * Give a shop on a temporary link its real name. Allowed once, and only
+   * while the link is temporary - after that the link is fixed like any
+   * other, because links already shared would break.
+   */
+  async chooseHandle(shopId: string, raw: string): Promise<ShopResponse> {
+    const shop = await this.db.query.shops.findFirst({
+      where: eq(shops.id, shopId),
+    });
+    if (!shop) {
+      throw new NotFoundException('Shop not found');
+    }
+    if (!shop.handlePending) {
+      throw new BadRequestException({
+        error: 'HandleFixed',
+        message:
+          'This shop already has its link, and a link cannot be changed once it is set.',
+      });
+    }
+    const handle = handleize(raw);
+    if (handle.length < 2 || handle.length > 80) {
+      throw new BadRequestException({
+        error: 'HandleInvalid',
+        message: 'Use 2-80 lowercase letters, numbers or hyphens.',
+      });
+    }
+    await this.blockedWords.assertClean(handle);
+    if (await this.handleTakenByOther(handle, shop.ownerId)) {
+      throw ShopsService.handleTaken();
+    }
+    try {
+      const [row] = await this.db
+        .update(shops)
+        .set({ handle, handlePending: false })
+        .where(and(eq(shops.id, shopId), eq(shops.handlePending, true)))
+        .returning();
+      if (!row) {
+        throw new BadRequestException({
+          error: 'HandleFixed',
+          message: 'This shop already has its link.',
+        });
+      }
+      return ShopResponse.fromRowForConsole(row);
+    } catch (err) {
+      if (isUniqueViolationOn(err, 'shops_handle_unique_idx')) {
+        throw ShopsService.handleTaken();
+      }
+      throw err;
+    }
   }
 
   /**

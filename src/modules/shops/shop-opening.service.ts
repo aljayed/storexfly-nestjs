@@ -8,12 +8,13 @@ import {
   OnModuleDestroy,
   OnModuleInit,
 } from '@nestjs/common';
-import { and, desc, eq, lt, ne } from 'drizzle-orm';
+import { and, desc, eq, inArray, lt, ne } from 'drizzle-orm';
 import { DRIZZLE } from '../../database/database.constants';
 import type { DrizzleDB } from '../../database/drizzle.types';
-import { shopDrafts, users } from '../../database/schema';
+import { shopDrafts, shops, users } from '../../database/schema';
 import type { GatewayPaymentRow, ShopDraftRow } from '../../database/schema';
 import { isUniqueViolationOn } from '../../common/utils/postgres-error.util';
+import { handleize } from '../../common/utils/slug.util';
 import { BillingSettingsService } from '../billing/billing-settings.service';
 import { CouponsService } from '../coupons/coupons.service';
 import {
@@ -311,9 +312,14 @@ export class ShopOpeningService implements OnModuleInit, OnModuleDestroy {
    *
    * An expired hold is not a reason to refuse: somebody who paid at minute
    * sixty-one has paid, and keeping the money without opening the shop is the
-   * one outcome worth avoiding. What can still refuse is the name being gone,
-   * and that is loud on purpose - it means a person has to be given their
-   * money back or their name sorted out by hand.
+   * one outcome worth avoiding. If the name went to somebody else in the
+   * meantime, the shop opens on a temporary link and the console asks the
+   * seller to choose a new one (ShopsService.chooseHandle).
+   *
+   * The one late payment that does not open a shop is one for a name this
+   * seller has since opened from another hold - they started over and paid
+   * there too. That is the same shop paid for twice, so the payment is
+   * recorded against it as invalid and refundable, not as a second shop.
    */
   async settlePaidDraft(
     attempt: GatewayPaymentRow,
@@ -333,12 +339,39 @@ export class ShopOpeningService implements OnModuleInit, OnModuleDestroy {
       .where(
         and(
           eq(shopDrafts.id, attempt.shopDraftId),
-          eq(shopDrafts.status, 'pending'),
+          inArray(shopDrafts.status, ['pending', 'expired']),
         ),
       )
       .returning();
     if (!draft) {
       await this.settleRepeatPayment(attempt, charge);
+      return;
+    }
+
+    const alreadyOpen = await this.db.query.shops.findFirst({
+      where: and(
+        eq(shops.ownerId, draft.ownerId),
+        eq(shops.handle, handleize(draft.handle)),
+      ),
+      columns: { id: true },
+    });
+    if (alreadyOpen) {
+      await this.db
+        .update(shopDrafts)
+        .set({ shopId: alreadyOpen.id })
+        .where(eq(shopDrafts.id, draft.id));
+      await this.subscriptions.settleRepeatOpening({
+        ownerId: draft.ownerId,
+        shopId: alreadyOpen.id,
+        shopDraftId: draft.id,
+        packCode: attempt.packCode,
+        amountCents: attempt.amountCents,
+        discountCents: attempt.discountCents,
+        couponCode: attempt.couponCode,
+        provider: attempt.provider,
+        transactionId: charge.transactionId,
+        gatewayTxnId: charge.gatewayTxnId,
+      });
       return;
     }
 
@@ -423,7 +456,11 @@ export class ShopOpeningService implements OnModuleInit, OnModuleDestroy {
     let shopId: string;
     let response: ShopResponse;
     try {
-      const values = await this.shops.prepareShop(draft.ownerId, dto);
+      // Paid for, so a name lost in the meantime opens on a temporary link
+      // rather than keeping the money.
+      const values = await this.shops.prepareShop(draft.ownerId, dto, {
+        temporaryHandleIfTaken: true,
+      });
       const row = await this.shops.createPreparedShop(draft.ownerId, values);
       shopId = row.id;
       response = ShopResponse.fromRowForConsole(row);
