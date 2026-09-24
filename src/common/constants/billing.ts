@@ -27,13 +27,13 @@ export const PLATFORM_CURRENCY = 'BDT';
 export const COMMISSION_BPS = 150;
 
 /**
- * The most sales credit a shop may hold at once, in paisa (৳10,00,000).
+ * The most sales credit a shop may hold at once, in paisa (৳50,00,000).
  *
  * This is a ceiling on the *balance*, not a lifetime limit: as a shop sells
  * its credit down, room to buy more opens up again. Sell ৳1,00,000 and you
  * can buy ৳1,00,000 more.
  */
-export const CREDIT_BALANCE_CAP_CENTS = 100_000_000;
+export const CREDIT_BALANCE_CAP_CENTS = 500_000_000;
 
 /**
  * How long a verified shop keeps selling after a monthly commission bill goes

@@ -122,7 +122,7 @@ export class CreditStateResponse {
   @ApiProperty({ example: 73, description: 'Share of the credit used, 0-100' })
   pct!: number;
   @ApiProperty({
-    example: 1000000,
+    example: 5000000,
     description: 'The most credit this shop may hold at once, in ৳',
   })
   cap!: number;
