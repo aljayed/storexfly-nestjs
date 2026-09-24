@@ -46,8 +46,14 @@ describe('the payout cycle', () => {
   });
 
   it('pays out between the 15th and the 21st of the cycle’s own month', () => {
-    expect(windowOf('2026-09')).toEqual({ from: '2026-09-15', to: '2026-09-21' });
-    expect(windowOf('2027-01')).toEqual({ from: '2027-01-15', to: '2027-01-21' });
+    expect(windowOf('2026-09')).toEqual({
+      from: '2026-09-15',
+      to: '2026-09-21',
+    });
+    expect(windowOf('2027-01')).toEqual({
+      from: '2027-01-15',
+      to: '2027-01-21',
+    });
   });
 
   it('carries a late-December delivery into January’s payout', () => {
@@ -69,7 +75,11 @@ describe('when an order becomes payable', () => {
 
   it('follows the courier’s delivery stamp', () => {
     expect(
-      settledOnOf({ deliveredAt: at, handedOverAt: earlier, deliveryMode: 'carrybee' }),
+      settledOnOf({
+        deliveredAt: at,
+        handedOverAt: earlier,
+        deliveryMode: 'carrybee',
+      }),
     ).toBe(at);
   });
 
@@ -77,16 +87,28 @@ describe('when an order becomes payable', () => {
   // last thing the platform can see of the parcel.
   it('falls back to the handover when the shop delivers itself', () => {
     expect(
-      settledOnOf({ deliveredAt: null, handedOverAt: at, deliveryMode: 'manual' }),
+      settledOnOf({
+        deliveredAt: null,
+        handedOverAt: at,
+        deliveryMode: 'manual',
+      }),
     ).toBe(at);
   });
 
   it('is nothing at all until the parcel has gone', () => {
     expect(
-      settledOnOf({ deliveredAt: null, handedOverAt: at, deliveryMode: 'carrybee' }),
+      settledOnOf({
+        deliveredAt: null,
+        handedOverAt: at,
+        deliveryMode: 'carrybee',
+      }),
     ).toBeNull();
     expect(
-      settledOnOf({ deliveredAt: null, handedOverAt: null, deliveryMode: 'manual' }),
+      settledOnOf({
+        deliveredAt: null,
+        handedOverAt: null,
+        deliveryMode: 'manual',
+      }),
     ).toBeNull();
   });
 });

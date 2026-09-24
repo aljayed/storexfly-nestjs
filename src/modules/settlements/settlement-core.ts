@@ -211,9 +211,12 @@ export function statusOf(
   payout: number,
 ): SettlementStatus {
   if (paid) return 'paid';
-  // The cycle is still taking deliveries.
-  if (period >= currentPeriod()) return 'accruing';
+  // Nothing online arrived, so there is no transfer to make - true whether
+  // or not the cycle has closed.
   if (payout <= 0) return 'none';
+  // The cycle is still taking deliveries. It can be paid out all the same;
+  // this only says that more may yet join it.
+  if (period >= currentPeriod()) return 'accruing';
   const { from, to } = windowOf(period);
   // Today on the seller's calendar. Not derived from periodOf: that answers
   // "which payout is this delivery in", which after the 15th is next month.
@@ -222,21 +225,6 @@ export function statusOf(
   if (today < from) return 'scheduled';
   if (today <= to) return 'due';
   return 'overdue';
-}
-
-/** Every month from the first order to now, newest first. */
-export function listPeriods(firstOrderAt: Date | undefined): string[] {
-  if (!firstOrderAt) return [currentPeriod()];
-  const first = periodOf(firstOrderAt);
-  const out: string[] = [];
-  for (
-    let p = currentPeriod();
-    p >= first && out.length < 60;
-    p = previousPeriod(p)
-  ) {
-    out.push(p);
-  }
-  return out;
 }
 
 export { CARD_FEE_BP, MBANK_FEE_BP, feeCents };

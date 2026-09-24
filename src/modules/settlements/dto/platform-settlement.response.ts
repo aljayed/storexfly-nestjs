@@ -65,9 +65,16 @@ export class PlatformSettlementsResponse {
   @ApiProperty({ example: '2026-06' }) period!: string;
   @ApiProperty({
     example: ['2026-06', '2026-05'],
-    description: 'Every month with order activity, newest first',
+    description:
+      'Every cycle worth opening - one a delivery landed in, one already ' +
+      'paid out, or the one now collecting. Newest first.',
   })
   periods!: string[];
+  @ApiProperty({
+    example: ['2026-06'],
+    description: 'Of those, the cycles that still owe a shop money',
+  })
+  unsettled!: string[];
   @ApiProperty({ type: [PlatformSettlementRowResponse] })
   rows!: PlatformSettlementRowResponse[];
   @ApiProperty({ type: [PlatformSettlementTotalResponse] })

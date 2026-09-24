@@ -34,6 +34,10 @@ export function feeCents(amountCents: number, basisPoints: number): number {
 }
 
 /**
+ * A payout is recorded when the operator actually transfers it, which they
+ * may do at any point - including out of a cycle that is still open. The
+ * statuses below describe where a cycle stands, not what is permitted.
+ *
  * Lifecycle of one payout cycle:
  *  - accruing:  the cycle is still open - deliveries keep joining it
  *  - scheduled: the cycle has closed but its window has not opened yet. A

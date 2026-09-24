@@ -6,7 +6,6 @@ import {
 } from '@nestjs/common';
 import {
   and,
-  asc,
   desc,
   eq,
   gte,
@@ -39,7 +38,6 @@ import {
   classify,
   currentPeriod,
   emptyBuckets,
-  listPeriods,
   monthRange,
   payoutCents,
   periodOf,
@@ -194,12 +192,20 @@ export class SettlementsService {
     return { methods: methodViews, banner, months };
   }
 
-  /** Platform admin: every shop's numbers for one payout cycle. */
+  /**
+   * Platform admin: every shop's numbers for one payout cycle.
+   *
+   * Which cycle a delivery belongs to is decided in TypeScript, on the
+   * seller's calendar - so the months are read the same way here as on the
+   * seller's own screen, from one definition of the rule. That means reading
+   * every delivered order rather than only the selected month's, which is
+   * what lets the screen say which *other* cycles still owe somebody money
+   * instead of leaving the operator to hunt through the picker. At this
+   * platform's size that is a small read; if the order table ever outgrows
+   * it, the bucketing is what to move into SQL.
+   */
   async forPlatform(period?: string): Promise<PlatformSettlementsResponse> {
-    const selected = period ?? previousPeriod(currentPeriod());
-    const [from, end] = monthRange(selected);
-
-    const [catalog, grouped, paidRows, firstOrder] = await Promise.all([
+    const [catalog, rows, paidRows] = await Promise.all([
       this.methods.byCode(),
       this.db.query.orders.findMany({
         where: and(
@@ -210,7 +216,6 @@ export class SettlementsService {
           // replaces, which has already been settled. Paying out on both
           // would pay the shop twice for one sale.
           isNull(orders.exchangedFromOrderId),
-          SettlementsService.settledWithin(from, end),
         ),
         columns: {
           shopId: true,
@@ -218,27 +223,64 @@ export class SettlementsService {
           totalCents: true,
           advanceCents: true,
           pay: true,
+          deliveredAt: true,
+          handedOverAt: true,
+          deliveryMode: true,
         },
       }),
-      this.db.query.settlements.findMany({
-        where: eq(settlements.period, selected),
-      }),
-      this.db
-        .select({ placedAt: orders.placedAt })
-        .from(orders)
-        .orderBy(asc(orders.placedAt))
-        .limit(1),
+      this.db.query.settlements.findMany(),
     ]);
 
-    const byShop = new Map<string, Buckets>();
-    for (const order of grouped) {
-      const b = byShop.get(order.shopId) ?? emptyBuckets();
-      addOrderForSettlement(b, order);
-      byShop.set(order.shopId, b);
+    // cycle -> shop -> what arrived in it
+    const byPeriod = new Map<string, Map<string, Buckets>>();
+    for (const r of rows) {
+      // Undelivered money is nobody's payout yet - it joins the cycle the
+      // parcel arrives in, whenever that turns out to be.
+      const arrived = settledOnOf(r);
+      if (!arrived) continue;
+      const shops =
+        byPeriod.get(periodOf(arrived)) ?? new Map<string, Buckets>();
+      const b = shops.get(r.shopId) ?? emptyBuckets();
+      addOrderForSettlement(b, r);
+      shops.set(r.shopId, b);
+      byPeriod.set(periodOf(arrived), shops);
     }
-    const paidByShop = new Map(paidRows.map((s) => [s.shopId, s]));
 
-    const shopIds = [...new Set([...byShop.keys(), ...paidByShop.keys()])];
+    const paidByPeriod = new Map<string, Map<string, SettlementRow>>();
+    for (const row of paidRows) {
+      const shops =
+        paidByPeriod.get(row.period) ?? new Map<string, SettlementRow>();
+      shops.set(row.shopId, row);
+      paidByPeriod.set(row.period, shops);
+    }
+
+    // A cycle is worth offering if something was delivered into it, if it has
+    // already been paid out, or if it is the one now collecting.
+    const periods = [
+      ...new Set([...byPeriod.keys(), ...paidByPeriod.keys(), currentPeriod()]),
+    ].sort((a, b) => b.localeCompare(a));
+
+    // The ones still holding money for somebody. A cycle already paid out
+    // counts again if deliveries have landed in it since, because the
+    // snapshot no longer covers what the shop is owed. The operator lands on
+    // the newest of these, so a shop with a delivery is never a dropdown
+    // away.
+    const unsettled = periods.filter((p) => {
+      const shopsInCycle = byPeriod.get(p);
+      if (!shopsInCycle) return false;
+      return [...shopsInCycle].some(
+        ([shopId, b]) =>
+          payoutCents(classify(b, catalog)) >
+          (paidByPeriod.get(p)?.get(shopId)?.payoutCents ?? 0),
+      );
+    });
+
+    const selected = period ?? unsettled[0] ?? periods[0];
+    const liveShops = byPeriod.get(selected) ?? new Map<string, Buckets>();
+    const paidShops =
+      paidByPeriod.get(selected) ?? new Map<string, SettlementRow>();
+
+    const shopIds = [...new Set([...liveShops.keys(), ...paidShops.keys()])];
     const shopRows = shopIds.length
       ? await this.db.query.shops.findMany({
           where: inArray(shops.id, shopIds),
@@ -246,7 +288,7 @@ export class SettlementsService {
         })
       : [];
 
-    const rows: PlatformSettlementRowResponse[] = shopRows
+    const built: PlatformSettlementRowResponse[] = shopRows
       .map((s) => ({
         shopId: s.id,
         shopName: s.name,
@@ -254,8 +296,8 @@ export class SettlementsService {
         currency: s.currency,
         ...this.buildMonth(
           selected,
-          byShop.get(s.id),
-          paidByShop.get(s.id),
+          liveShops.get(s.id),
+          paidShops.get(s.id),
           catalog,
         ),
       }))
@@ -263,7 +305,7 @@ export class SettlementsService {
       .sort((a, b) => b.payout - a.payout || b.total - a.total);
 
     const totals = new Map<string, PlatformSettlementTotalResponse>();
-    for (const r of rows) {
+    for (const r of built) {
       const t = totals.get(r.currency) ?? {
         currency: r.currency,
         pendingPayout: 0,
@@ -271,13 +313,16 @@ export class SettlementsService {
       };
       if (r.status === 'paid') t.paidPayout += r.payout;
       else t.pendingPayout += r.payout;
+      // Money delivered into a cycle since it was paid out is still owed.
+      if (r.unrecorded) t.pendingPayout += r.unrecorded;
       totals.set(r.currency, t);
     }
 
     return {
       period: selected,
-      periods: listPeriods(firstOrder[0]?.placedAt),
-      rows,
+      periods,
+      unsettled,
+      rows: built,
       totals: [...totals.values()],
     };
   }
@@ -290,11 +335,10 @@ export class SettlementsService {
     note?: string,
   ): Promise<PlatformSettlementRowResponse> {
     const shop = await this.shops.requireById(shopId);
-    if (period >= currentPeriod()) {
-      throw new BadRequestException(
-        'Only completed months can be settled - this month is still accruing.',
-      );
-    }
+    // A payout is recorded when the money is actually transferred, and that
+    // is the operator's call - including out of a cycle that is still taking
+    // deliveries. Anything that lands in it afterwards is picked up by
+    // recording the payout again, which rewrites the snapshot.
 
     if (!paid) {
       const deleted = await this.db
@@ -437,10 +481,16 @@ export class SettlementsService {
   ): SettlementMonthResponse {
     // A paid month renders from its snapshot - amounts *and* the fee rates in
     // force at payment time - so the record never shifts under a rate change.
-    const core: MonthCore = paid
-      ? snapshotCore(paid)
-      : classify(live ?? emptyBuckets(), catalog);
+    const liveCore = classify(live ?? emptyBuckets(), catalog);
+    const core: MonthCore = paid ? snapshotCore(paid) : liveCore;
     const payout = paid ? paid.payoutCents : payoutCents(core);
+    // A cycle can be paid out while it is still taking deliveries, so the
+    // ones that arrive afterwards are money the snapshot does not cover.
+    // Saying so is the difference between the operator recording the payout
+    // again and the shop quietly going short.
+    const unrecorded = paid
+      ? Math.max(0, payoutCents(liveCore) - paid.payoutCents)
+      : 0;
     const onlineCents = core.online.reduce((sum, m) => sum + m.cents, 0);
     const window = windowOf(period);
     return {
@@ -459,6 +509,7 @@ export class SettlementsService {
       })),
       fees: centsToDollars(totalFeeCents(core)),
       payout: centsToDollars(payout),
+      unrecorded: unrecorded ? centsToDollars(unrecorded) : undefined,
       status: statusOf(period, !!paid, payout),
       windowFrom: window.from,
       windowTo: window.to,

@@ -44,6 +44,13 @@ export class SettlementMonthResponse {
     description: 'Online revenue minus fees - what gets paid out',
   })
   payout!: number;
+  @ApiPropertyOptional({
+    example: 420,
+    description:
+      'Payout that has arrived since this cycle was marked paid - present ' +
+      'only when a settled cycle has kept taking deliveries',
+  })
+  unrecorded?: number;
   @ApiProperty({
     enum: ['accruing', 'scheduled', 'due', 'overdue', 'paid', 'none'],
   })
