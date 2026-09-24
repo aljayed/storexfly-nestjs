@@ -154,7 +154,7 @@ export class PlatformOverviewService {
   }
 
   /**
-   * One shop in full, for the operator's detail drawer. The list row plus the
+   * One shop in full, for the operator's shop page. The list row plus the
    * context an operator needs before switching a live business off: what it
    * has sold over its life, how big the catalog is, whether it is verified,
    * and how it pays the platform.
@@ -213,6 +213,8 @@ export class PlatformOverviewService {
       email: shop.owner?.email ?? undefined,
       phone: shop.owner?.phone ?? shop.supportPhone ?? undefined,
       currency: shop.currency,
+      // The storefront's own colour, so the console can show the shop wearing it.
+      brand: shop.brand,
       live: shop.live,
       suspended: !!shop.suspendedAt,
       sales30d: toMajor(Number(recent.cents)),
@@ -328,7 +330,7 @@ export class PlatformOverviewService {
   /**
    * The operator's message thread with one shop: notices addressed to this
    * shop alone, oldest first so it reads like a conversation. Broadcasts to
-   * every shop are the Notices screen's business, not this drawer's.
+   * every shop are the Notices screen's business, not this page's.
    */
   async listShopMessages(shopId: string): Promise<NoticeListResponse> {
     await this.requireShop(shopId);

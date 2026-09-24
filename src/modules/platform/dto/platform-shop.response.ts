@@ -40,6 +40,8 @@ export class PlatformShopDetailResponse extends PlatformShopResponse {
   @ApiPropertyOptional({ example: 'Home-cooked, delivered warm' })
   tagline?: string;
   @ApiProperty({ example: 'Food & grocery' }) cat!: string;
+  /** The storefront's brand colour, as a hex value. */
+  @ApiProperty({ example: '#c98a1a' }) brand!: string;
   @ApiProperty({ example: 'en' }) language!: string;
   @ApiProperty({ enum: ['free', 'paid'] }) plan!: string;
   @ApiProperty({ description: 'AI auto-reply enabled in the seller inbox' })
