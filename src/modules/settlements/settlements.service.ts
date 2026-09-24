@@ -116,6 +116,23 @@ export class SettlementsService {
    */
   private static readonly settledOn = sql`coalesce(${orders.deliveredAt}, case when ${orders.deliveryMode} = 'manual' then ${orders.handedOverAt} end)`;
 
+  /**
+   * One cycle's half-open window, as a condition on `settledOn`.
+   *
+   * The boundaries are bound as ISO text and cast back, which is not
+   * decoration: `settledOn` is an expression rather than a column, so the
+   * driver has no column type to map a JS Date onto and rejects the
+   * parameter outright - the whole query fails before Postgres sees it. The
+   * cast is what gives the comparison a type on both sides.
+   */
+  static settledWithin(from: Date, end: Date) {
+    const at = (when: Date) => sql`${when.toISOString()}::timestamptz`;
+    return and(
+      gte(SettlementsService.settledOn, at(from)),
+      lt(SettlementsService.settledOn, at(end)),
+    );
+  }
+
   /** Shop admin: every payout cycle, newest first. */
   async forShop(shopId: string): Promise<ShopSettlementsResponse> {
     await this.shops.requireById(shopId);
@@ -193,8 +210,7 @@ export class SettlementsService {
           // replaces, which has already been settled. Paying out on both
           // would pay the shop twice for one sale.
           isNull(orders.exchangedFromOrderId),
-          gte(SettlementsService.settledOn, from),
-          lt(SettlementsService.settledOn, end),
+          SettlementsService.settledWithin(from, end),
         ),
         columns: {
           shopId: true,
@@ -398,8 +414,7 @@ export class SettlementsService {
         ne(orders.status, 'Cancelled'),
         ne(orders.pay, 'Refunded'),
         isNull(orders.exchangedFromOrderId),
-        gte(SettlementsService.settledOn, from),
-        lt(SettlementsService.settledOn, end),
+        SettlementsService.settledWithin(from, end),
       ),
       columns: {
         totalCents: true,
