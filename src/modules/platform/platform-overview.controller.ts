@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Param,
   ParseUUIDPipe,
@@ -71,6 +72,31 @@ export class PlatformOverviewController {
     @Body() dto: UpdatePlatformShopDto,
   ) {
     return this.overview.updateShop(shopId, dto);
+  }
+
+  @Get('shops/:shopId/products')
+  @ApiOperation({ summary: "Platform admin: one shop's catalogue" })
+  shopProducts(@Param('shopId', ParseUUIDPipe) shopId: string) {
+    return this.overview.listShopProducts(shopId);
+  }
+
+  @Delete('shops/:shopId/products/:productId')
+  @ApiOperation({ summary: 'Platform admin: remove one product from a shop' })
+  deleteShopProduct(
+    @Param('shopId', ParseUUIDPipe) shopId: string,
+    @Param('productId', ParseUUIDPipe) productId: string,
+  ) {
+    return this.overview.deleteShopProduct(shopId, productId);
+  }
+
+  @Delete('shops/:shopId')
+  @ApiOperation({
+    summary:
+      'Platform admin: delete a shop. Only an empty one - its catalogue has ' +
+      'to be cleared first - and money owed is snapshotted as it goes.',
+  })
+  deleteShop(@Param('shopId', ParseUUIDPipe) shopId: string) {
+    return this.overview.deleteShop(shopId);
   }
 
   @Get('shops/:shopId/messages')

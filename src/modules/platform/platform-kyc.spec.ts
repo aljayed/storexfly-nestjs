@@ -33,6 +33,8 @@ function harness(row: Partial<ShopRow> | undefined = pending) {
   const service = new PlatformOverviewService(
     db as unknown as DrizzleDB,
     {} as NoticesService,
+    {} as never,
+    {} as never,
   );
   jest
     .spyOn(service, 'getKyc')

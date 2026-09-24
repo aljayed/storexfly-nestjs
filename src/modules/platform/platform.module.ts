@@ -7,6 +7,8 @@ import { CouponsModule } from '../coupons/coupons.module';
 import { GatewaysModule } from '../gateways/gateways.module';
 import { MailModule } from '../mail/mail.module';
 import { NoticesModule } from '../notices/notices.module';
+import { ProductsModule } from '../products/products.module';
+import { ShopsModule } from '../shops/shops.module';
 import { ReferralsModule } from '../referrals/referrals.module';
 import { PlatformAuthController } from './platform-auth.controller';
 import { PlatformAuthService } from './platform-auth.service';
@@ -38,6 +40,9 @@ import { PlatformReferralsController } from './platform-referrals.controller';
     GatewaysModule,
     MailModule,
     NoticesModule,
+    // Taking a storefront down from the console: its catalogue, then the shop.
+    ProductsModule,
+    ShopsModule,
   ],
   controllers: [
     PlatformAuthController,

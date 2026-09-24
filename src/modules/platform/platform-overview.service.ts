@@ -31,6 +31,8 @@ import {
 import type { ShopRow } from '../../database/schema';
 import { hasCompleteKyc } from '../shops/kyc-submission';
 import { NoticesService } from '../notices/notices.service';
+import { ProductsService } from '../products/products.service';
+import { ShopsService } from '../shops/shops.service';
 import type {
   NoticeListResponse,
   NoticeResponse,
@@ -63,7 +65,30 @@ export class PlatformOverviewService {
   constructor(
     @Inject(DRIZZLE) private readonly db: DrizzleDB,
     private readonly notices: NoticesService,
+    private readonly productsService: ProductsService,
+    private readonly shopsService: ShopsService,
   ) {}
+
+  /* ── Emptying and closing a shop ──────────────────────────────────
+     An operator sometimes has to take a storefront down - a shop that has
+     stopped answering, or a test one that should never have been public.
+     It is done in the open: the catalogue is listed, items go one at a
+     time, and only an empty shop can be deleted. */
+
+  /** Every product in one shop, for the operator's own catalogue view. */
+  listShopProducts(shopId: string) {
+    return this.productsService.listForShop(shopId);
+  }
+
+  /** Remove one product from a shop. */
+  deleteShopProduct(shopId: string, productId: string) {
+    return this.productsService.remove(shopId, productId);
+  }
+
+  /** Delete an empty shop, with the same care the owner's own delete takes. */
+  deleteShop(shopId: string) {
+    return this.shopsService.deleteAsOperator(shopId);
+  }
 
   /** Paginated list of all shops with owner contact and last-30-day sales. */
   async listShops(query: {

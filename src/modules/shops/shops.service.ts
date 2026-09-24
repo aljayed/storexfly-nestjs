@@ -948,6 +948,52 @@ export class ShopsService {
       );
     }
     const owed = await this.assertDeletable(shop, creditAcknowledged);
+    return this.performDelete(shop, email, owed);
+  }
+
+  /**
+   * Delete a shop on the operator's say-so, from the platform console.
+   *
+   * The same transaction the owner's own deletion runs - money owed is
+   * snapshotted, billing is closed - with one extra condition: the shop has
+   * to be empty. An operator emptying a catalogue item by item has seen what
+   * they are removing; one button that takes a shop and everything in it has
+   * not been seen by anybody.
+   */
+  async deleteAsOperator(
+    shopId: string,
+  ): Promise<{ deleted: boolean; pendingPayout: number; currency: string }> {
+    const shop = await this.requireById(shopId);
+    const [{ n }] = await this.db
+      .select({ n: count() })
+      .from(products)
+      .where(eq(products.shopId, shopId));
+    const remaining = Number(n);
+    if (remaining > 0) {
+      throw new ConflictException({
+        error: 'ShopNotEmpty',
+        message: `This shop still lists ${remaining} product${remaining === 1 ? '' : 's'}. Remove them first - a shop is only deletable once it is empty.`,
+      });
+    }
+    // No code is sent on this path, so a missing owner address is not a
+    // reason to refuse - it only leaves the snapshot without one to quote.
+    const owner = await this.db.query.users.findFirst({
+      where: eq(users.id, shop.ownerId),
+      columns: { email: true },
+    });
+    // The operator is the one acknowledging any forfeited credit here; the
+    // figure is on the confirmation they just pressed through.
+    const owed = await this.assertDeletable(shop, true);
+    return this.performDelete(shop, owner?.email ?? '', owed);
+  }
+
+  /** The delete itself: snapshot what is owed, close billing, remove the shop. */
+  private async performDelete(
+    shop: ShopRow,
+    email: string,
+    owed: OwedMonth[],
+  ): Promise<{ deleted: boolean; pendingPayout: number; currency: string }> {
+    const shopId = shop.id;
     await this.db.transaction(async (tx) => {
       if (owed.length) {
         await tx.insert(deletedShopSettlements).values(
