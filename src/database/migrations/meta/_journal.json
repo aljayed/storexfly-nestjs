@@ -694,6 +694,13 @@
       "when": 1794441600000,
       "tag": "0101_coupon_fixed_amount",
       "breakpoints": true
+    },
+    {
+      "idx": 102,
+      "version": "7",
+      "when": 1794528000000,
+      "tag": "0102_chat_location",
+      "breakpoints": true
     }
   ]
 }

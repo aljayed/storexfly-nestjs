@@ -66,6 +66,9 @@ export const chatMessageTypeEnum = pgEnum('chat_message_type', [
   // A shop-initiated order offer: the seller proposes items at a price they
   // set, and accepting it places the order. See `chatOrderOffers`.
   'offer',
+  // A pin on a map: either where the sender was when they sent it, or a live
+  // position they keep updating until the share ends. See ChatLocationValue.
+  'location',
 ]);
 
 /** sent → delivered (recipient connected) → read. `sending` is client-only. */
@@ -194,6 +197,26 @@ export interface ChatOfferSnapshotValue {
       without knowing where the buyer is. Otherwise delivery is unknown until
       they confirm their district on the View screen. */
   freeDelivery?: boolean;
+}
+
+/**
+ * A shared position. A one-off share is a pin that never moves. A live share
+ * carries `liveUntil`, and the sender's device keeps rewriting lat/lng (and
+ * `updatedAt`) in place until that time passes or they stop it early, which
+ * sets `stoppedAt`. Either way the last position stays on the card after.
+ */
+export interface ChatLocationValue {
+  lat: number;
+  lng: number;
+  /** Radius in metres the device reported for this fix, when it gave one. */
+  accuracy?: number;
+  live: boolean;
+  /** ISO time a live share ends on its own. */
+  liveUntil?: string;
+  /** ISO time the sender ended a live share early. */
+  stoppedAt?: string;
+  /** ISO time of the fix now on the card. */
+  updatedAt: string;
 }
 
 /** Inline attachment (data URL, same storage approach as product images). */
@@ -331,6 +354,7 @@ export const chatMessages = pgTable(
     adjustment: jsonb('adjustment').$type<ChatAdjustmentSnapshotValue>(),
     offer: jsonb('offer').$type<ChatOfferSnapshotValue>(),
     attachment: jsonb('attachment').$type<ChatAttachmentValue>(),
+    location: jsonb('location').$type<ChatLocationValue>(),
     status: chatMessageStatusEnum('status').notNull().default('sent'),
     sentAt: timestamp('sent_at', { withTimezone: true }).notNull().defaultNow(),
     deliveredAt: timestamp('delivered_at', { withTimezone: true }),

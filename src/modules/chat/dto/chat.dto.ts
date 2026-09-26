@@ -4,7 +4,10 @@ import {
   IsArray,
   IsIn,
   IsInt,
+  IsLatitude,
+  IsLongitude,
   IsNotEmpty,
+  IsNumber,
   IsOptional,
   IsString,
   IsUUID,
@@ -39,8 +42,37 @@ export class ChatAttachmentDto {
   dataUrl!: string;
 }
 
+/** One position fix from the sender's device. */
+export class ChatLocationFixDto {
+  // IsLatitude alone also passes numeric strings; the card stores numbers.
+  @IsNumber()
+  @IsLatitude()
+  lat!: number;
+
+  @IsNumber()
+  @IsLongitude()
+  lng!: number;
+
+  /** Metres, as the device reported it. Anything past 100 km is noise. */
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  @Max(100_000)
+  accuracy?: number;
+}
+
+/** Durations a live share can run for, in minutes (as WhatsApp offers). */
+export const LIVE_LOCATION_MINUTES = [15, 60, 480] as const;
+
+export class ChatLocationDto extends ChatLocationFixDto {
+  /** Absent = a one-off pin; otherwise how long the live share runs. */
+  @IsOptional()
+  @IsIn(LIVE_LOCATION_MINUTES)
+  liveMinutes?: (typeof LIVE_LOCATION_MINUTES)[number];
+}
+
 export class SendMessageDto {
-  @IsIn(['text', 'product', 'order', 'image', 'file'])
+  @IsIn(['text', 'product', 'order', 'image', 'file', 'location'])
   type!: Exclude<ChatMessageType, 'system'>;
 
   @IsOptional()
@@ -62,6 +94,12 @@ export class SendMessageDto {
   @ValidateNested()
   @Type(() => ChatAttachmentDto)
   attachment?: ChatAttachmentDto;
+
+  /** For type 'location'. */
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => ChatLocationDto)
+  location?: ChatLocationDto;
 
   /** Client-generated id echoed back for optimistic-UI reconciliation. */
   @IsString()

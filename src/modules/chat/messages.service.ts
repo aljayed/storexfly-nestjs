@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   HttpException,
   HttpStatus,
   Inject,
@@ -29,6 +30,7 @@ import {
   products,
   shops,
   type ChatAdjustmentSnapshotValue,
+  type ChatLocationValue,
   type ChatOfferSnapshotValue,
   type ChatMessageRow,
   type ChatMessageStatus,
@@ -54,7 +56,11 @@ import {
   writeThreadParticipants,
 } from './thread-participants.util';
 import { ConversationsService } from './conversations.service';
-import type { MarkReadDto, SendMessageDto } from './dto/chat.dto';
+import type {
+  ChatLocationFixDto,
+  MarkReadDto,
+  SendMessageDto,
+} from './dto/chat.dto';
 
 const MAX_IMAGE_BYTES = 6 * 1024 * 1024;
 const MAX_FILE_BYTES = 8 * 1024 * 1024;
@@ -101,6 +107,7 @@ export interface MessageDto {
     sizeBytes: number;
     dataUrl: string;
   };
+  location?: ChatLocationValue;
   status: ChatMessageStatus;
   sentAt: string;
   /** Stored idempotency key, echoed for optimistic-UI reconciliation. */
@@ -316,6 +323,14 @@ export class MessagesService {
         throw new BadRequestException('clientRef was already used');
       }
       return { ...this.toDto(existing), clientRef: dto.clientRef };
+    }
+
+    // One live share per sender per thread, as WhatsApp does: starting a new
+    // one ends whatever this side was already sharing here.
+    if (row.type === 'location' && row.location?.live) {
+      await this.endLiveShares(conversationId, row.senderSide, {
+        except: row.id,
+      });
     }
 
     const message = { ...this.toDto(row), clientRef: dto.clientRef };
@@ -647,6 +662,22 @@ export class MessagesService {
           text: dto.text?.trim() || null,
         };
       }
+      case 'location': {
+        const l = dto.location;
+        if (!l) throw new BadRequestException('location is required');
+        const now = new Date();
+        const location: ChatLocationValue = {
+          ...this.fix(l),
+          live: !!l.liveMinutes,
+          updatedAt: now.toISOString(),
+        };
+        if (l.liveMinutes) {
+          location.liveUntil = new Date(
+            now.getTime() + l.liveMinutes * 60_000,
+          ).toISOString();
+        }
+        return { location, text: dto.text?.trim() || null };
+      }
       default:
         throw new BadRequestException('Unsupported message type');
     }
@@ -672,6 +703,8 @@ export class MessagesService {
         return `💱 Order ${fields.adjustment?.displayId ?? ''} amount change`.trim();
       case 'offer':
         return `🧾 ${fields.offer?.itemsSummary ?? 'Order offer'}`;
+      case 'location':
+        return fields.location?.live ? '📍 Live location' : '📍 Location';
       default:
         return '';
     }
@@ -822,6 +855,125 @@ export class MessagesService {
     await this.emitUpdatedMessages(rows);
   }
 
+  /**
+   * Move a live location to the sender's latest fix. Only the side that
+   * started the share can move it, and only while it is still running - the
+   * conditions sit in the UPDATE itself, so a fix racing a stop can't revive
+   * a share that has just ended.
+   */
+  async updateLiveLocation(
+    actor: ChatActor,
+    conversationId: string,
+    messageId: string,
+    dto: ChatLocationFixDto,
+  ): Promise<MessageDto> {
+    const side = await this.senderSideFor(actor, conversationId);
+    const patch = { ...this.fix(dto), updatedAt: new Date().toISOString() };
+    const rows = await this.db
+      .update(chatMessages)
+      .set({
+        // Drop the old accuracy first: a fix without one must not inherit it.
+        location: sql`(${chatMessages.location} - 'accuracy') || ${JSON.stringify(patch)}::jsonb`,
+      })
+      .where(
+        and(
+          eq(chatMessages.id, messageId),
+          eq(chatMessages.conversationId, conversationId),
+          eq(chatMessages.senderSide, side),
+          this.liveShareRunning(),
+        ),
+      )
+      .returning();
+    if (!rows.length) {
+      throw new ConflictException('This live location has ended');
+    }
+    await this.emitUpdatedMessages(rows);
+    return this.toDto(rows[0]);
+  }
+
+  /** End a live share early. Ending one that already ended is a no-op. */
+  async stopLiveLocation(
+    actor: ChatActor,
+    conversationId: string,
+    messageId: string,
+  ): Promise<MessageDto> {
+    const side = await this.senderSideFor(actor, conversationId);
+    const existing = await this.db.query.chatMessages.findFirst({
+      where: and(
+        eq(chatMessages.id, messageId),
+        eq(chatMessages.conversationId, conversationId),
+        eq(chatMessages.type, 'location'),
+        eq(chatMessages.senderSide, side),
+      ),
+    });
+    if (!existing) throw new NotFoundException('Location not found');
+    const [row] = await this.endLiveShares(conversationId, side, {
+      only: messageId,
+    });
+    return this.toDto(row ?? existing);
+  }
+
+  /** Stop this side's running live shares in a thread - all of them, all
+   *  but one, or just one. */
+  private async endLiveShares(
+    conversationId: string,
+    side: string,
+    which: { except?: string; only?: string } = {},
+  ): Promise<ChatMessageRow[]> {
+    const stopped = { stoppedAt: new Date().toISOString() };
+    const rows = await this.db
+      .update(chatMessages)
+      .set({
+        location: sql`${chatMessages.location} || ${JSON.stringify(stopped)}::jsonb`,
+      })
+      .where(
+        and(
+          eq(chatMessages.conversationId, conversationId),
+          eq(chatMessages.senderSide, side),
+          this.liveShareRunning(),
+          which.except ? ne(chatMessages.id, which.except) : undefined,
+          which.only ? eq(chatMessages.id, which.only) : undefined,
+        ),
+      )
+      .returning();
+    await this.emitUpdatedMessages(rows);
+    return rows;
+  }
+
+  /** A location message whose live share has neither expired nor been stopped. */
+  private liveShareRunning(): SQL {
+    return sql`${chatMessages.type} = 'location'
+      and (${chatMessages.location}->>'live')::boolean
+      and ${chatMessages.location}->>'stoppedAt' is null
+      and (${chatMessages.location}->>'liveUntil')::timestamptz > now()`;
+  }
+
+  /** The participant slot this viewer speaks as in a thread. */
+  private async senderSideFor(
+    actor: ChatActor,
+    conversationId: string,
+  ): Promise<string> {
+    await this.conversations.requireParticipantRow(actor, conversationId);
+    const parties = await this.conversations.partySetFor(actor);
+    const me = await sideOf(this.db, conversationId, parties);
+    if (!me) throw new NotFoundException('Conversation participant not found');
+    return me.side;
+  }
+
+  /** A device fix trimmed to what a map can use: ~10 cm and whole metres. */
+  private fix(
+    dto: ChatLocationFixDto,
+  ): Pick<ChatLocationValue, 'lat' | 'lng' | 'accuracy'> {
+    const round6 = (n: number) => Math.round(n * 1e6) / 1e6;
+    return {
+      lat: round6(dto.lat),
+      lng: round6(dto.lng),
+      ...(dto.accuracy !== undefined
+        ? { accuracy: Math.round(dto.accuracy) }
+        : {}),
+    };
+  }
+
   /** Fan out an in-place card change (offer/adjustment outcome). */
   private async emitUpdatedMessages(rows: ChatMessageRow[]): Promise<void> {
     for (const row of rows) {
@@ -854,6 +1006,7 @@ export class MessagesService {
       adjustment: row.adjustment ?? undefined,
       offer: row.offer ?? undefined,
       attachment: row.attachment ?? undefined,
+      location: row.location ?? undefined,
       status: row.status,
       sentAt: row.sentAt.toISOString(),
     };

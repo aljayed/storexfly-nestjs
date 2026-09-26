@@ -19,6 +19,7 @@ import type { ChatActor, CustomerActor, SellerActor } from './chat-actor';
 import { ChatAuthGuard, ChatRole, CurrentChatActor } from './chat-auth.guard';
 import { ConversationsService } from './conversations.service';
 import {
+  ChatLocationFixDto,
   ListConversationsQuery,
   ListMessagesQuery,
   MarkReadDto,
@@ -185,6 +186,30 @@ export class ConversationsController {
     @Body() dto: SendMessageDto,
   ) {
     return this.messages.send(actor, id, dto);
+  }
+
+  @Post(':id/messages/:messageId/location')
+  // A device reports a fix every few seconds while it moves; the client
+  // spaces them out, and this caps a runaway one.
+  @Throttle({ default: { limit: 60, ttl: 60_000 } })
+  @ApiOperation({ summary: 'Move a live location to the latest fix' })
+  updateLocation(
+    @CurrentChatActor() actor: ChatActor,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('messageId', ParseUUIDPipe) messageId: string,
+    @Body() dto: ChatLocationFixDto,
+  ) {
+    return this.messages.updateLiveLocation(actor, id, messageId, dto);
+  }
+
+  @Post(':id/messages/:messageId/location/stop')
+  @ApiOperation({ summary: 'Stop sharing a live location' })
+  stopLocation(
+    @CurrentChatActor() actor: ChatActor,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('messageId', ParseUUIDPipe) messageId: string,
+  ) {
+    return this.messages.stopLiveLocation(actor, id, messageId);
   }
 
   @Post(':id/read')
