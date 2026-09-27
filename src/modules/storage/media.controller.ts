@@ -11,7 +11,7 @@ import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import type { Response } from 'express';
 import sharp from 'sharp';
 import { Public } from '../../common/decorators/public.decorator';
-import { StorageService } from './storage.service';
+import { PRIVATE_MEDIA_PREFIX, StorageService } from './storage.service';
 
 /* Fixed set of resize widths so `?w=` can't be abused to mint unlimited cache
    variants (Nginx keys on the full URI). Anything else serves the original. */
@@ -69,7 +69,9 @@ export class MediaController {
   ) {
     // NestJS gives the wildcard as segments; rejoin to the original S3 key.
     const key = Array.isArray(keyParam) ? keyParam.join('/') : keyParam;
-    if (!key || key.includes('..')) {
+    // Private objects (chat attachments) are served only by their own
+    // routes, which check who is asking - never by this public, cached one.
+    if (!key || key.includes('..') || key.startsWith(PRIVATE_MEDIA_PREFIX)) {
       throw new NotFoundException();
     }
     const obj = await this.storage.getObject(key);

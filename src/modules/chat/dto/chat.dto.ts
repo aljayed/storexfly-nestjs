@@ -18,7 +18,7 @@ import {
 } from 'class-validator';
 import type { ChatMessageType, ChatOriginType } from '../../../database/schema';
 
-/** Inline attachment payload - data URL, same approach as product images. */
+/** Attachment as sent: a data URL the server moves into private storage. */
 export class ChatAttachmentDto {
   @IsIn(['image', 'file'])
   kind!: 'image' | 'file';

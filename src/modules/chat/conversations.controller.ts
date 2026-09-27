@@ -188,6 +188,39 @@ export class ConversationsController {
     return this.messages.send(actor, id, dto);
   }
 
+  @Get(':id/messages/:messageId/attachment')
+  // Each photo in a thread is its own request, and a shared office IP opens
+  // many threads. The browser keeps every one after the first fetch.
+  @Throttle({ default: { limit: 600, ttl: 60_000 } })
+  @ApiOperation({ summary: "Stream a message's photo or file" })
+  async attachment(
+    @CurrentChatActor() actor: ChatActor,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('messageId', ParseUUIDPipe) messageId: string,
+    @Res() res: Response,
+  ) {
+    const a = await this.messages.attachment(actor, id, messageId);
+    const name = encodeURIComponent(a.fileName).replace(
+      /['()*]/g,
+      (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`,
+    );
+    res.setHeader('Content-Type', a.mimeType);
+    res.setHeader('Content-Length', String(a.sizeBytes));
+    // Photos render in the thread; anything else is only ever saved.
+    res.setHeader(
+      'Content-Disposition',
+      `${a.kind === 'image' ? 'inline' : 'attachment'}; filename*=UTF-8''${name}`,
+    );
+    // Content-addressed and never edited, so the browser may keep it - but
+    // only this browser, since the response depends on who asked.
+    res.setHeader('Cache-Control', 'private, max-age=31536000, immutable');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    // Opened directly, a file can run nothing and reach nothing.
+    res.setHeader('Content-Security-Policy', "default-src 'none'; sandbox");
+    a.body.on('error', () => res.destroy());
+    a.body.pipe(res);
+  }
+
   @Post(':id/messages/:messageId/location')
   // A device reports a fix every few seconds while it moves; the client
   // spaces them out, and this caps a runaway one.

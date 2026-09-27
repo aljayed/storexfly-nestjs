@@ -219,13 +219,18 @@ export interface ChatLocationValue {
   updatedAt: string;
 }
 
-/** Inline attachment (data URL, same storage approach as product images). */
+/**
+ * A photo or file on a message. The bytes live in private object storage
+ * under `key`; `dataUrl` holds them inline instead only where no storage was
+ * configured. Shape-only in jsonb, so no migration either way.
+ */
 export interface ChatAttachmentValue {
   kind: 'image' | 'file';
   fileName: string;
   mimeType: string;
   sizeBytes: number;
-  dataUrl: string;
+  key?: string;
+  dataUrl?: string;
 }
 
 /**

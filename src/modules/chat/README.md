@@ -32,9 +32,14 @@ host-independent.
 
 ## Notable deviations from the api-spec
 
-- No `POST /attachments`: images/files travel inline as data URLs inside the
-  message payload (image ≤ 6 MB, file ≤ 8 MB) - same storage approach the
-  platform uses for product photos.
+- No `POST /attachments`: images/files arrive as data URLs inside the send
+  payload (image ≤ 6 MB, file ≤ 8 MB), so a retry replays one request under
+  one idempotency key. The server stores the bytes in private object storage
+  (`chat/{conversationId}/{sha256}.{ext}`) and keeps only their metadata on
+  the message; participants read them from
+  `GET /chat/conversations/:id/messages/:messageId/attachment`. The public
+  `/media` proxy refuses `chat/` keys. With no S3 configured they stay inline
+  as `dataUrl`, and clients render either shape.
 - Quick replies are flat (`/chat/quick-replies`); the shop scope comes from
   the admin token instead of a path param.
 - `GET /chat/conversations/:id/products` serves the product-picker catalogue

@@ -6,6 +6,7 @@ import {
   Inject,
   Injectable,
   NotFoundException,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import {
   and,
@@ -46,6 +47,12 @@ import { BotReplyService } from './bot-reply.service';
 import { ChatRealtimeService } from './chat-realtime.service';
 import { pairKeyFor, type ChatParty } from './chat-parties';
 import { SUPPORT_SENDER_ID } from './support.constants';
+import { createHash } from 'crypto';
+import type { Readable } from 'stream';
+import {
+  PRIVATE_MEDIA_PREFIX,
+  StorageService,
+} from '../storage/storage.service';
 import {
   bumpUnreadForOthers,
   clearUnreadFor,
@@ -88,6 +95,46 @@ const FILE_MIMES = new Set([
   'application/zip',
 ]);
 
+/** Leading bytes of each image type we accept. A photo is shown inline, so
+ *  its bytes must be what its label says - not a script dressed as a PNG. */
+const IMAGE_MAGIC: Record<string, (b: Buffer) => boolean> = {
+  'image/png': (b) =>
+    b.subarray(0, 8).equals(Buffer.from('89504e470d0a1a0a', 'hex')),
+  'image/jpeg': (b) => b.subarray(0, 3).equals(Buffer.from('ffd8ff', 'hex')),
+  'image/jpg': (b) => b.subarray(0, 3).equals(Buffer.from('ffd8ff', 'hex')),
+  'image/gif': (b) => b.subarray(0, 4).toString('latin1') === 'GIF8',
+  'image/webp': (b) =>
+    b.subarray(0, 4).toString('latin1') === 'RIFF' &&
+    b.subarray(8, 12).toString('latin1') === 'WEBP',
+};
+
+/** Object-key extension per type; the stored Content-Type is what counts. */
+const EXT_BY_MIME: Record<string, string> = {
+  'image/png': 'png',
+  'image/jpeg': 'jpg',
+  'image/jpg': 'jpg',
+  'image/webp': 'webp',
+  'image/gif': 'gif',
+  'application/pdf': 'pdf',
+  'application/msword': 'doc',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document':
+    'docx',
+  'application/vnd.ms-excel': 'xls',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'xlsx',
+  'text/plain': 'txt',
+  'text/csv': 'csv',
+  'application/zip': 'zip',
+};
+
+/** An attachment's bytes, ready to stream to a participant. */
+export interface AttachmentStream {
+  body: Readable;
+  kind: 'image' | 'file';
+  fileName: string;
+  mimeType: string;
+  sizeBytes: number;
+}
+
 export interface MessageDto {
   id: string;
   conversationId: string;
@@ -105,7 +152,10 @@ export interface MessageDto {
     fileName: string;
     mimeType: string;
     sizeBytes: number;
-    dataUrl: string;
+    /** Only on attachments kept inline (no object storage configured, or
+     *  sent before it was). Otherwise the bytes come from the attachment
+     *  route, so history and live events stay small. */
+    dataUrl?: string;
   };
   location?: ChatLocationValue;
   status: ChatMessageStatus;
@@ -121,6 +171,7 @@ export class MessagesService {
     private readonly conversations: ConversationsService,
     private readonly realtime: ChatRealtimeService,
     private readonly botReply: BotReplyService,
+    private readonly storage: StorageService,
   ) {}
 
   /** Page backwards through a thread (newest page first, items ascending). */
@@ -370,6 +421,36 @@ export class MessagesService {
   }
 
   /** Mark counterpart messages read up to (and including) one message. */
+  /**
+   * An attachment's bytes, for a participant of its thread only. Content
+   * addressed, so the route may let the browser keep it for good.
+   */
+  async attachment(
+    actor: ChatActor,
+    conversationId: string,
+    messageId: string,
+  ): Promise<AttachmentStream> {
+    await this.conversations.requireParticipantRow(actor, conversationId);
+    const row = await this.db.query.chatMessages.findFirst({
+      where: and(
+        eq(chatMessages.id, messageId),
+        eq(chatMessages.conversationId, conversationId),
+      ),
+      columns: { attachment: true },
+    });
+    const a = row?.attachment;
+    if (!a?.key) throw new NotFoundException('Attachment not found');
+    const obj = await this.storage.getObject(a.key);
+    if (!obj) throw new NotFoundException('Attachment not found');
+    return {
+      body: obj.body,
+      kind: a.kind,
+      fileName: a.fileName,
+      mimeType: a.mimeType,
+      sizeBytes: a.sizeBytes,
+    };
+  }
+
   async markRead(
     actor: ChatActor,
     conversationId: string,
@@ -537,6 +618,7 @@ export class MessagesService {
   private async buildTypedFields(
     dto: SendMessageDto,
     convo: {
+      id: string;
       // Only the product and order cards need a shop; text and attachments
       // work in any thread, including ones that have no storefront side.
       shopId: string | null;
@@ -657,8 +739,47 @@ export class MessagesService {
         if (sizeBytes <= 0 || sizeBytes > cap) {
           throw new BadRequestException('Attachment too large or empty');
         }
+        const bytes = Buffer.from(a.dataUrl.slice(prefix.length), 'base64');
+        // Node skips characters that are not base64 rather than failing, so
+        // junk shows up as bytes missing from what the length promised.
+        const magic = IMAGE_MAGIC[mime];
+        if (
+          Math.abs(bytes.length - sizeBytes) > 2 ||
+          (magic && !magic(bytes))
+        ) {
+          throw new BadRequestException(
+            'Attachment data does not match its declared type',
+          );
+        }
+        const meta = {
+          kind: a.kind,
+          fileName: a.fileName,
+          mimeType: mime,
+          sizeBytes: bytes.length,
+        };
+        // Without object storage (local dev) the bytes stay inline, as they
+        // always did. The client renders either shape.
+        if (!this.storage.enabled) {
+          return {
+            attachment: { ...meta, dataUrl: a.dataUrl },
+            text: dto.text?.trim() || null,
+          };
+        }
+        // Content-addressed within the thread: a retry of the same send
+        // lands on the same object instead of leaving a stray copy, and a
+        // per-thread prefix keeps a later clean-up to one listing.
+        const hash = createHash('sha256').update(bytes).digest('hex');
+        const key = `${PRIVATE_MEDIA_PREFIX}${convo.id}/${hash}.${EXT_BY_MIME[mime] ?? 'bin'}`;
+        try {
+          await this.storage.putPrivate(key, bytes, mime);
+        } catch {
+          // A 5xx, so the client keeps the message and sends it again.
+          throw new ServiceUnavailableException(
+            'Could not store the attachment. Please try again.',
+          );
+        }
         return {
-          attachment: { ...a, mimeType: mime, sizeBytes },
+          attachment: { ...meta, key },
           text: dto.text?.trim() || null,
         };
       }
@@ -1005,7 +1126,16 @@ export class MessagesService {
       order: row.order ?? undefined,
       adjustment: row.adjustment ?? undefined,
       offer: row.offer ?? undefined,
-      attachment: row.attachment ?? undefined,
+      // Never the storage key: participants fetch bytes through the route.
+      attachment: row.attachment
+        ? {
+            kind: row.attachment.kind,
+            fileName: row.attachment.fileName,
+            mimeType: row.attachment.mimeType,
+            sizeBytes: row.attachment.sizeBytes,
+            dataUrl: row.attachment.dataUrl,
+          }
+        : undefined,
       location: row.location ?? undefined,
       status: row.status,
       sentAt: row.sentAt.toISOString(),

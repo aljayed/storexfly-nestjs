@@ -24,6 +24,12 @@ interface DataUrl {
   buffer: Buffer;
 }
 
+/**
+ * Key prefix for objects only their own route may serve (chat attachments).
+ * The public media proxy refuses anything under it.
+ */
+export const PRIVATE_MEDIA_PREFIX = 'chat/';
+
 const DATA_URL_RE = /^data:([a-z0-9.+-]+\/[a-z0-9.+-]+);base64,(.+)$/is;
 
 const EXT_BY_MIME: Record<string, string> = {
@@ -135,6 +141,31 @@ export class StorageService implements OnModuleInit {
       if (name === 'NoSuchKey' || name === 'NotFound') return null;
       throw err;
     }
+  }
+
+  /**
+   * Store bytes that must never be served publicly, under a key the caller
+   * picks (it must sit under {@link PRIVATE_MEDIA_PREFIX}). Only a route that
+   * checks who is asking hands these back, so no shared cache may keep them.
+   */
+  async putPrivate(
+    key: string,
+    body: Buffer,
+    contentType: string,
+  ): Promise<void> {
+    if (!this.client) throw new Error('S3 storage is not configured');
+    if (!key.startsWith(PRIVATE_MEDIA_PREFIX)) {
+      throw new Error(`Private objects live under ${PRIVATE_MEDIA_PREFIX}`);
+    }
+    await this.client.send(
+      new PutObjectCommand({
+        Bucket: this.cfg.bucket,
+        Key: key,
+        Body: body,
+        ContentType: contentType,
+        CacheControl: 'private, max-age=31536000, immutable',
+      }),
+    );
   }
 
   private async upload(data: DataUrl, folder: string): Promise<string> {
