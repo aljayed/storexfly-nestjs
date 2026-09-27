@@ -37,6 +37,26 @@ interface AgentTurn {
  * It only ever returns a draft. The product is created afterwards through the
  * normal product API, with every rule that API enforces.
  */
+/**
+ * Shorten to at most `max` characters without breaking a word - or, in a
+ * script like Bangla, a letter: a raw slice can cut a vowel sign off its
+ * consonant. Falls back to whole grapheme clusters for one long word.
+ */
+export function clipWords(text: string, max: number): string {
+  if (text.length <= max) return text;
+  const cut = text.slice(0, max + 1);
+  const space = cut.search(/\s\S*$/);
+  if (space > max / 2) return cut.slice(0, space).trim();
+  let out = '';
+  for (const { segment } of new Intl.Segmenter(undefined, {
+    granularity: 'grapheme',
+  }).segment(text)) {
+    if (out.length + segment.length > max) break;
+    out += segment;
+  }
+  return out.trim();
+}
+
 @Injectable()
 export class ItemAiService {
   private readonly log = new Logger(ItemAiService.name);
@@ -79,7 +99,7 @@ export class ItemAiService {
 
   async cardCopy(shopId: string, dto: ItemAiCardCopyDto) {
     const shop = await this.shopContext(shopId, dto.locale);
-    const body = await this.post<{ values?: Record<string, string>; ai_used?: boolean }>(
+    const body = await this.post<{ values?: unknown; ai_used?: boolean }>(
       '/api/v1/items/draft/card-copy',
       {
         shop,
@@ -93,7 +113,28 @@ export class ItemAiService {
         language: dto.locale ?? 'en',
       },
     );
-    return { values: body.values ?? {}, aiUsed: Boolean(body.ai_used) };
+    // The reply is a model's: keep only the fields that were asked for, as
+    // text, within their limits, so a null or an extra key never reaches
+    // the design.
+    const raw =
+      body.values && typeof body.values === 'object'
+        ? (body.values as Record<string, unknown>)
+        : {};
+    const values: Record<string, string> = {};
+    for (const f of dto.fields) {
+      const v = raw[f.key];
+      const text =
+        typeof v === 'string'
+          ? v
+          : Array.isArray(v)
+            ? v
+                .filter((x): x is string => typeof x === 'string')
+                .join((f.maxLines ?? 1) > 1 ? '\n' : ', ')
+            : '';
+      const clipped = clipWords(text.trim(), f.maxLen);
+      if (clipped) values[f.key] = clipped;
+    }
+    return { values, aiUsed: Boolean(body.ai_used) };
   }
 
   private async shopContext(shopId: string, locale?: 'en' | 'bn') {
