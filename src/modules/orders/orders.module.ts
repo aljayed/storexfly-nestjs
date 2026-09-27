@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { JwtModule } from '@nestjs/jwt';
+import { BillingModule } from '../billing/billing.module';
 import { ChatModule } from '../chat/chat.module';
 import { CustomersModule } from '../customers/customers.module';
 import { GatewaysModule } from '../gateways/gateways.module';
@@ -29,6 +30,8 @@ import { PaymentsService } from './payments.service';
     // opens the shop a seller has just paid the opening pack for.
     SubscriptionsModule,
     ShopsModule,
+    // Names the credit a pack bought on the seller's way back from paying.
+    BillingModule,
   ],
   controllers: [OrdersController, PaymentsController, CourierWebhookController],
   providers: [OrdersService, PaymentsService],

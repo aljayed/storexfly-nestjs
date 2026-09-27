@@ -15,6 +15,7 @@ import {
   paymentTransactions,
 } from '../../database/schema';
 import type { GatewayPaymentRow } from '../../database/schema';
+import { BillingSettingsService } from '../billing/billing-settings.service';
 import { BkashService } from '../gateways/bkash.service';
 import {
   SslcommerzService,
@@ -90,6 +91,7 @@ export class PaymentsService implements OnModuleInit, OnModuleDestroy {
     private readonly bkash: BkashService,
     private readonly sslcommerz: SslcommerzService,
     private readonly config: ConfigService,
+    private readonly billing: BillingSettingsService,
   ) {}
 
   onModuleInit(): void {
@@ -504,8 +506,7 @@ export class PaymentsService implements OnModuleInit, OnModuleDestroy {
     if (attempt.purpose === 'credit_pack') {
       return this.billingUrl({
         credit: status,
-        pack: attempt.packCode ?? '',
-        amount: String(attempt.amountCents / 100),
+        ...(await this.packReceipt(attempt)),
         trx: trx ?? '',
       });
     }
@@ -515,8 +516,7 @@ export class PaymentsService implements OnModuleInit, OnModuleDestroy {
       return this.webUrl('/onboarding', {
         opening: status,
         draft: attempt.shopDraftId ?? '',
-        pack: attempt.packCode ?? '',
-        amount: String(attempt.amountCents / 100),
+        ...(await this.packReceipt(attempt)),
         trx: trx ?? '',
       });
     }
@@ -540,6 +540,26 @@ export class PaymentsService implements OnModuleInit, OnModuleDestroy {
       partial: dueCents > 0 ? '1' : '',
       trx: trx ?? '',
     });
+  }
+
+  /**
+   * What a pack purchase bought and what it cost, for the seller's receipt
+   * line. `amount` is what was charged - after any coupon - so the credit
+   * the pack grants travels separately as `sales`, and never gets read off
+   * the price.
+   */
+  private async packReceipt(
+    attempt: GatewayPaymentRow,
+  ): Promise<Record<string, string>> {
+    const pack = await this.billing.packByCode(attempt.packCode);
+    return {
+      pack: attempt.packCode ?? '',
+      sales: pack ? String(pack.salesCreditCents / 100) : '',
+      amount: String(attempt.amountCents / 100),
+      discount:
+        attempt.discountCents > 0 ? String(attempt.discountCents / 100) : '',
+      coupon: attempt.discountCents > 0 ? (attempt.couponCode ?? '') : '',
+    };
   }
 
   private resultUrl(

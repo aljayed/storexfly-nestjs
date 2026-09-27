@@ -103,6 +103,7 @@ describe('PaymentsService duplicate charges', () => {
       {} as never,
       {} as never,
       { get: () => undefined } as never,
+      { packByCode: jest.fn() } as never,
     );
     // `settle` is the seam these rules live behind; the public callbacks are
     // just the two ways a gateway reaches it.
