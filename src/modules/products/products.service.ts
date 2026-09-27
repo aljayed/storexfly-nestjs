@@ -349,7 +349,10 @@ export class ProductsService {
         'Your subscription is cancelled - resume it to add new products.',
       );
     }
-    const slug = await this.uniqueSlug(shopId, dto.name);
+    // Minted here rather than by the database so a name with no Latin
+    // letters (a Bangla one) can take its link from the product's own id.
+    const id = randomUUID();
+    const slug = await this.uniqueSlug(shopId, dto.name, id);
     // Showcase items can't be ordered online, so stock is meaningless for
     // them - pin it to 0 regardless of what the caller sends.
     const listingType = dto.listingType ?? 'sale';
@@ -366,6 +369,7 @@ export class ProductsService {
     const [row] = await this.db
       .insert(products)
       .values({
+        id,
         shopId,
         name: dto.name,
         slug,
@@ -533,8 +537,18 @@ export class ProductsService {
     return product;
   }
 
-  private async uniqueSlug(shopId: string, name: string): Promise<string> {
-    const base = handleize(name) || 'item';
+  /**
+   * A per-shop unique link name. Slugs are ASCII only, so a name written
+   * wholly in another script (say, Bangla) leaves nothing to build one from;
+   * it then takes the first 8 characters of the product id, which stays
+   * stable and tells one such item from the next - unlike "item", "item-2".
+   */
+  private async uniqueSlug(
+    shopId: string,
+    name: string,
+    id: string,
+  ): Promise<string> {
+    const base = handleize(name) || id.replace(/-/g, '').slice(0, 8);
     let slug = base;
     let suffix = 1;
     // Slugs are unique per shop; append -2, -3, … on collision.
