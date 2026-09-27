@@ -24,6 +24,7 @@ export type AdminPermission =
   | 'combos.manage'
   | 'coupons.manage'
   | 'chat.manage'
+  | 'reviews.manage'
   | 'settings.manage'
   | 'settlements.view'
   | 'subscription.manage'
@@ -41,6 +42,9 @@ const FULL_ACCESS: AdminPermission[] = [
   'combos.manage',
   'coupons.manage',
   'chat.manage',
+  // Replying speaks for the shop in public, so it sits with the other
+  // customer-facing permissions rather than with items.
+  'reviews.manage',
   'settings.manage',
   'settlements.view',
   'subscription.manage',

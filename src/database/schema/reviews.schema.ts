@@ -33,6 +33,9 @@ export const reviews = pgTable(
     body: text('body').notNull().default(''),
     imageUrl: text('image_url'),
     verified: boolean('verified').notNull().default(false),
+    /** The shop's public answer, shown under the review. Null until it replies. */
+    reply: text('reply'),
+    repliedAt: timestamp('replied_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true })
       .notNull()
       .defaultNow(),

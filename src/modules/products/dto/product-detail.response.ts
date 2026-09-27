@@ -11,6 +11,11 @@ export class ReviewResponse {
   @ApiProperty({ nullable: true }) imageUrl!: string | null;
   @ApiProperty() verified!: boolean;
   @ApiProperty() createdAt!: string;
+  @ApiProperty({
+    nullable: true,
+    description: "The shop's public reply, when it has answered",
+  })
+  reply!: { body: string; repliedAt: string } | null;
 
   static fromRow(row: ReviewRow): ReviewResponse {
     return {
@@ -21,6 +26,10 @@ export class ReviewResponse {
       imageUrl: row.imageUrl ?? null,
       verified: row.verified,
       createdAt: row.createdAt.toISOString(),
+      reply:
+        row.reply && row.repliedAt
+          ? { body: row.reply, repliedAt: row.repliedAt.toISOString() }
+          : null,
     };
   }
 }

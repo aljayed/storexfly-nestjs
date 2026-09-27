@@ -89,6 +89,32 @@ export class NotificationsService {
     }
   }
 
+  /** Tell a reviewer the shop answered them. Never throws. */
+  async reviewReply(
+    buyerId: string,
+    shop: { id: string; name: string; handle: string },
+    productName: string,
+    reply: string,
+  ): Promise<void> {
+    try {
+      const snippet = reply.length > 140 ? `${reply.slice(0, 139)}…` : reply;
+      await this.db.insert(buyerNotifications).values({
+        buyerId,
+        shopId: shop.id,
+        type: 'review_reply',
+        title: `${shop.name} replied to your review`.slice(0, 160),
+        body: `${productName}: “${snippet}”`,
+        shopName: shop.name,
+        shopHandle: shop.handle,
+      });
+    } catch (err) {
+      this.logger.warn(
+        `Failed to record review_reply notification`,
+        err as Error,
+      );
+    }
+  }
+
   /** Newest-first list plus the unread count for the profile badge. */
   async listForBuyer(
     buyerId: string,

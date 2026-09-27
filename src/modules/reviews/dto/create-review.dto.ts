@@ -1,6 +1,7 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
 import {
+  IsIn,
   IsInt,
   IsOptional,
   IsString,
@@ -41,4 +42,31 @@ export class ReviewEligibilityResponse {
   @ApiProperty() alreadyReviewed!: boolean;
   // The id of the buyer's existing review, so the client can offer edit/delete.
   @ApiProperty({ nullable: true }) reviewId!: string | null;
+}
+
+/** The shop's public answer to a review. */
+export class ReviewReplyDto {
+  @ApiProperty({ maxLength: 1000 })
+  @Transform(({ value }: { value: unknown }) =>
+    typeof value === 'string' ? value.trim() : value,
+  )
+  @IsString()
+  @Matches(/\S/, { message: 'Write a reply first' })
+  @MaxLength(1000)
+  body!: string;
+}
+
+/** Which reviews the seller console lists. */
+export class ShopReviewsQuery {
+  @ApiPropertyOptional({ enum: ['all', 'unreplied', 'critical'] })
+  @IsOptional()
+  @IsIn(['all', 'unreplied', 'critical'])
+  filter?: 'all' | 'unreplied' | 'critical';
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @Transform(({ value }: { value: unknown }) => Number(value))
+  @IsInt()
+  @Min(0)
+  cursor?: number;
 }
