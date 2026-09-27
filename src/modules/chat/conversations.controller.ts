@@ -82,9 +82,11 @@ export class ConversationsController {
       target.kind === 'shop'
         ? { kind: 'shop', id: target.shopId }
         : { kind: 'account', id: target.accountId },
-      // An owner searching by a public handle is speaking personally. Seller
-      // outreach by verified phone/email remains the explicit shop path.
-      actor.role === 'seller',
+      // From the shop console a new thread speaks as the shop - that is the
+      // seat the console is for, and what every console thread so far has
+      // been. The owner's personal threads still appear in the console inbox;
+      // new personal ones start from their account on the storefront.
+      false,
     );
     return { conversation, created };
   }

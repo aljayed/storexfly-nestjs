@@ -10,6 +10,7 @@ import { ordersOwnedBy } from '../../common/utils/order-owner.util';
 import { DRIZZLE } from '../../database/database.constants';
 import type { DrizzleDB } from '../../database/drizzle.types';
 import {
+  adminUsers,
   users,
   chatConversations,
   chatParticipants,
@@ -528,15 +529,31 @@ export class ConversationsService {
       return partiesOf(actor, { ownedShopIds: owned.map((s) => s.id) });
     }
     if (actor.role === 'support') return partiesOf(actor);
-    const shop = await this.db.query.shops.findFirst({
-      where: eq(shops.id, actor.shopId),
-      columns: { ownerId: true },
-    });
-    // The seller actor's id is an admin-user id; it equals the owner's account
-    // id only on the owner's own auto-elevated console session.
-    const ownerAccountId =
-      shop && shop.ownerId === actor.id ? shop.ownerId : null;
-    return partiesOf(actor, { ownerAccountId });
+    // A seller actor is an admin-user record, never the account itself: the
+    // owner's console record is created on first use with an id of its own,
+    // so comparing ids never matched and an owner's console inbox left out
+    // every thread they hold personally. The record and the account are the
+    // same person when they share an email - the link sellerSession uses to
+    // find that record in the first place (admin emails are unique).
+    const [row] = await this.db
+      .select({
+        ownerId: shops.ownerId,
+        ownerEmail: users.email,
+        adminEmail: adminUsers.email,
+      })
+      .from(shops)
+      .innerJoin(users, eq(users.id, shops.ownerId))
+      .leftJoin(adminUsers, eq(adminUsers.id, actor.id))
+      .where(eq(shops.id, actor.shopId))
+      .limit(1);
+    const isOwner =
+      !!row &&
+      (row.ownerId === actor.id ||
+        (!!row.ownerEmail &&
+          !!row.adminEmail &&
+          row.ownerEmail.trim().toLowerCase() ===
+            row.adminEmail.trim().toLowerCase()));
+    return partiesOf(actor, { ownerAccountId: isOwner ? row.ownerId : null });
   }
 
   /**

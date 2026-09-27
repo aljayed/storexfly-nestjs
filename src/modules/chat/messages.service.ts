@@ -224,7 +224,7 @@ export class MessagesService {
       conversationId,
     );
 
-    const senderRole: ChatSenderRole =
+    const sessionRole: ChatSenderRole =
       actor.role === 'customer'
         ? 'customer'
         : actor.role === 'support'
@@ -286,6 +286,12 @@ export class MessagesService {
     if (!senderParticipant) {
       throw new NotFoundException('Conversation participant not found');
     }
+    // An owner replying in the console to a thread they hold personally is
+    // the customer in it, not the shop.
+    const senderRole: ChatSenderRole =
+      sessionRole === 'seller' && senderParticipant.kind === 'account'
+        ? 'customer'
+        : sessionRole;
     const counterpartParticipant =
       await this.db.query.chatParticipants.findFirst({
         where: and(
