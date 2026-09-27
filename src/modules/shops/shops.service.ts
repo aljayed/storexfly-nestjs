@@ -1017,7 +1017,7 @@ export class ShopsService {
       {
         subject: `Confirm deleting ${shop.name}`,
         heading: 'Confirm shop deletion',
-        intro: `You asked to permanently delete your shop "${shop.name}" (hoomri.com/${shop.handle}). This cannot be undone. Your confirmation code is:`,
+        intro: `You asked to permanently delete your shop "${shop.name}" (hoomri.com/shop/${shop.handle}). This cannot be undone. Your confirmation code is:`,
       },
     );
     return { sent: true, email: maskEmail(email) };
