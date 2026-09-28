@@ -59,22 +59,29 @@ export class ShopResponse {
   @ApiProperty({ example: 10, description: 'Delivery days outside Dhaka' })
   deliveryOutsideDays!: number;
   /**
-   * Where this shop delivers. Public for the same reason as the window: a
+   * Where this shop delivers from and to, and what each zone costs. Public
+   * for the same reason as the window: every product page quotes them, and a
    * buyer outside a city-only shop's city has to be told before checkout,
-   * not by a refused order. Items without their own choice follow these.
+   * not by a refused order. Items without their own charge follow these.
    */
   @ApiProperty({ enum: ['nationwide', 'city'] })
   deliveryCoverage!: DeliveryCoverage;
-  @ApiPropertyOptional({
-    nullable: true,
-    description: 'The district a city-only shop delivers in',
-  })
-  deliveryCity!: string | null;
   @ApiProperty({
-    example: 60,
-    description: 'Flat delivery charge inside the city (0 = free)',
+    example: 'Dhaka',
+    description:
+      'The district the shop dispatches from; zones are measured from it',
   })
-  deliveryCityFee!: number;
+  deliveryCity!: string;
+  @ApiProperty({
+    example: 70,
+    description: 'Default charge inside the city (0 = free)',
+  })
+  deliveryInsideFee!: number;
+  @ApiProperty({
+    example: 120,
+    description: 'Default charge outside the city (0 = free)',
+  })
+  deliveryOutsideFee!: number;
   @ApiPropertyOptional({
     type: [String],
     description: 'Storefront hero banner images (data URLs), in display order',
@@ -135,7 +142,8 @@ export class ShopResponse {
       deliveryOutsideDays: row.deliveryOutsideDays,
       deliveryCoverage: row.deliveryCoverage,
       deliveryCity: row.deliveryCity,
-      deliveryCityFee: centsToDollars(row.deliveryCityCents),
+      deliveryInsideFee: centsToDollars(row.deliveryInsideCents),
+      deliveryOutsideFee: centsToDollars(row.deliveryOutsideCents),
       bannerImages: row.bannerImages ?? undefined,
       floatingImages: row.floatingImages ?? undefined,
       trustBadges: row.trustBadges ?? undefined,

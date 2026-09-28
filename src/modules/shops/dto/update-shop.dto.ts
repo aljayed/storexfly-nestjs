@@ -239,10 +239,10 @@ export class UpdateShopDto extends DeliverySettingsDto {
   deliveryOutsideDays?: number;
 
   /*
-   * Where this shop delivers. Buyer-facing like the window above, and saved
-   * on its own for the same reason: it has nothing to do with the courier
-   * pickup address. The city is checked against the 64 districts on the
-   * merged shop, so a save that only moves the rate never has to resend it.
+   * Where this shop delivers from and to, and the default charge for each
+   * zone. Buyer-facing like the window above, and saved on their own for the
+   * same reason: they have nothing to do with the courier pickup address.
+   * Every item without its own charge follows these rates.
    */
   @ApiPropertyOptional({
     enum: DELIVERY_COVERAGES,
@@ -254,23 +254,32 @@ export class UpdateShopDto extends DeliverySettingsDto {
 
   @ApiPropertyOptional({
     example: 'Dhaka',
-    nullable: true,
-    description: 'The one district a city-only shop delivers in.',
+    description: 'The district this shop dispatches from - one of the 64.',
   })
   @IsOptional()
-  @ValidateIf((_object, value) => value !== null)
   @IsString()
   @MaxLength(80)
-  deliveryCity?: string | null;
+  deliveryCity?: string;
 
   @ApiPropertyOptional({
-    example: 60,
-    description: 'Flat delivery charge inside the city (0 = free).',
+    example: 70,
+    description: 'Default delivery charge inside the city (0 = free).',
   })
   @IsOptional()
   @Type(() => Number)
   @IsNumber({ maxDecimalPlaces: 2 })
   @Min(0)
   @Max(100000)
-  deliveryCityFee?: number;
+  deliveryInsideFee?: number;
+
+  @ApiPropertyOptional({
+    example: 120,
+    description: 'Default delivery charge outside the city (0 = free).',
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0)
+  @Max(100000)
+  deliveryOutsideFee?: number;
 }

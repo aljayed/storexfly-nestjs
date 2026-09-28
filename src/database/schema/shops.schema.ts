@@ -12,7 +12,9 @@ import {
 } from 'drizzle-orm/pg-core';
 import type { TrustBadge } from '../../common/constants/trust-badges';
 import {
-  DEFAULT_CITY_DELIVERY_CENTS,
+  DEFAULT_DELIVERY_CITY,
+  DEFAULT_INSIDE_CENTS,
+  DEFAULT_OUTSIDE_CENTS,
   DELIVERY_DAYS,
   type DeliveryCoverage,
 } from '../../common/constants/delivery';
@@ -96,22 +98,30 @@ export const shops = pgTable(
     deliveryOutsideDays: integer('delivery_outside_days')
       .notNull()
       .default(DELIVERY_DAYS.outside),
-    // ── Where this shop delivers ───────────────────────────────────
-    // All of Bangladesh (priced per product in the two zones) or only inside
-    // `deliveryCity`, one of the 64 districts, at the flat
-    // `deliveryCityCents`. Items follow this unless they override it - see
-    // resolveDeliveryArea in common/constants/delivery.ts.
+    // ── Where this shop delivers from, and to ──────────────────────
+    // `deliveryCity` is the district the shop dispatches from (Dhaka until
+    // the seller picks theirs). Delivery is priced in two zones around it -
+    // inside it, and everywhere else - at these default rates, which every
+    // item without its own charge follows. A city-only shop takes orders from
+    // inside its city alone, at the inside rate. Items may override the
+    // coverage or either charge - see resolveDelivery in
+    // common/constants/delivery.ts.
     //
-    // The city rate is kept while the shop is nationwide, so switching back
-    // and forth never loses a number the seller typed.
+    // The outside rate is kept while the shop is city-only, so switching back
+    // never loses a number the seller typed.
     deliveryCoverage: varchar('delivery_coverage', { length: 16 })
       .$type<DeliveryCoverage>()
       .notNull()
       .default('nationwide'),
-    deliveryCity: varchar('delivery_city', { length: 80 }),
-    deliveryCityCents: integer('delivery_city_cents')
+    deliveryCity: varchar('delivery_city', { length: 80 })
       .notNull()
-      .default(DEFAULT_CITY_DELIVERY_CENTS),
+      .default(DEFAULT_DELIVERY_CITY),
+    deliveryInsideCents: integer('delivery_inside_cents')
+      .notNull()
+      .default(DEFAULT_INSIDE_CENTS),
+    deliveryOutsideCents: integer('delivery_outside_cents')
+      .notNull()
+      .default(DEFAULT_OUTSIDE_CENTS),
     // Storefront hero banner images, stored inline as data URLs (same approach
     // as product images). Ordered; the storefront rotates through them.
     bannerImages: text('banner_images').array(),

@@ -17,7 +17,7 @@
  * one, change the other.
  */
 export const DELIVERY_DAYS = {
-  /** Inside Dhaka, where the courier's own vans run. */
+  /** Inside the shop's own city (Dhaka for a shop that never chose). */
   inside: 5,
   /** Everywhere else in Bangladesh. */
   outside: 10,
@@ -27,30 +27,39 @@ export const DELIVERY_DAYS = {
 export const MIN_DELIVERY_DAYS = 1;
 export const MAX_DELIVERY_DAYS = 60;
 
-/* ── Where a shop delivers ─────────────────────────────────────────────
- * A shop either delivers across Bangladesh, priced in the two zones above
- * (inside Dhaka / everywhere else), or only inside one city - a bakery, a
- * florist, a grocer with its own rider. A city-only shop has no zones: it
- * charges one flat rate inside its city and does not take orders outside it.
+/* ── Where a shop delivers from, and to ───────────────────────────────
+ * Every shop dispatches from one city - `deliveryCity`, one of the 64
+ * districts, Dhaka until the seller says otherwise. Delivery is priced in two
+ * zones around it: inside that city, and everywhere else in Bangladesh. The
+ * delivery window (DELIVERY_DAYS above) splits the same way.
  *
- * The shop sets the default; one product may override it either way (a
- * nationwide shop's fresh cakes that only go across Dhaka, or a local
- * shop's one parcel-friendly item). Resolution mirrors the delivery window:
+ * A shop may also deliver only inside its city (a bakery, a florist, a grocer
+ * with its own rider): then there is no outside zone and it takes no orders
+ * from anywhere else.
  *
- *     the item's own choice, else the shop's.
+ * The shop sets the defaults - the coverage and both charges - and one item
+ * may override either. Resolution mirrors the delivery window:
  *
- * The item's city charge resolves on its own too - null follows the shop's
- * rate, so a seller who changes that rate moves every item still on it.
+ *     the item's own choice, else the shop's, else the platform's.
  *
- * MUST match `productDeliveryArea` in the frontend (composables/delivery.ts),
+ * Each charge resolves on its own, so a null on the item means "whatever my
+ * shop charges", and a seller who changes the shop's rates moves every item
+ * still on them.
+ *
+ * MUST match `productDelivery` in the frontend (composables/delivery.ts),
  * which is what the product page and cart quote before the API charges.
  */
 export const DELIVERY_COVERAGES = ['nationwide', 'city'] as const;
 export type DeliveryCoverage = (typeof DELIVERY_COVERAGES)[number];
 
-/** What a city-only shop charges until it says otherwise (৳70, the same as
- *  the platform's inside-Dhaka rate). */
-export const DEFAULT_CITY_DELIVERY_CENTS = 7000;
+/** Where a shop dispatches from until it says otherwise - and the city every
+ *  zone charge was measured from before shops could choose. */
+export const DEFAULT_DELIVERY_CITY = 'Dhaka';
+
+/** What a shop charges until it sets its own rates (৳70 inside its city,
+ *  ৳120 outside). MUST match DEFAULT_*_FEE in the frontend. */
+export const DEFAULT_INSIDE_CENTS = 7000;
+export const DEFAULT_OUTSIDE_CENTS = 12000;
 
 /**
  * The 64 districts, which is what a buyer picks as their "city" at checkout
@@ -146,43 +155,50 @@ export function sameDistrict(a: string, b: string): boolean {
 /** The delivery fields a shop contributes to the resolution. */
 export interface ShopDeliveryPolicy {
   deliveryCoverage: DeliveryCoverage;
-  deliveryCity: string | null;
-  deliveryCityCents: number;
+  deliveryCity: string;
+  deliveryInsideCents: number;
+  deliveryOutsideCents: number;
 }
 
-/** The delivery fields a product contributes - null follows the shop. */
+/** The delivery fields a product contributes - null follows the shop.
+ *  `deliveryDhakaCents` is the inside-the-shop's-city charge; the column
+ *  predates shops choosing a city, when that city was always Dhaka. */
 export interface ProductDeliveryPolicy {
   deliveryCoverage: DeliveryCoverage | null;
-  deliveryCity: string | null;
-  deliveryCityCents: number | null;
+  deliveryDhakaCents: number | null;
+  deliveryOutsideCents: number | null;
 }
 
-export type DeliveryArea =
-  | { coverage: 'nationwide' }
-  | { coverage: 'city'; city: string; cents: number };
+/** One item, placed: where it can go and what each zone costs. */
+export interface ResolvedDelivery {
+  coverage: DeliveryCoverage;
+  /** The shop's dispatch city - the inside zone, and a city-only item's limit. */
+  city: string;
+  insideCents: number;
+  outsideCents: number;
+}
 
-/**
- * Where one product is delivered and, for a city-only item, what it costs.
- * A nationwide item is priced by its own zone charges, which this leaves to
- * the caller.
- *
- * A "city" with no city named cannot happen through the API (both writes
- * validate it), but a row that somehow has one is treated as nationwide
- * rather than as undeliverable everywhere.
- */
-export function resolveDeliveryArea(
+export function resolveDelivery(
   product: ProductDeliveryPolicy,
   shop: ShopDeliveryPolicy,
-): DeliveryArea {
-  const ownCoverage = product.deliveryCoverage;
-  const coverage = ownCoverage ?? shop.deliveryCoverage;
-  if (coverage !== 'city') return { coverage: 'nationwide' };
-  const city =
-    ownCoverage === 'city' ? product.deliveryCity : shop.deliveryCity;
-  if (!city) return { coverage: 'nationwide' };
+): ResolvedDelivery {
   return {
-    coverage: 'city',
-    city,
-    cents: product.deliveryCityCents ?? shop.deliveryCityCents,
+    coverage: product.deliveryCoverage ?? shop.deliveryCoverage,
+    city: shop.deliveryCity || DEFAULT_DELIVERY_CITY,
+    insideCents: product.deliveryDhakaCents ?? shop.deliveryInsideCents,
+    outsideCents: product.deliveryOutsideCents ?? shop.deliveryOutsideCents,
   };
+}
+
+/**
+ * What one item costs to deliver to a buyer's district, or null when it
+ * cannot go there at all - a city-only item, anywhere but its city.
+ */
+export function deliveryCentsTo(
+  delivery: ResolvedDelivery,
+  district: string,
+): number | null {
+  const inside = sameDistrict(district, delivery.city);
+  if (delivery.coverage === 'city') return inside ? delivery.insideCents : null;
+  return inside ? delivery.insideCents : delivery.outsideCents;
 }

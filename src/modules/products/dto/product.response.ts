@@ -69,16 +69,25 @@ export class ProductResponse {
   comparePrice?: number;
   @ApiProperty({ example: 'box of 12' }) unit!: string;
   @ApiProperty() stock!: number;
-  @ApiProperty({
+  /**
+   * This item's own delivery charges around its shop's city, each null when
+   * it charges whatever its shop charges - resolved against the shop the
+   * storefront already has, the same way the window is.
+   */
+  @ApiPropertyOptional({
     example: 70,
-    description: 'Delivery charge inside Dhaka (0 = free)',
+    nullable: true,
+    description:
+      "Charge inside the shop's city (0 = free); null = the shop's rate",
   })
-  deliveryDhaka!: number;
-  @ApiProperty({
+  deliveryDhaka!: number | null;
+  @ApiPropertyOptional({
     example: 120,
-    description: 'Delivery charge outside Dhaka (0 = free)',
+    nullable: true,
+    description:
+      "Charge outside the shop's city (0 = free); null = the shop's rate",
   })
-  deliveryOutside!: number;
+  deliveryOutside!: number | null;
 
   /**
    * This item's own delivery window, in days, or null when it simply takes as
@@ -98,27 +107,12 @@ export class ProductResponse {
   })
   deliveryOutsideDays!: number | null;
 
-  /**
-   * Where this item is delivered and its city charge, each null when it
-   * simply does what its shop does - resolved against the shop the
-   * storefront already has, the same way the window is.
-   */
   @ApiPropertyOptional({
     enum: ['nationwide', 'city'],
     nullable: true,
     description: "Where this item is delivered; null = the shop's setting",
   })
   deliveryCoverage!: DeliveryCoverage | null;
-  @ApiPropertyOptional({
-    nullable: true,
-    description: 'The district a city-only item is delivered in',
-  })
-  deliveryCity!: string | null;
-  @ApiPropertyOptional({
-    nullable: true,
-    description: "Delivery charge inside the city; null = the shop's city rate",
-  })
-  deliveryCityFee!: number | null;
   @ApiProperty() emoji!: string;
   @ApiProperty() tone!: string;
   @ApiPropertyOptional() tag?: string;
@@ -161,16 +155,17 @@ export class ProductResponse {
         : undefined,
       unit: row.unit,
       stock: row.stock,
-      deliveryDhaka: centsToDollars(row.deliveryDhakaCents),
-      deliveryOutside: centsToDollars(row.deliveryOutsideCents),
+      deliveryDhaka:
+        row.deliveryDhakaCents == null
+          ? null
+          : centsToDollars(row.deliveryDhakaCents),
+      deliveryOutside:
+        row.deliveryOutsideCents == null
+          ? null
+          : centsToDollars(row.deliveryOutsideCents),
       deliveryInsideDays: row.deliveryInsideDays,
       deliveryOutsideDays: row.deliveryOutsideDays,
       deliveryCoverage: row.deliveryCoverage,
-      deliveryCity: row.deliveryCity,
-      deliveryCityFee:
-        row.deliveryCityCents == null
-          ? null
-          : centsToDollars(row.deliveryCityCents),
       emoji: row.emoji,
       tone: row.tone,
       tag: row.tag ?? undefined,

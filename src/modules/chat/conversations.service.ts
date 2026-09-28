@@ -22,6 +22,7 @@ import {
   type ChatParticipantRow,
 } from '../../database/schema';
 import { centsToDollars } from '../../common/utils/money.util';
+import { resolveDelivery } from '../../common/constants/delivery';
 import { productLines } from '../../common/utils/order-line.util';
 import type { ChatActor, CustomerActor, SellerActor } from './chat-actor';
 import {
@@ -478,10 +479,16 @@ export class ConversationsService {
       tone: p.tone,
       imageUrl: p.images?.[0],
       hasVariants: (p.variantCombinations ?? []).length > 0,
-      // The item's own delivery charges, so an offer can start from the
-      // numbers the seller already set instead of a blank field.
-      deliveryDhaka: centsToDollars(p.deliveryDhakaCents),
-      deliveryOutside: centsToDollars(p.deliveryOutsideCents),
+      // What the item charges today - its own rates, else its shop's - so an
+      // offer starts from the numbers the seller already set instead of a
+      // blank field. Inside/outside the shop's own city, named alongside.
+      deliveryDhaka: centsToDollars(
+        resolveDelivery(p, catalogueShop).insideCents,
+      ),
+      deliveryOutside: centsToDollars(
+        resolveDelivery(p, catalogueShop).outsideCents,
+      ),
+      deliveryCity: catalogueShop.deliveryCity,
     }));
   }
 

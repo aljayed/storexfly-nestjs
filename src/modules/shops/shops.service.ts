@@ -277,6 +277,9 @@ export class ShopsService {
       supportPhone: dto.supportPhone,
       deliveryMode: dto.deliveryMode,
       pickupDistrict: dto.pickupDistrict,
+      // A new shop's delivery zones start from where it packs, when that is
+      // one of the districts; otherwise from Dhaka, the column default.
+      deliveryCity: canonicalDistrict(dto.pickupDistrict) ?? undefined,
       pickupContactName: dto.pickupContactName,
       pickupPhone: dto.pickupPhone,
       pickupAddress: dto.pickupAddress,
@@ -696,26 +699,27 @@ export class ShopsService {
     if (dto.deliveryOutsideDays !== undefined) {
       patch.deliveryOutsideDays = dto.deliveryOutsideDays;
     }
-    // Where the shop delivers - buyer-facing, and like the window above kept
-    // apart from the pickup address. The city is judged on the merged shop:
-    // turning city-only on needs one, and a rate-only save must not.
-    if (dto.deliveryCoverage !== undefined || dto.deliveryCity !== undefined) {
-      const coverage = dto.deliveryCoverage ?? current.deliveryCoverage;
-      const rawCity =
-        dto.deliveryCity !== undefined ? dto.deliveryCity : current.deliveryCity;
-      const city = canonicalDistrict(rawCity);
-      if (coverage === 'city' && !city) {
+    // Where the shop delivers from and to, and what each zone costs -
+    // buyer-facing, and like the window above kept apart from the pickup
+    // address. The city must be one of the districts, or no buyer's address
+    // could ever be matched against it.
+    if (dto.deliveryCity !== undefined) {
+      const city = canonicalDistrict(dto.deliveryCity);
+      if (!city) {
         throw new BadRequestException(
-          'Choose the city you deliver in from the list of districts.',
+          'Choose your city from the list of districts.',
         );
       }
-      patch.deliveryCoverage = coverage;
-      // A named city is kept while the shop is nationwide, so switching back
-      // offers the one it had. Anything that is not a district is dropped.
       patch.deliveryCity = city;
     }
-    if (dto.deliveryCityFee !== undefined) {
-      patch.deliveryCityCents = dollarsToCents(dto.deliveryCityFee);
+    if (dto.deliveryCoverage !== undefined) {
+      patch.deliveryCoverage = dto.deliveryCoverage;
+    }
+    if (dto.deliveryInsideFee !== undefined) {
+      patch.deliveryInsideCents = dollarsToCents(dto.deliveryInsideFee);
+    }
+    if (dto.deliveryOutsideFee !== undefined) {
+      patch.deliveryOutsideCents = dollarsToCents(dto.deliveryOutsideFee);
     }
     const deliveryKeys = ['deliveryMode', 'pickupDistrict', 'pickupContactName', 'pickupPhone', 'pickupAddress', 'pickupCityId', 'pickupZoneId', 'pickupAreaId'] as const;
     if (deliveryKeys.some(key => dto[key] !== undefined)) {

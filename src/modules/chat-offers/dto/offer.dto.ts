@@ -225,10 +225,19 @@ export class OfferResponse {
     description: 'Items plus delivery once accepted; items only before.',
   })
   total!: number;
-  @ApiProperty({ description: "The offer's delivery charge inside Dhaka." })
+  @ApiProperty({
+    description: "The offer's delivery charge inside the shop's city.",
+  })
   deliveryDhaka!: number;
-  @ApiProperty({ description: "The offer's delivery charge outside Dhaka." })
+  @ApiProperty({
+    description: "The offer's delivery charge outside the shop's city.",
+  })
   deliveryOutside!: number;
+  @ApiProperty({
+    example: 'Dhaka',
+    description: 'The city the two zones are measured from.',
+  })
+  deliveryCity!: string;
   @ApiPropertyOptional() note?: string;
   @ApiPropertyOptional() expiresAt?: string;
   @ApiPropertyOptional({ description: 'Order reference once accepted.' })
@@ -244,7 +253,12 @@ export class OfferResponse {
 
   static from(
     row: ChatOrderOfferRow,
-    extra: { shopName: string; currency: string; orderReference?: string },
+    extra: {
+      shopName: string;
+      currency: string;
+      deliveryCity: string;
+      orderReference?: string;
+    },
   ): OfferResponse {
     const expired = !!row.expiresAt && row.expiresAt.getTime() <= Date.now();
     return {
@@ -270,6 +284,7 @@ export class OfferResponse {
       total: centsToDollars(row.totalCents),
       deliveryDhaka: centsToDollars(zoneRate(row, 'dhaka')),
       deliveryOutside: centsToDollars(zoneRate(row, 'outside')),
+      deliveryCity: extra.deliveryCity,
       note: row.note ?? undefined,
       expiresAt: row.expiresAt?.toISOString(),
       orderReference: extra.orderReference,

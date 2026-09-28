@@ -30,7 +30,8 @@ import {
 } from 'drizzle-orm';
 import { centsToDollars, dollarsToCents } from '../../common/utils/money.util';
 import {
-  resolveDeliveryArea,
+  deliveryCentsTo,
+  resolveDelivery,
   sameDistrict,
   type ProductDeliveryPolicy,
   type ShopDeliveryPolicy,
@@ -592,7 +593,8 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
           paymentMethods: shops.paymentMethods,
           deliveryCoverage: shops.deliveryCoverage,
           deliveryCity: shops.deliveryCity,
-          deliveryCityCents: shops.deliveryCityCents,
+          deliveryInsideCents: shops.deliveryInsideCents,
+          deliveryOutsideCents: shops.deliveryOutsideCents,
         })
         .from(shops)
         .where(eq(shops.id, dto.shopId))
@@ -939,7 +941,8 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
         .select({
           deliveryCoverage: shops.deliveryCoverage,
           deliveryCity: shops.deliveryCity,
-          deliveryCityCents: shops.deliveryCityCents,
+          deliveryInsideCents: shops.deliveryInsideCents,
+          deliveryOutsideCents: shops.deliveryOutsideCents,
         })
         .from(shops)
         .where(eq(shops.id, dto.shopId));
@@ -1959,12 +1962,13 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
   /**
    * The delivery charge the storefront quoted, for one parcel.
    *
-   * Each item is first placed: a city-only item (its own choice, or its
-   * shop's) is charged its flat city rate and only reaches that city; any
-   * other item is charged its Dhaka / outside-Dhaka zone fee. The parcel
-   * ships once, so the buyer pays the highest of those - a combo or cart
-   * included. The buyer's chosen district decides it all, the same rule as
-   * the UI (composables/delivery.ts).
+   * Each item is placed against its shop's dispatch city: inside it, it is
+   * charged its inside rate; anywhere else, its outside rate - unless it is
+   * city-only, in which case it does not go there at all. Every rate is the
+   * item's own or, where it has none, the shop's. The parcel ships once, so
+   * the buyer pays the highest of those - a combo or cart included. The
+   * buyer's chosen district decides it all, the same rule as the UI
+   * (composables/delivery.ts).
    *
    * An item that cannot reach the buyer's district refuses the order, named,
    * so the buyer knows which one to take out. A blank district only passes
@@ -1972,44 +1976,37 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
    */
   private deliveryFee(
     dto: CheckoutDto,
-    items: ({
-      name: string;
-      deliveryDhakaCents: number;
-      deliveryOutsideCents: number;
-    } & ProductDeliveryPolicy)[],
+    items: ({ name: string } & ProductDeliveryPolicy)[],
     delivery: CartDelivery,
   ): { deliveryCents: number; label: string } {
     const district = dto.address.area.trim();
-    const inDhaka = sameDistrict(district, 'Dhaka');
+    const city = delivery.shop.deliveryCity;
     let deliveryCents = 0;
-    // The city a city-only item matched, in its canonical spelling - the
-    // buyer's own typing of it is not what the seller's order should read.
-    let cityOnly: string | null = null;
     for (const item of items) {
-      const area = resolveDeliveryArea(item, delivery.shop);
-      if (area.coverage === 'city') {
-        if (district ? !sameDistrict(district, area.city) : delivery.strict) {
+      const placed = resolveDelivery(item, delivery.shop);
+      // No district reads as "outside" - never the cheaper zone by default -
+      // and is no place for a city-only item at all.
+      const cents = district
+        ? deliveryCentsTo(placed, district)
+        : placed.coverage === 'city'
+          ? null
+          : placed.outsideCents;
+      if (cents === null) {
+        if (placed.coverage === 'city' && (district || delivery.strict)) {
           throw new BadRequestException(
-            `${item.name} is delivered only within ${area.city}. ` +
-              `Choose a delivery address in ${area.city}, or order it separately.`,
+            `${item.name} is delivered only within ${city}. ` +
+              `Choose a delivery address in ${city}, or order it separately.`,
           );
         }
-        cityOnly = area.city;
-        deliveryCents = Math.max(deliveryCents, area.cents);
-      } else {
-        deliveryCents = Math.max(
-          deliveryCents,
-          inDhaka ? item.deliveryDhakaCents : item.deliveryOutsideCents,
-        );
+        continue;
       }
+      deliveryCents = Math.max(deliveryCents, cents);
     }
-    // Every city-only item was just matched to the buyer's own district, so
-    // "within" it is true of the whole parcel.
-    const label = cityOnly
-      ? `Within ${cityOnly}`
-      : inDhaka
-        ? 'Inside Dhaka'
-        : 'Outside Dhaka';
+    // Named in the seller's city, not the buyer's typing of it - the order
+    // reads the same zone the seller priced.
+    const label = sameDistrict(district, city)
+      ? `Inside ${city}`
+      : `Outside ${city}`;
     return { deliveryCents, label };
   }
 

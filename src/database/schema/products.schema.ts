@@ -118,12 +118,14 @@ export const products = pgTable(
     comparePriceCents: integer('compare_price_cents'),
     unit: varchar('unit', { length: 60 }).notNull(),
     stock: integer('stock').notNull().default(0),
-    // Per-product delivery charge in integer cents, split by zone. 0 = free
-    // (no charge is shown to buyers). Defaults: Dhaka ৳70, elsewhere ৳120.
-    deliveryDhakaCents: integer('delivery_dhaka_cents').notNull().default(7000),
-    deliveryOutsideCents: integer('delivery_outside_cents')
-      .notNull()
-      .default(12000),
+    // This item's own delivery charge in integer cents, by zone: inside the
+    // shop's dispatch city (named for Dhaka, which that city always was before
+    // shops could choose) and everywhere else. 0 = free. Null - the default -
+    // means "whatever my shop charges", so a seller who changes the shop's
+    // rates moves every item still on them. Resolve through the shop, never
+    // read directly (see resolveDelivery in common/constants/delivery.ts).
+    deliveryDhakaCents: integer('delivery_dhaka_cents'),
+    deliveryOutsideCents: integer('delivery_outside_cents'),
     // How long this one item takes, in days, split by the same two zones.
     // Null - the default - means "however long this shop normally takes", so
     // a seller who changes the shop's window moves the whole catalogue with
@@ -132,16 +134,11 @@ export const products = pgTable(
     // resolve through the shop (see common/constants/delivery.ts).
     deliveryInsideDays: integer('delivery_inside_days'),
     deliveryOutsideDays: integer('delivery_outside_days'),
-    // Where this item is delivered. Null - the default - follows the shop;
-    // 'city' names its own `deliveryCity`. `deliveryCityCents` is what a
-    // city-only delivery costs for this item, null meaning the shop's city
-    // rate. Never read these directly: resolve through the shop (see
-    // resolveDeliveryArea in common/constants/delivery.ts).
+    // Where this item is delivered: all of Bangladesh, or only inside its
+    // shop's city. Null - the default - does what the shop does.
     deliveryCoverage: varchar('delivery_coverage', {
       length: 16,
     }).$type<DeliveryCoverage>(),
-    deliveryCity: varchar('delivery_city', { length: 80 }),
-    deliveryCityCents: integer('delivery_city_cents'),
     emoji: varchar('emoji', { length: 16 }).notNull().default('📦'),
     tone: varchar('tone', { length: 9 }).notNull().default('#f3f1ec'),
     tag: productTagEnum('tag'),

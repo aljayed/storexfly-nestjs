@@ -9,6 +9,13 @@ import {
 } from '@nestjs/common';
 import { and, count, eq, inArray, or, sql } from 'drizzle-orm';
 import { dollarsToCents } from '../../common/utils/money.util';
+import {
+  DEFAULT_DELIVERY_CITY,
+  DEFAULT_INSIDE_CENTS,
+  DEFAULT_OUTSIDE_CENTS,
+  resolveDelivery,
+  sameDistrict,
+} from '../../common/constants/delivery';
 import { DRIZZLE } from '../../database/database.constants';
 import { pairKeyFor } from '../chat/chat-parties';
 import {
@@ -215,6 +222,8 @@ export class ChatOffersService {
         ? undefined
         : dollarsToCents(dto.deliveryOutside);
 
+    // Items without a charge of their own quote their shop's rates.
+    const policy = await this.shopMeta(actor.shopId);
     const items: ChatOfferItemValue[] = [];
     for (const pick of dto.items) {
       const product = byId.get(pick.productId);
@@ -248,8 +257,10 @@ export class ChatOffersService {
         unit: product.unit,
         slug: product.slug,
         videoUrl: product.videoUrl ?? undefined,
-        deliveryDhakaCents: overrideDhaka ?? product.deliveryDhakaCents,
-        deliveryOutsideCents: overrideOutside ?? product.deliveryOutsideCents,
+        deliveryDhakaCents:
+          overrideDhaka ?? resolveDelivery(product, policy).insideCents,
+        deliveryOutsideCents:
+          overrideOutside ?? resolveDelivery(product, policy).outsideCents,
       });
     }
 
@@ -318,6 +329,7 @@ export class ChatOffersService {
     return OfferResponse.from(row, {
       shopName: shop.name,
       currency: shop.currency,
+      deliveryCity: shop.deliveryCity,
     });
   }
 
@@ -343,6 +355,7 @@ export class ChatOffersService {
     items: ChatOfferItemValue[],
     area: string,
     legacyCents: number,
+    city: string,
   ): number {
     const rated = items.filter(
       (i) =>
@@ -350,11 +363,13 @@ export class ChatOffersService {
         i.deliveryOutsideCents !== undefined,
     );
     if (!rated.length) return legacyCents;
-    const inDhaka = area.trim().toLowerCase() === 'dhaka';
+    // The inside rate is inside the shop's own city - which, for every offer
+    // made before shops could choose one, is Dhaka.
+    const inside = sameDistrict(area, city);
     return Math.max(
       0,
       ...rated.map(
-        (i) => (inDhaka ? i.deliveryDhakaCents : i.deliveryOutsideCents) ?? 0,
+        (i) => (inside ? i.deliveryDhakaCents : i.deliveryOutsideCents) ?? 0,
       ),
     );
   }
@@ -386,6 +401,7 @@ export class ChatOffersService {
     return OfferResponse.from(row, {
       shopName: shop.name,
       currency: shop.currency,
+      deliveryCity: shop.deliveryCity,
       orderReference,
     });
   }
@@ -430,6 +446,7 @@ export class ChatOffersService {
         offer: OfferResponse.from(updated, {
           shopName: shop.name,
           currency: shop.currency,
+          deliveryCity: shop.deliveryCity,
         }),
       };
     }
@@ -472,6 +489,7 @@ export class ChatOffersService {
       row.items,
       dto.address.area,
       row.deliveryCents,
+      (await this.shopMeta(row.shopId)).deliveryCity,
     );
     const totalCents = row.itemsSubtotalCents + deliveryCents;
 
@@ -535,6 +553,7 @@ export class ChatOffersService {
       offer: OfferResponse.from(updated, {
         shopName: shop.name,
         currency: shop.currency,
+        deliveryCity: shop.deliveryCity,
         orderReference: placed.order.reference,
       }),
       paymentUrl: placed.paymentUrl,
@@ -557,6 +576,7 @@ export class ChatOffersService {
     return OfferResponse.from(updated, {
       shopName: shop.name,
       currency: shop.currency,
+      deliveryCity: shop.deliveryCity,
     });
   }
 
@@ -625,13 +645,25 @@ export class ChatOffersService {
     return row;
   }
 
-  private async shopMeta(
-    shopId: string,
-  ): Promise<{ name: string; currency: string }> {
+  private async shopMeta(shopId: string) {
     const shop = await this.db.query.shops.findFirst({
       where: eq(shops.id, shopId),
-      columns: { name: true, currency: true },
+      columns: {
+        name: true,
+        currency: true,
+        deliveryCoverage: true,
+        deliveryCity: true,
+        deliveryInsideCents: true,
+        deliveryOutsideCents: true,
+      },
     });
-    return { name: shop?.name ?? '', currency: shop?.currency ?? 'BDT' };
+    return {
+      name: shop?.name ?? '',
+      currency: shop?.currency ?? 'BDT',
+      deliveryCoverage: shop?.deliveryCoverage ?? 'nationwide',
+      deliveryCity: shop?.deliveryCity ?? DEFAULT_DELIVERY_CITY,
+      deliveryInsideCents: shop?.deliveryInsideCents ?? DEFAULT_INSIDE_CENTS,
+      deliveryOutsideCents: shop?.deliveryOutsideCents ?? DEFAULT_OUTSIDE_CENTS,
+    };
   }
 }

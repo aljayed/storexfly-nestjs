@@ -268,25 +268,40 @@ export class CreateProductDto {
   @Min(0)
   stock?: number;
 
+  /*
+   * This item's own delivery charge, by zone around its shop's dispatch city
+   * (the field is named for Dhaka, which that city always was before shops
+   * could choose). Null is the normal state - "whatever my shop charges" -
+   * and is how a seller hands the item back to the shop's rates, so null has
+   * to travel; absent leaves what is stored.
+   */
   @ApiPropertyOptional({
     example: 70,
-    description: 'Delivery charge inside Dhaka (0 = free). Default 70.',
+    nullable: true,
+    description:
+      "Delivery charge inside the shop's city (0 = free). Null uses the shop's rate.",
   })
   @IsOptional()
+  @ValidateIf((_object, value) => value !== null)
   @Type(() => Number)
   @IsNumber({ maxDecimalPlaces: 2 })
   @Min(0)
-  deliveryDhaka?: number;
+  @Max(100000)
+  deliveryDhaka?: number | null;
 
   @ApiPropertyOptional({
     example: 120,
-    description: 'Delivery charge outside Dhaka (0 = free). Default 120.',
+    nullable: true,
+    description:
+      "Delivery charge outside the shop's city (0 = free). Null uses the shop's rate.",
   })
   @IsOptional()
+  @ValidateIf((_object, value) => value !== null)
   @Type(() => Number)
   @IsNumber({ maxDecimalPlaces: 2 })
   @Min(0)
-  deliveryOutside?: number;
+  @Max(100000)
+  deliveryOutside?: number | null;
 
   /*
    * How long this one item takes, in days. Null is the normal state and means
@@ -323,45 +338,19 @@ export class CreateProductDto {
   deliveryOutsideDays?: number | null;
 
   /*
-   * Where this item is delivered, and its charge when that is one city. Null
-   * is the normal state for all three and means "as my shop does" - it is
-   * how the seller hands the item back to the shop's setting, so like the
-   * window above null has to travel and absent leaves what is stored.
+   * Where this item is delivered: all of Bangladesh, or only inside its
+   * shop's city. Null follows the shop and, like the window above, has to
+   * travel; absent leaves what is stored.
    */
   @ApiPropertyOptional({
     enum: DELIVERY_COVERAGES,
     nullable: true,
-    description: "Where this item is delivered. Null follows the shop.",
+    description: 'Where this item is delivered. Null follows the shop.',
   })
   @IsOptional()
   @ValidateIf((_object, value) => value !== null)
   @IsIn(DELIVERY_COVERAGES)
   deliveryCoverage?: DeliveryCoverage | null;
-
-  @ApiPropertyOptional({
-    example: 'Dhaka',
-    nullable: true,
-    description: "The district this item is delivered in, when it is city-only.",
-  })
-  @IsOptional()
-  @ValidateIf((_object, value) => value !== null)
-  @IsString()
-  @MaxLength(80)
-  deliveryCity?: string | null;
-
-  @ApiPropertyOptional({
-    example: 60,
-    nullable: true,
-    description:
-      "Delivery charge inside the city (0 = free). Null uses the shop's city rate.",
-  })
-  @IsOptional()
-  @ValidateIf((_object, value) => value !== null)
-  @Type(() => Number)
-  @IsNumber({ maxDecimalPlaces: 2 })
-  @Min(0)
-  @Max(100000)
-  deliveryCityFee?: number | null;
 
   @ApiPropertyOptional({ example: '🥭' })
   @IsOptional()
