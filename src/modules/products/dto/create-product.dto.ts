@@ -7,6 +7,7 @@ import {
   IsArray,
   IsBoolean,
   IsEnum,
+  IsIn,
   IsInt,
   IsNumber,
   IsObject,
@@ -26,8 +27,10 @@ import {
   productTagEnum,
 } from '../../../database/schema/enums';
 import {
+  DELIVERY_COVERAGES,
   MAX_DELIVERY_DAYS,
   MIN_DELIVERY_DAYS,
+  type DeliveryCoverage,
 } from '../../../common/constants/delivery';
 
 type ProductTag = (typeof productTagEnum.enumValues)[number];
@@ -318,6 +321,47 @@ export class CreateProductDto {
   @Min(MIN_DELIVERY_DAYS)
   @Max(MAX_DELIVERY_DAYS)
   deliveryOutsideDays?: number | null;
+
+  /*
+   * Where this item is delivered, and its charge when that is one city. Null
+   * is the normal state for all three and means "as my shop does" - it is
+   * how the seller hands the item back to the shop's setting, so like the
+   * window above null has to travel and absent leaves what is stored.
+   */
+  @ApiPropertyOptional({
+    enum: DELIVERY_COVERAGES,
+    nullable: true,
+    description: "Where this item is delivered. Null follows the shop.",
+  })
+  @IsOptional()
+  @ValidateIf((_object, value) => value !== null)
+  @IsIn(DELIVERY_COVERAGES)
+  deliveryCoverage?: DeliveryCoverage | null;
+
+  @ApiPropertyOptional({
+    example: 'Dhaka',
+    nullable: true,
+    description: "The district this item is delivered in, when it is city-only.",
+  })
+  @IsOptional()
+  @ValidateIf((_object, value) => value !== null)
+  @IsString()
+  @MaxLength(80)
+  deliveryCity?: string | null;
+
+  @ApiPropertyOptional({
+    example: 60,
+    nullable: true,
+    description:
+      "Delivery charge inside the city (0 = free). Null uses the shop's city rate.",
+  })
+  @IsOptional()
+  @ValidateIf((_object, value) => value !== null)
+  @Type(() => Number)
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0)
+  @Max(100000)
+  deliveryCityFee?: number | null;
 
   @ApiPropertyOptional({ example: '🥭' })
   @IsOptional()

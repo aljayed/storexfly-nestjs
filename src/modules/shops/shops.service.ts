@@ -25,7 +25,11 @@ import {
 } from 'drizzle-orm';
 import { BRAND_SWATCHES } from '../../common/constants/brand-swatches';
 import { contactComplete } from '../../common/utils/contact-verification.util';
-import { centsToDollars } from '../../common/utils/money.util';
+import {
+  centsToDollars,
+  dollarsToCents,
+} from '../../common/utils/money.util';
+import { canonicalDistrict } from '../../common/constants/delivery';
 import { handleize } from '../../common/utils/slug.util';
 import { DRIZZLE } from '../../database/database.constants';
 import type { DbExecutor, DrizzleDB } from '../../database/drizzle.types';
@@ -691,6 +695,27 @@ export class ShopsService {
     }
     if (dto.deliveryOutsideDays !== undefined) {
       patch.deliveryOutsideDays = dto.deliveryOutsideDays;
+    }
+    // Where the shop delivers - buyer-facing, and like the window above kept
+    // apart from the pickup address. The city is judged on the merged shop:
+    // turning city-only on needs one, and a rate-only save must not.
+    if (dto.deliveryCoverage !== undefined || dto.deliveryCity !== undefined) {
+      const coverage = dto.deliveryCoverage ?? current.deliveryCoverage;
+      const rawCity =
+        dto.deliveryCity !== undefined ? dto.deliveryCity : current.deliveryCity;
+      const city = canonicalDistrict(rawCity);
+      if (coverage === 'city' && !city) {
+        throw new BadRequestException(
+          'Choose the city you deliver in from the list of districts.',
+        );
+      }
+      patch.deliveryCoverage = coverage;
+      // A named city is kept while the shop is nationwide, so switching back
+      // offers the one it had. Anything that is not a district is dropped.
+      patch.deliveryCity = city;
+    }
+    if (dto.deliveryCityFee !== undefined) {
+      patch.deliveryCityCents = dollarsToCents(dto.deliveryCityFee);
     }
     const deliveryKeys = ['deliveryMode', 'pickupDistrict', 'pickupContactName', 'pickupPhone', 'pickupAddress', 'pickupCityId', 'pickupZoneId', 'pickupAreaId'] as const;
     if (deliveryKeys.some(key => dto[key] !== undefined)) {

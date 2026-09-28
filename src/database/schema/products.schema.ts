@@ -13,6 +13,7 @@ import {
 } from 'drizzle-orm/pg-core';
 import { listingTypeEnum, paymentMethodEnum, productTagEnum } from './enums';
 import { shops } from './shops.schema';
+import type { DeliveryCoverage } from '../../common/constants/delivery';
 import { reviews } from './reviews.schema';
 
 /**
@@ -131,6 +132,16 @@ export const products = pgTable(
     // resolve through the shop (see common/constants/delivery.ts).
     deliveryInsideDays: integer('delivery_inside_days'),
     deliveryOutsideDays: integer('delivery_outside_days'),
+    // Where this item is delivered. Null - the default - follows the shop;
+    // 'city' names its own `deliveryCity`. `deliveryCityCents` is what a
+    // city-only delivery costs for this item, null meaning the shop's city
+    // rate. Never read these directly: resolve through the shop (see
+    // resolveDeliveryArea in common/constants/delivery.ts).
+    deliveryCoverage: varchar('delivery_coverage', {
+      length: 16,
+    }).$type<DeliveryCoverage>(),
+    deliveryCity: varchar('delivery_city', { length: 80 }),
+    deliveryCityCents: integer('delivery_city_cents'),
     emoji: varchar('emoji', { length: 16 }).notNull().default('📦'),
     tone: varchar('tone', { length: 9 }).notNull().default('#f3f1ec'),
     tag: productTagEnum('tag'),

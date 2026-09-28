@@ -30,6 +30,12 @@ import {
 } from 'drizzle-orm';
 import { centsToDollars, dollarsToCents } from '../../common/utils/money.util';
 import {
+  resolveDeliveryArea,
+  sameDistrict,
+  type ProductDeliveryPolicy,
+  type ShopDeliveryPolicy,
+} from '../../common/constants/delivery';
+import {
   DELIVERY_LINE_NAME,
   orderLineKind,
   productLines,
@@ -219,6 +225,16 @@ const STATUS_NOTIFICATION: Partial<Record<OrderStatus, string>> = {
 
 /** The transaction handle used inside `checkout`. */
 type OrdersTx = Parameters<Parameters<DrizzleDB['transaction']>[0]>[0];
+
+/**
+ * How a cart is placed for delivery: the shop's own coverage (which items
+ * without a choice of their own follow), and whether a blank district is a
+ * refusal (checkout) or simply not known yet (a coupon preview).
+ */
+interface CartDelivery {
+  shop: ShopDeliveryPolicy;
+  strict: boolean;
+}
 
 /** "৳1,500" from integer cents - buyer-facing money in notification copy. */
 function formatBdt(cents: number): string {
@@ -574,6 +590,9 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
           ownerId: shops.ownerId,
           codAdvanceEnabled: shops.codAdvanceEnabled,
           paymentMethods: shops.paymentMethods,
+          deliveryCoverage: shops.deliveryCoverage,
+          deliveryCity: shops.deliveryCity,
+          deliveryCityCents: shops.deliveryCityCents,
         })
         .from(shops)
         .where(eq(shops.id, dto.shopId))
@@ -635,11 +654,12 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
       // A partial payment is still the product's COD track; bKash/card only
       // collects the advance. Validate product availability against COD rather
       // than requiring sellers to enable full online payment too.
+      const delivery: CartDelivery = { shop, strict: true };
       const cart = dto.items
-        ? await this.buildItemsCart(tx, dto, checkoutKind)
+        ? await this.buildItemsCart(tx, dto, checkoutKind, delivery)
         : dto.comboId
-          ? await this.buildComboCart(tx, dto, checkoutKind)
-          : await this.buildProductCart(tx, dto, checkoutKind);
+          ? await this.buildComboCart(tx, dto, checkoutKind, delivery)
+          : await this.buildProductCart(tx, dto, checkoutKind, delivery);
 
       // The authoritative pass, under the shop lock that serializes checkouts
       // for this shop - which is what actually stops a double-tapped button
@@ -915,11 +935,22 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
         address: { line: '', area: dto.area ?? '', pincode: '' },
       } as unknown as CheckoutDto;
 
+      const [shop] = await tx
+        .select({
+          deliveryCoverage: shops.deliveryCoverage,
+          deliveryCity: shops.deliveryCity,
+          deliveryCityCents: shops.deliveryCityCents,
+        })
+        .from(shops)
+        .where(eq(shops.id, dto.shopId));
+      if (!shop) throw new NotFoundException('Shop not found');
+      // Not strict: a buyer may ask about a code before choosing a district.
+      const delivery: CartDelivery = { shop, strict: false };
       const cart = dto.items
-        ? await this.buildItemsCart(tx, checkoutish, null)
+        ? await this.buildItemsCart(tx, checkoutish, null, delivery)
         : dto.comboId
-          ? await this.buildComboCart(tx, checkoutish, null)
-          : await this.buildProductCart(tx, checkoutish, null);
+          ? await this.buildComboCart(tx, checkoutish, null, delivery)
+          : await this.buildProductCart(tx, checkoutish, null, delivery);
 
       const result = await this.shopCoupons.evaluate(
         tx,
@@ -1695,6 +1726,7 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
     tx: OrdersTx,
     dto: CheckoutDto,
     payKind: string | null,
+    delivery: CartDelivery,
   ): Promise<CheckoutCart> {
     const product = await tx.query.products.findFirst({
       where: and(
@@ -1716,8 +1748,8 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
     }
 
     const lines: CheckoutCart['lines'] = [line];
-    const deliveryCents = this.deliveryFeeCents(dto, [product]);
-    this.pushDeliveryLine(lines, deliveryCents, dto);
+    const { deliveryCents, label } = this.deliveryFee(dto, [product], delivery);
+    this.pushDeliveryLine(lines, deliveryCents, label);
 
     return {
       totalCents: line.unitPriceCents * line.qty + deliveryCents,
@@ -1742,6 +1774,7 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
     tx: OrdersTx,
     dto: CheckoutDto,
     payKind: string | null,
+    delivery: CartDelivery,
   ): Promise<CheckoutCart> {
     const picks = dto.items!;
     const ids = [...new Set(picks.map((i) => i.productId))];
@@ -1813,8 +1846,8 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
       (sum, l) => sum + l.unitPriceCents * l.qty,
       0,
     );
-    const deliveryCents = this.deliveryFeeCents(dto, rows);
-    this.pushDeliveryLine(lines, deliveryCents, dto);
+    const { deliveryCents, label } = this.deliveryFee(dto, rows, delivery);
+    this.pushDeliveryLine(lines, deliveryCents, label);
 
     return {
       totalCents: itemsTotalCents + deliveryCents,
@@ -1840,6 +1873,7 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
     tx: OrdersTx,
     dto: CheckoutDto,
     _payKind: string | null,
+    delivery: CartDelivery,
   ): Promise<CheckoutCart> {
     const combo = await tx.query.combos.findFirst({
       where: and(eq(combos.id, dto.comboId!), eq(combos.shopId, dto.shopId)),
@@ -1903,11 +1937,12 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
       });
     }
 
-    const deliveryCents = this.deliveryFeeCents(
+    const { deliveryCents, label } = this.deliveryFee(
       dto,
       combo.items.map((i) => i.product),
+      delivery,
     );
-    this.pushDeliveryLine(lines, deliveryCents, dto);
+    this.pushDeliveryLine(lines, deliveryCents, label);
 
     return {
       totalCents: comboCents + deliveryCents,
@@ -1922,37 +1957,75 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
-   * The zone delivery charge the storefront quoted: the product's Dhaka /
-   * outside-Dhaka fee (a combo ships together - its highest member fee).
-   * The buyer's chosen district decides the zone, same rule as the UI.
+   * The delivery charge the storefront quoted, for one parcel.
+   *
+   * Each item is first placed: a city-only item (its own choice, or its
+   * shop's) is charged its flat city rate and only reaches that city; any
+   * other item is charged its Dhaka / outside-Dhaka zone fee. The parcel
+   * ships once, so the buyer pays the highest of those - a combo or cart
+   * included. The buyer's chosen district decides it all, the same rule as
+   * the UI (composables/delivery.ts).
+   *
+   * An item that cannot reach the buyer's district refuses the order, named,
+   * so the buyer knows which one to take out. A blank district only passes
+   * when the caller is not strict (a coupon preview before an address).
    */
-  private deliveryFeeCents(
+  private deliveryFee(
     dto: CheckoutDto,
-    items: { deliveryDhakaCents: number; deliveryOutsideCents: number }[],
-  ): number {
-    const inDhaka = dto.address.area.trim().toLowerCase() === 'dhaka';
-    return Math.max(
-      0,
-      ...items.map((p) =>
-        inDhaka ? p.deliveryDhakaCents : p.deliveryOutsideCents,
-      ),
-    );
+    items: ({
+      name: string;
+      deliveryDhakaCents: number;
+      deliveryOutsideCents: number;
+    } & ProductDeliveryPolicy)[],
+    delivery: CartDelivery,
+  ): { deliveryCents: number; label: string } {
+    const district = dto.address.area.trim();
+    const inDhaka = sameDistrict(district, 'Dhaka');
+    let deliveryCents = 0;
+    // The city a city-only item matched, in its canonical spelling - the
+    // buyer's own typing of it is not what the seller's order should read.
+    let cityOnly: string | null = null;
+    for (const item of items) {
+      const area = resolveDeliveryArea(item, delivery.shop);
+      if (area.coverage === 'city') {
+        if (district ? !sameDistrict(district, area.city) : delivery.strict) {
+          throw new BadRequestException(
+            `${item.name} is delivered only within ${area.city}. ` +
+              `Choose a delivery address in ${area.city}, or order it separately.`,
+          );
+        }
+        cityOnly = area.city;
+        deliveryCents = Math.max(deliveryCents, area.cents);
+      } else {
+        deliveryCents = Math.max(
+          deliveryCents,
+          inDhaka ? item.deliveryDhakaCents : item.deliveryOutsideCents,
+        );
+      }
+    }
+    // Every city-only item was just matched to the buyer's own district, so
+    // "within" it is true of the whole parcel.
+    const label = cityOnly
+      ? `Within ${cityOnly}`
+      : inDhaka
+        ? 'Inside Dhaka'
+        : 'Outside Dhaka';
+    return { deliveryCents, label };
   }
 
   private pushDeliveryLine(
     lines: CheckoutCart['lines'],
     deliveryCents: number,
-    dto: CheckoutDto,
+    label: string,
   ): void {
     if (deliveryCents <= 0) return;
-    const inDhaka = dto.address.area.trim().toLowerCase() === 'dhaka';
     lines.push({
       productId: null,
       name: DELIVERY_LINE_NAME,
       qty: 1,
       units: null,
       unitPriceCents: deliveryCents,
-      variant: inDhaka ? 'Inside Dhaka' : 'Outside Dhaka',
+      variant: label,
       variantPick: null,
     });
   }

@@ -1,6 +1,8 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import type { ShopRow } from '../../../database/schema';
 import type { TrustBadge } from '../../../common/constants/trust-badges';
+import type { DeliveryCoverage } from '../../../common/constants/delivery';
+import { centsToDollars } from '../../../common/utils/money.util';
 
 /** Public-facing shop shape (the `Shop` interface from the design handoff). */
 export class ShopResponse {
@@ -56,6 +58,23 @@ export class ShopResponse {
   deliveryInsideDays!: number;
   @ApiProperty({ example: 10, description: 'Delivery days outside Dhaka' })
   deliveryOutsideDays!: number;
+  /**
+   * Where this shop delivers. Public for the same reason as the window: a
+   * buyer outside a city-only shop's city has to be told before checkout,
+   * not by a refused order. Items without their own choice follow these.
+   */
+  @ApiProperty({ enum: ['nationwide', 'city'] })
+  deliveryCoverage!: DeliveryCoverage;
+  @ApiPropertyOptional({
+    nullable: true,
+    description: 'The district a city-only shop delivers in',
+  })
+  deliveryCity!: string | null;
+  @ApiProperty({
+    example: 60,
+    description: 'Flat delivery charge inside the city (0 = free)',
+  })
+  deliveryCityFee!: number;
   @ApiPropertyOptional({
     type: [String],
     description: 'Storefront hero banner images (data URLs), in display order',
@@ -114,6 +133,9 @@ export class ShopResponse {
       plan: row.plan,
       deliveryInsideDays: row.deliveryInsideDays,
       deliveryOutsideDays: row.deliveryOutsideDays,
+      deliveryCoverage: row.deliveryCoverage,
+      deliveryCity: row.deliveryCity,
+      deliveryCityFee: centsToDollars(row.deliveryCityCents),
       bannerImages: row.bannerImages ?? undefined,
       floatingImages: row.floatingImages ?? undefined,
       trustBadges: row.trustBadges ?? undefined,

@@ -2,6 +2,7 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { centsToDollars } from '../../../common/utils/money.util';
 import type { ProductRow } from '../../../database/schema';
 import type { ListingType } from '../../../database/schema/enums';
+import type { DeliveryCoverage } from '../../../common/constants/delivery';
 
 /** Public variant option - `priceDelta` in dollars, added to the base price. */
 export interface PublicVariantOption {
@@ -96,6 +97,28 @@ export class ProductResponse {
     description: "Delivery days outside Dhaka; null = the shop's window",
   })
   deliveryOutsideDays!: number | null;
+
+  /**
+   * Where this item is delivered and its city charge, each null when it
+   * simply does what its shop does - resolved against the shop the
+   * storefront already has, the same way the window is.
+   */
+  @ApiPropertyOptional({
+    enum: ['nationwide', 'city'],
+    nullable: true,
+    description: "Where this item is delivered; null = the shop's setting",
+  })
+  deliveryCoverage!: DeliveryCoverage | null;
+  @ApiPropertyOptional({
+    nullable: true,
+    description: 'The district a city-only item is delivered in',
+  })
+  deliveryCity!: string | null;
+  @ApiPropertyOptional({
+    nullable: true,
+    description: "Delivery charge inside the city; null = the shop's city rate",
+  })
+  deliveryCityFee!: number | null;
   @ApiProperty() emoji!: string;
   @ApiProperty() tone!: string;
   @ApiPropertyOptional() tag?: string;
@@ -142,6 +165,12 @@ export class ProductResponse {
       deliveryOutside: centsToDollars(row.deliveryOutsideCents),
       deliveryInsideDays: row.deliveryInsideDays,
       deliveryOutsideDays: row.deliveryOutsideDays,
+      deliveryCoverage: row.deliveryCoverage,
+      deliveryCity: row.deliveryCity,
+      deliveryCityFee:
+        row.deliveryCityCents == null
+          ? null
+          : centsToDollars(row.deliveryCityCents),
       emoji: row.emoji,
       tone: row.tone,
       tag: row.tag ?? undefined,

@@ -11,7 +11,11 @@ import {
   varchar,
 } from 'drizzle-orm/pg-core';
 import type { TrustBadge } from '../../common/constants/trust-badges';
-import { DELIVERY_DAYS } from '../../common/constants/delivery';
+import {
+  DEFAULT_CITY_DELIVERY_CENTS,
+  DELIVERY_DAYS,
+  type DeliveryCoverage,
+} from '../../common/constants/delivery';
 import {
   brandSwatchEnum,
   kycStatusEnum,
@@ -92,6 +96,22 @@ export const shops = pgTable(
     deliveryOutsideDays: integer('delivery_outside_days')
       .notNull()
       .default(DELIVERY_DAYS.outside),
+    // ── Where this shop delivers ───────────────────────────────────
+    // All of Bangladesh (priced per product in the two zones) or only inside
+    // `deliveryCity`, one of the 64 districts, at the flat
+    // `deliveryCityCents`. Items follow this unless they override it - see
+    // resolveDeliveryArea in common/constants/delivery.ts.
+    //
+    // The city rate is kept while the shop is nationwide, so switching back
+    // and forth never loses a number the seller typed.
+    deliveryCoverage: varchar('delivery_coverage', { length: 16 })
+      .$type<DeliveryCoverage>()
+      .notNull()
+      .default('nationwide'),
+    deliveryCity: varchar('delivery_city', { length: 80 }),
+    deliveryCityCents: integer('delivery_city_cents')
+      .notNull()
+      .default(DEFAULT_CITY_DELIVERY_CENTS),
     // Storefront hero banner images, stored inline as data URLs (same approach
     // as product images). Ordered; the storefront rotates through them.
     bannerImages: text('banner_images').array(),

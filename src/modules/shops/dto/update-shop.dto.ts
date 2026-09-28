@@ -10,6 +10,7 @@ import {
   IsEnum,
   IsIn,
   IsInt,
+  IsNumber,
   IsOptional,
   IsString,
   Max,
@@ -32,8 +33,10 @@ import {
   type CurrencyCode,
 } from '../../../common/constants/currencies';
 import {
+  DELIVERY_COVERAGES,
   MAX_DELIVERY_DAYS,
   MIN_DELIVERY_DAYS,
+  type DeliveryCoverage,
 } from '../../../common/constants/delivery';
 import {
   brandSwatchEnum,
@@ -234,4 +237,40 @@ export class UpdateShopDto extends DeliverySettingsDto {
   @Min(MIN_DELIVERY_DAYS)
   @Max(MAX_DELIVERY_DAYS)
   deliveryOutsideDays?: number;
+
+  /*
+   * Where this shop delivers. Buyer-facing like the window above, and saved
+   * on its own for the same reason: it has nothing to do with the courier
+   * pickup address. The city is checked against the 64 districts on the
+   * merged shop, so a save that only moves the rate never has to resend it.
+   */
+  @ApiPropertyOptional({
+    enum: DELIVERY_COVERAGES,
+    description: 'All of Bangladesh, or only inside deliveryCity.',
+  })
+  @IsOptional()
+  @IsIn(DELIVERY_COVERAGES)
+  deliveryCoverage?: DeliveryCoverage;
+
+  @ApiPropertyOptional({
+    example: 'Dhaka',
+    nullable: true,
+    description: 'The one district a city-only shop delivers in.',
+  })
+  @IsOptional()
+  @ValidateIf((_object, value) => value !== null)
+  @IsString()
+  @MaxLength(80)
+  deliveryCity?: string | null;
+
+  @ApiPropertyOptional({
+    example: 60,
+    description: 'Flat delivery charge inside the city (0 = free).',
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0)
+  @Max(100000)
+  deliveryCityFee?: number;
 }

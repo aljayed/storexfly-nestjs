@@ -8,6 +8,7 @@ import {
 import { randomUUID } from 'crypto';
 import { and, asc, desc, eq } from 'drizzle-orm';
 import { dollarsToCents } from '../../common/utils/money.util';
+import { canonicalDistrict } from '../../common/constants/delivery';
 import { handleize } from '../../common/utils/slug.util';
 import { DRIZZLE } from '../../database/database.constants';
 import type { DrizzleDB } from '../../database/drizzle.types';
@@ -401,6 +402,7 @@ export class ProductsService {
         // is the column default - so neither needs writing on create.
         deliveryInsideDays: dto.deliveryInsideDays ?? undefined,
         deliveryOutsideDays: dto.deliveryOutsideDays ?? undefined,
+        ...this.deliveryAreaPatch(dto, null),
         emoji: dto.emoji ?? '📦',
         tone: dto.tone ?? '#f3f1ec',
         tag: dto.tag,
@@ -415,6 +417,56 @@ export class ProductsService {
       })
       .returning();
     return ProductResponse.fromRow(row);
+  }
+
+  /**
+   * The delivery-area columns a create or update writes. Null is meaningful
+   * in all three (follow the shop) and absent is not, the same as the window.
+   *
+   * The city is judged on the row as it will be: an item going city-only
+   * must name a district, and one that is not city-only keeps no city, so a
+   * stale name can never come back to life when the shop changes.
+   */
+  private deliveryAreaPatch(
+    dto: Pick<
+      CreateProductDto,
+      'deliveryCoverage' | 'deliveryCity' | 'deliveryCityFee'
+    >,
+    current: Pick<ProductRow, 'deliveryCoverage' | 'deliveryCity'> | null,
+  ): Partial<
+    Pick<ProductRow, 'deliveryCoverage' | 'deliveryCity' | 'deliveryCityCents'>
+  > {
+    const patch: Partial<
+      Pick<
+        ProductRow,
+        'deliveryCoverage' | 'deliveryCity' | 'deliveryCityCents'
+      >
+    > = {};
+    if (dto.deliveryCoverage !== undefined || dto.deliveryCity !== undefined) {
+      const coverage =
+        dto.deliveryCoverage !== undefined
+          ? dto.deliveryCoverage
+          : (current?.deliveryCoverage ?? null);
+      const rawCity =
+        dto.deliveryCity !== undefined
+          ? dto.deliveryCity
+          : (current?.deliveryCity ?? null);
+      const city = canonicalDistrict(rawCity);
+      if (coverage === 'city' && !city) {
+        throw new BadRequestException(
+          'Choose the city this item is delivered in from the list of districts.',
+        );
+      }
+      patch.deliveryCoverage = coverage;
+      patch.deliveryCity = coverage === 'city' ? city : null;
+    }
+    if (dto.deliveryCityFee !== undefined) {
+      patch.deliveryCityCents =
+        dto.deliveryCityFee === null
+          ? null
+          : dollarsToCents(dto.deliveryCityFee);
+    }
+    return patch;
   }
 
   async update(
@@ -496,6 +548,7 @@ export class ProductsService {
     if (dto.deliveryOutsideDays !== undefined) {
       patch.deliveryOutsideDays = dto.deliveryOutsideDays;
     }
+    Object.assign(patch, this.deliveryAreaPatch(dto, current));
     if (effective.length) {
       patch.stock = this.combinationStock(effective);
     }
