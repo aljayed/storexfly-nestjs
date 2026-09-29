@@ -165,6 +165,8 @@ export interface ShopDeliveryPolicy {
  *  predates shops choosing a city, when that city was always Dhaka. */
 export interface ProductDeliveryPolicy {
   deliveryCoverage: DeliveryCoverage | null;
+  /** The one city a city-only item of its own goes to; null = the shop's. */
+  deliveryCity: string | null;
   deliveryDhakaCents: number | null;
   deliveryOutsideCents: number | null;
 }
@@ -172,7 +174,8 @@ export interface ProductDeliveryPolicy {
 /** One item, placed: where it can go and what each zone costs. */
 export interface ResolvedDelivery {
   coverage: DeliveryCoverage;
-  /** The shop's dispatch city - the inside zone, and a city-only item's limit. */
+  /** The city the zones are measured from - the shop's, or the item's own
+   *  when it is city-only somewhere else - and a city-only item's limit. */
   city: string;
   insideCents: number;
   outsideCents: number;
@@ -182,9 +185,14 @@ export function resolveDelivery(
   product: ProductDeliveryPolicy,
   shop: ShopDeliveryPolicy,
 ): ResolvedDelivery {
+  // An item made city-only on its own may name a city other than its
+  // shop's (the cakes go across Sylhet only). Everything else is measured
+  // from where the shop dispatches.
+  const ownCity =
+    product.deliveryCoverage === 'city' ? product.deliveryCity : null;
   return {
     coverage: product.deliveryCoverage ?? shop.deliveryCoverage,
-    city: shop.deliveryCity || DEFAULT_DELIVERY_CITY,
+    city: ownCity || shop.deliveryCity || DEFAULT_DELIVERY_CITY,
     insideCents: product.deliveryDhakaCents ?? shop.deliveryInsideCents,
     outsideCents: product.deliveryOutsideCents ?? shop.deliveryOutsideCents,
   };

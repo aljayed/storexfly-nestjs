@@ -113,6 +113,11 @@ export class ProductResponse {
     description: "Where this item is delivered; null = the shop's setting",
   })
   deliveryCoverage!: DeliveryCoverage | null;
+  @ApiPropertyOptional({
+    nullable: true,
+    description: "A city-only item's own city; null = the shop's city",
+  })
+  deliveryCity!: string | null;
   @ApiProperty() emoji!: string;
   @ApiProperty() tone!: string;
   @ApiPropertyOptional() tag?: string;
@@ -166,6 +171,7 @@ export class ProductResponse {
       deliveryInsideDays: row.deliveryInsideDays,
       deliveryOutsideDays: row.deliveryOutsideDays,
       deliveryCoverage: row.deliveryCoverage,
+      deliveryCity: row.deliveryCity,
       emoji: row.emoji,
       tone: row.tone,
       tag: row.tag ?? undefined,

@@ -26,6 +26,7 @@ const shop: ShopDeliveryPolicy = {
 const follows = {
   name: 'Lychees',
   deliveryCoverage: null,
+  deliveryCity: null,
   deliveryDhakaCents: null,
   deliveryOutsideCents: null,
 };
@@ -67,6 +68,19 @@ describe('OrdersService.deliveryFee', () => {
     expect(() => price('Dhaka', [local])).toThrow(BadRequestException);
     expect(() => price('Dhaka', [local])).toThrow(/Lychees .*Chattogram/);
     expect(price('Chattogram', [local]).deliveryCents).toBe(7000);
+  });
+
+  it('sends a city-only item of its own to its own city', () => {
+    const sylhet = {
+      ...follows,
+      deliveryCoverage: 'city',
+      deliveryCity: 'Sylhet',
+    };
+    expect(price('Sylhet', [sylhet])).toEqual({
+      deliveryCents: 7000,
+      label: 'Inside Sylhet',
+    });
+    expect(() => price('Chattogram', [sylhet])).toThrow(/within Sylhet/);
   });
 
   it('treats a blank district as outside, and no place for a city-only item', () => {

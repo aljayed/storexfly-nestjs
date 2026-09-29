@@ -722,6 +722,13 @@
       "when": 1794787200000,
       "tag": "0105_delivery_dispatch_city",
       "breakpoints": true
+    },
+    {
+      "idx": 106,
+      "version": "7",
+      "when": 1794873600000,
+      "tag": "0106_product_delivery_city",
+      "breakpoints": true
     }
   ]
 }

@@ -14,6 +14,7 @@ const chattogramShop: ShopDeliveryPolicy = {
 };
 const follows = {
   deliveryCoverage: null,
+  deliveryCity: null,
   deliveryDhakaCents: null,
   deliveryOutsideCents: null,
 };
@@ -48,6 +49,17 @@ describe('resolveDelivery', () => {
         { ...chattogramShop, deliveryCoverage: 'city' },
       ).coverage,
     ).toBe('nationwide');
+  });
+});
+
+describe('an item city of its own', () => {
+  it('only counts while the item is city-only on its own', () => {
+    const own = { ...follows, deliveryCity: 'Sylhet' };
+    expect(resolveDelivery(own, chattogramShop).city).toBe('Chattogram');
+    expect(
+      resolveDelivery({ ...own, deliveryCoverage: 'city' }, chattogramShop)
+        .city,
+    ).toBe('Sylhet');
   });
 });
 

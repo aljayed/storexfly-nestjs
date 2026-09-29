@@ -8,6 +8,7 @@ import {
 import { randomUUID } from 'crypto';
 import { and, asc, desc, eq } from 'drizzle-orm';
 import { dollarsToCents } from '../../common/utils/money.util';
+import { canonicalDistrict } from '../../common/constants/delivery';
 import { handleize } from '../../common/utils/slug.util';
 import { DRIZZLE } from '../../database/database.constants';
 import type { DrizzleDB } from '../../database/drizzle.types';
@@ -404,6 +405,7 @@ export class ProductsService {
         deliveryInsideDays: dto.deliveryInsideDays ?? undefined,
         deliveryOutsideDays: dto.deliveryOutsideDays ?? undefined,
         deliveryCoverage: dto.deliveryCoverage ?? undefined,
+        deliveryCity: this.deliveryCityValue(dto.deliveryCity) ?? undefined,
         emoji: dto.emoji ?? '📦',
         tone: dto.tone ?? '#f3f1ec',
         tag: dto.tag,
@@ -418,6 +420,22 @@ export class ProductsService {
       })
       .returning();
     return ProductResponse.fromRow(row);
+  }
+
+  /**
+   * A city-only item's own city, in its canonical spelling. Null hands it
+   * back to the shop's city; anything that is not one of the districts is
+   * refused, since no buyer's address could ever match it.
+   */
+  private deliveryCityValue(raw: string | null | undefined): string | null {
+    if (raw == null || !raw.trim()) return null;
+    const city = canonicalDistrict(raw);
+    if (!city) {
+      throw new BadRequestException(
+        'Choose the city this item is delivered in from the list of districts.',
+      );
+    }
+    return city;
   }
 
   async update(
@@ -506,6 +524,9 @@ export class ProductsService {
     }
     if (dto.deliveryCoverage !== undefined) {
       patch.deliveryCoverage = dto.deliveryCoverage;
+    }
+    if (dto.deliveryCity !== undefined) {
+      patch.deliveryCity = this.deliveryCityValue(dto.deliveryCity);
     }
     if (effective.length) {
       patch.stock = this.combinationStock(effective);

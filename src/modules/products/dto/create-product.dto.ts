@@ -352,6 +352,18 @@ export class CreateProductDto {
   @IsIn(DELIVERY_COVERAGES)
   deliveryCoverage?: DeliveryCoverage | null;
 
+  @ApiPropertyOptional({
+    example: 'Sylhet',
+    nullable: true,
+    description:
+      "The district a city-only item goes to. Null uses the shop's city.",
+  })
+  @IsOptional()
+  @ValidateIf((_object, value) => value !== null)
+  @IsString()
+  @MaxLength(80)
+  deliveryCity?: string | null;
+
   @ApiPropertyOptional({ example: '🥭' })
   @IsOptional()
   @IsString()

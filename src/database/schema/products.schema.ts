@@ -134,11 +134,13 @@ export const products = pgTable(
     // resolve through the shop (see common/constants/delivery.ts).
     deliveryInsideDays: integer('delivery_inside_days'),
     deliveryOutsideDays: integer('delivery_outside_days'),
-    // Where this item is delivered: all of Bangladesh, or only inside its
-    // shop's city. Null - the default - does what the shop does.
+    // Where this item is delivered: all of Bangladesh, or only inside one
+    // city - `deliveryCity`, or its shop's when that is null. Null coverage -
+    // the default - does what the shop does.
     deliveryCoverage: varchar('delivery_coverage', {
       length: 16,
     }).$type<DeliveryCoverage>(),
+    deliveryCity: varchar('delivery_city', { length: 80 }),
     emoji: varchar('emoji', { length: 16 }).notNull().default('📦'),
     tone: varchar('tone', { length: 9 }).notNull().default('#f3f1ec'),
     tag: productTagEnum('tag'),

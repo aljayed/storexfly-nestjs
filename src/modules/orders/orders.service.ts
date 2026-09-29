@@ -1980,7 +1980,9 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
     delivery: CartDelivery,
   ): { deliveryCents: number; label: string } {
     const district = dto.address.area.trim();
-    const city = delivery.shop.deliveryCity;
+    // The zone the order is labelled with: the shop's city, unless a
+    // city-only item has one of its own - then that is where it all goes.
+    let city = delivery.shop.deliveryCity;
     let deliveryCents = 0;
     for (const item of items) {
       const placed = resolveDelivery(item, delivery.shop);
@@ -1994,12 +1996,13 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
       if (cents === null) {
         if (placed.coverage === 'city' && (district || delivery.strict)) {
           throw new BadRequestException(
-            `${item.name} is delivered only within ${city}. ` +
-              `Choose a delivery address in ${city}, or order it separately.`,
+            `${item.name} is delivered only within ${placed.city}. ` +
+              `Choose a delivery address in ${placed.city}, or order it separately.`,
           );
         }
         continue;
       }
+      if (placed.coverage === 'city') city = placed.city;
       deliveryCents = Math.max(deliveryCents, cents);
     }
     // Named in the seller's city, not the buyer's typing of it - the order
