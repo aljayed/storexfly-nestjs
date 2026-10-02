@@ -70,10 +70,10 @@ export class OrdersController {
    * sign in, and whether they will be asked to confirm their number.
    *
    * The storefront calls this while the buyer is still filling the form, so it
-   * can say the steps are coming rather than springing them on the button.
-   * Nothing here withholds a payment method or refuses an order. The answer is
-   * advisory: checkout re-runs the same checks and is what actually enforces
-   * them.
+   * can say the steps are coming rather than springing them on the button -
+   * and, for a signed-in buyer repeating an item, grey out cash on delivery
+   * before it is picked. The answer is advisory: checkout re-runs the same
+   * checks and is what actually enforces them.
    */
   @Public()
   @Throttle({ default: { limit: 30, ttl: 60_000 } })

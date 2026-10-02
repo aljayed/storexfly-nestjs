@@ -330,6 +330,22 @@ export class CheckoutPreflightDto {
   @IsOptional()
   @IsBoolean()
   cod?: boolean;
+
+  /**
+   * The items about to be ordered - a combo's members, not the combo - so the
+   * answer can say whether cash on delivery is open for them.
+   */
+  @ApiPropertyOptional({
+    type: [String],
+    description:
+      'Products in the order, to answer `codAvailable`. Only a signed-in caller is told.',
+  })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(50)
+  @IsString({ each: true })
+  @MaxLength(64, { each: true })
+  productIds?: string[];
 }
 
 /** POST /checkout/phone/start */

@@ -390,11 +390,32 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
    * which is the right trade for an advisory answer: the worst a lie can do is
    * promise the buyer a step they then do not meet, or fail to warn them of
    * one they do.
+   *
+   * `codAvailable` is only worked out for a signed-in caller. Answered for
+   * anyone, it would tell whoever types in a number whether that number
+   * ordered a given item today. A guest is told `true`, and checkout still
+   * refuses a repeat cash-on-delivery order from them with `COD_UNAVAILABLE`.
    */
   async preflight(
-    dto: { shopId: string; phone?: string; email?: string; cod?: boolean },
+    dto: {
+      shopId: string;
+      phone?: string;
+      email?: string;
+      cod?: boolean;
+      productIds?: string[];
+    },
     caller: CheckoutCaller,
-  ): Promise<CheckoutRisk> {
+  ): Promise<CheckoutRisk & { codAvailable: boolean }> {
+    const codAvailable =
+      !caller.accountId ||
+      !dto.productIds?.length ||
+      !(await this.orderedRecently(
+        this.db,
+        dto.shopId,
+        { phone: dto.phone, email: dto.email },
+        dto.productIds,
+        caller.accountId,
+      ));
     const risk = await this.risk.assessCheckout({
       phone: dto.phone,
       email: dto.email,
@@ -417,8 +438,8 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
       : risk;
     // Do not advertise a step the buyer could not complete.
     return this.phoneProof.canDeliver
-      ? merged
-      : { ...merged, requirePhoneVerification: false };
+      ? { ...merged, codAvailable }
+      : { ...merged, requirePhoneVerification: false, codAvailable };
   }
 
   /**
@@ -442,22 +463,10 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
     dto: CheckoutDto,
     caller: CheckoutCaller = { ip: null, device: null, accountId: null },
   ): Promise<CheckoutResultResponse> {
-    // Ahead of the identity gates on purpose: being told the order cannot be
-    // placed is worth knowing before being asked to sign in and prove a phone
-    // for it. Re-run under the shop lock below, which is what makes it
-    // race-proof - this pass is for the buyer, that one is for correctness.
-    await this.assertNotOrderedRecently(
-      this.db,
-      dto.shopId,
-      dto.contact,
-      await this.checkoutProductIds(dto),
-      caller.accountId,
-    );
-
-    // Ahead of the identity gates too, for the same reason - and because the
-    // gates now need to know how this order is paid for. The catalog is
-    // platform-managed: the code must be live right now, so a method removed
-    // by an operator disappears from checkout immediately.
+    // Ahead of the identity gates, because the gates need to know how this
+    // order is paid for. The catalog is platform-managed: the code must be
+    // live right now, so a method removed by an operator disappears from
+    // checkout immediately.
     const method = await this.paymentMethods.findEnabledByCode(
       dto.paymentMethod,
     );
@@ -482,6 +491,21 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
      * exactly the assurance the code step below stands in for.
      */
     const cashOnDelivery = method.kind === 'cod' && !usesCodProtection;
+
+    // Ahead of the identity gates on purpose: being told cash on delivery is
+    // off for this order is worth knowing before being asked to sign in and
+    // prove a phone for it. Re-run under the shop lock below, which is what
+    // makes it race-proof - this pass is for the buyer, that one is for
+    // correctness.
+    if (cashOnDelivery) {
+      await this.assertCodAllowed(
+        this.db,
+        dto.shopId,
+        dto.contact,
+        await this.checkoutProductIds(dto),
+        caller.accountId,
+      );
+    }
 
     /**
      * Identity gates, before any of the pricing work. None of them refuses the
@@ -665,21 +689,24 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
 
       // The authoritative pass, under the shop lock that serializes checkouts
       // for this shop - which is what actually stops a double-tapped button
-      // placing two. Reads the priced cart, so it sees a combo's members
-      // however the request named them. Before any stock moves.
-      await this.assertNotOrderedRecently(
-        tx,
-        dto.shopId,
-        dto.contact,
-        [
-          ...new Set(
-            cart.lines
-              .map((l) => l.productId)
-              .filter((id): id is string => id !== null),
-          ),
-        ],
-        caller.accountId,
-      );
+      // placing two cash-on-delivery orders. Reads the priced cart, so it sees
+      // a combo's members however the request named them. Before any stock
+      // moves.
+      if (cashOnDelivery) {
+        await this.assertCodAllowed(
+          tx,
+          dto.shopId,
+          dto.contact,
+          [
+            ...new Set(
+              cart.lines
+                .map((l) => l.productId)
+                .filter((id): id is string => id !== null),
+            ),
+          ],
+          caller.accountId,
+        );
+      }
 
       // A coupon takes money off the item subtotal (never delivery - the
       // seller still owes the courier that). A code that doesn't apply is
@@ -1406,31 +1433,58 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
-   * One buyer, one order of a given item per {@link RISK_WINDOW_HOURS}.
+   * One cash-on-delivery order of a given item per buyer per
+   * {@link RISK_WINDOW_HOURS}.
    *
    * Aimed at the duplicate nobody meant to place - a double-tapped button, a
-   * page reopened from history, a buyer who forgot they already ordered this
-   * morning. A second copy of the same thing hours later is far more often a
-   * mistake than an intention, and a seller shipping two is the one who
-   * absorbs it.
+   * page reopened from history - and at the fake order, which is always cash
+   * on delivery because it never intends to pay. Either way the seller pays a
+   * courier for a parcel nobody takes.
    *
-   * So it is refused rather than swallowed, but with the door left open: the
-   * storefront turns this code into a prompt offering the seller's chat, which
-   * is where a buyer who genuinely wants two says so. The window then lapses
-   * on its own.
-   *
-   * Matched on the contact details, like every other buyer-history question
-   * here - orders carry no account id, and a regular checking out as a guest
-   * is still the same person.
+   * Paying online is never held back. Money moved before dispatch is the
+   * proof this rule stands in for, so a buyer who genuinely wants a second
+   * one simply pays for it; the storefront greys cash on delivery out and
+   * says so. The window then lapses on its own.
    */
-  private async assertNotOrderedRecently(
+  private async assertCodAllowed(
     executor: OrdersTx | DrizzleDB,
     shopId: string,
     contact: { email?: string; phone: string },
     productIds: string[],
     accountId: string | null = null,
   ): Promise<void> {
-    if (!productIds.length) return;
+    const clash = await this.orderedRecently(
+      executor,
+      shopId,
+      contact,
+      productIds,
+      accountId,
+    );
+    if (clash) {
+      throw new ForbiddenException({
+        code: 'COD_UNAVAILABLE',
+        message:
+          'Cash on delivery is not available for this order right now. Please pay online to place it.',
+      });
+    }
+  }
+
+  /**
+   * The name of an item in `productIds` this buyer already ordered from this
+   * shop inside the window, or null.
+   *
+   * Matched on the contact details, like every other buyer-history question
+   * here - orders carry no account id, and a regular checking out as a guest
+   * is still the same person.
+   */
+  private async orderedRecently(
+    executor: OrdersTx | DrizzleDB,
+    shopId: string,
+    contact: { email?: string; phone?: string },
+    productIds: string[],
+    accountId: string | null = null,
+  ): Promise<string | null> {
+    if (!productIds.length) return null;
 
     const email = contact.email?.trim().toLowerCase();
     const phone = normalizePhone(contact.phone);
@@ -1443,10 +1497,13 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
         ? sql`regexp_replace(coalesce(${orders.phone}, ''), '\\D', '', 'g') like ${'%' + phone}`
         : undefined,
     ].filter(Boolean);
-    if (!who.length) return;
+    if (!who.length) return null;
 
     // A cancelled order is one that never happened, so it must not stand in
-    // the way of ordering the same thing again.
+    // the way of ordering the same thing again. Nor does an online payment
+    // the buyer walked away from: it is not an order the seller can see, and
+    // switching to cash on delivery after abandoning the gateway is exactly
+    // when this must not get in the way.
     const [clash] = await executor
       .select({ name: orderItems.name })
       .from(orderItems)
@@ -1455,6 +1512,7 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
         and(
           eq(orders.shopId, shopId),
           ne(orders.status, 'Cancelled'),
+          ne(orders.pay, 'Pending'),
           gte(orders.placedAt, repeatItemWindowStart()),
           inArray(orderItems.productId, productIds),
           or(...who),
@@ -1462,12 +1520,7 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
       )
       .limit(1);
 
-    if (clash) {
-      throw new ForbiddenException({
-        code: 'ALREADY_ORDERED_RECENTLY',
-        message: `You have already ordered ${clash.name} recently. To buy it again, please try later or message the seller.`,
-      });
-    }
+    return clash?.name ?? null;
   }
 
   /** Lifetime orders (everything not cancelled) - the free-tier cap metric. */
