@@ -115,6 +115,21 @@ export class UsersService {
   }
 
   /**
+   * The account a Google sign-in belongs to, if there is one: the one already
+   * linked to this Google id, or one registered with the same email (which the
+   * upsert below then links). Null means signing in would create an account.
+   */
+  async findGoogleAccount(
+    profile: GoogleProfileInput,
+  ): Promise<UserRow | null> {
+    return (
+      (await this.findByGoogleId(profile.googleId)) ??
+      (await this.findByEmail(profile.email)) ??
+      null
+    );
+  }
+
+  /**
    * Find-or-create for the Google sign-in flow. Links a Google id to an
    * existing email account when one already exists.
    */

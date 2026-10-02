@@ -32,6 +32,8 @@ import { AuthService } from './auth.service';
 import { LoginDto } from './dto/login.dto';
 import { ForgotPasswordDto, ResetPasswordDto } from './dto/password-reset.dto';
 import { RegisterDto } from './dto/register.dto';
+import { CompleteGoogleSignupDto } from './dto/complete-google-signup.dto';
+import type { PendingGoogleSignup } from './strategies/google.strategy';
 import { SetPasswordDto } from './dto/set-password.dto';
 import {
   VerifyEmailConfirmDto,
@@ -108,20 +110,46 @@ export class AuthController {
   @UseGuards(GoogleOAuthGuard)
   @UseFilters(GoogleOAuthFailureFilter)
   @ApiOperation({
-    summary: 'Google OAuth callback → redirect to Vue with token',
+    summary:
+      'Google OAuth callback → redirect to Vue with a token, or a sign-up ticket for someone new',
   })
   async googleCallback(
     @Req() req: RequestWithPrincipal,
     @Res() res: Response,
   ): Promise<void> {
-    // Passport places the upserted UserRow on req.user for this route.
-    const { token } = await this.auth.issueForUser(
-      req.user as unknown as UserRow,
-    );
+    // Passport places what the strategy decided on req.user for this route:
+    // the account to sign in, or someone new who has not agreed to anything
+    // yet and so has no account.
+    const outcome = req.user as unknown as UserRow | PendingGoogleSignup;
     const redirect = this.config.getOrThrow<string>('google.successRedirect');
     const url = new URL(redirect);
-    url.searchParams.set('token', token);
+    if ('googleSignup' in outcome) {
+      url.searchParams.set(
+        'signup',
+        await this.auth.startGoogleSignup(outcome.googleSignup),
+      );
+    } else {
+      const { token } = await this.auth.issueForUser(outcome);
+      url.searchParams.set('token', token);
+    }
     res.redirect(url.toString());
+  }
+
+  @Public()
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  @Post('google/complete')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary:
+      'Create the account for a new Google sign-in, once the person agrees to the policies',
+    description:
+      'Takes the `signup` ticket the Google callback redirected with. Creates the account ' +
+      'and signs it in; refuses (409 `GOOGLE_ACCOUNT_EXISTS`) if one already exists, and ' +
+      '(400 `GOOGLE_SIGNUP_EXPIRED`) once the 15-minute ticket has lapsed. Cancelling sends ' +
+      'nothing - no account is ever created without this call.',
+  })
+  completeGoogleSignup(@Body() dto: CompleteGoogleSignupDto) {
+    return this.auth.completeGoogleSignup(dto.ticket);
   }
 
   // ── Contact verification (required before creating a shop) ──

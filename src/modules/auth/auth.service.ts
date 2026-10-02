@@ -9,6 +9,7 @@ import {
   contactComplete,
   type ContactStatus,
 } from '../../common/utils/contact-verification.util';
+import { isUniqueViolation } from '../../common/utils/postgres-error.util';
 import {
   formatDay,
   phoneChangeAllowance,
@@ -17,7 +18,7 @@ import {
 import type { UserRow } from '../../database/schema';
 import { BlockedWordsService } from '../blocked-words/blocked-words.service';
 import { UserResponse } from '../users/dto/user.response';
-import { UsersService } from '../users/users.service';
+import { UsersService, type GoogleProfileInput } from '../users/users.service';
 import { EmailOtpService } from './email-otp.service';
 import type { LoginDto } from './dto/login.dto';
 import type { RegisterDto } from './dto/register.dto';
@@ -130,6 +131,52 @@ export class AuthService {
   /** Completes the Google flow: the user was already upserted by the strategy. */
   async issueForUser(user: UserRow): Promise<AuthResult> {
     return this.toAuthResult(user);
+  }
+
+  /**
+   * Google said who this is, and nobody has an account with them yet. Nothing
+   * is created: the storefront gets a short-lived ticket, asks the person to
+   * agree to the policies, and trades it in with `completeGoogleSignup`.
+   * Cancelling there simply lets the ticket lapse.
+   */
+  async startGoogleSignup(profile: GoogleProfileInput): Promise<string> {
+    return this.tokens.signGoogleSignupTicket({
+      gid: profile.googleId,
+      email: profile.email,
+      name: profile.name,
+    });
+  }
+
+  /**
+   * The person agreed: make the account Google vouched for, and sign them in.
+   *
+   * Creates only. If an account for this Google id or email exists by now -
+   * this ticket was already used, or they signed up another way meanwhile -
+   * it is refused rather than signed into, so a ticket left in a browser's
+   * history can never be replayed as a login. Signing in is Google's job.
+   */
+  async completeGoogleSignup(ticket: string): Promise<AuthResult> {
+    const claims = await this.tokens.verifyGoogleSignupTicket(ticket);
+    const profile: GoogleProfileInput = {
+      googleId: claims.gid,
+      email: claims.email,
+      name: claims.name,
+    };
+    const exists = () =>
+      new ConflictException({
+        code: 'GOOGLE_ACCOUNT_EXISTS',
+        message:
+          'An account for this Google account already exists. Please continue with Google again to sign in.',
+      });
+    if (await this.users.findGoogleAccount(profile)) throw exists();
+    try {
+      return this.toAuthResult(await this.users.upsertGoogleUser(profile));
+    } catch (error) {
+      // Two taps on "Agree" racing each other: the unique index lets one
+      // through and stops the other, which reads as the account existing.
+      if (isUniqueViolation(error)) throw exists();
+      throw error;
+    }
   }
 
   // ── Contact verification (prerequisite for creating a shop) ────

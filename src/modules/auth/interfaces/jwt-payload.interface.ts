@@ -45,3 +45,16 @@ export interface TwoFactorTicketPayload {
   stage: '2fa';
   typ: 'admin-2fa-ticket';
 }
+
+/**
+ * A Google sign-in for someone with no account here yet. It carries what
+ * Google vouched for, so the account can be made once the person agrees to
+ * the policies back in the storefront - and nothing else: it is never a
+ * session, and it cannot sign anyone in to an account that already exists.
+ */
+export interface GoogleSignupTicketPayload {
+  gid: string; // Google account id
+  email: string;
+  name: string;
+  typ: 'google-signup';
+}

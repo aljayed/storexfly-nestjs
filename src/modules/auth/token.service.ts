@@ -1,9 +1,14 @@
-import { Injectable, UnauthorizedException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService, type JwtSignOptions } from '@nestjs/jwt';
 import type { SessionScope } from '../../common/types/principal';
 import type {
   AdminJwtPayload,
+  GoogleSignupTicketPayload,
   PlatformJwtPayload,
   SellerJwtPayload,
   TwoFactorTicketPayload,
@@ -15,6 +20,8 @@ import type {
  *  - seller session JWT
  *  - admin-console JWT (post-2FA)
  *  - short-lived 2FA ticket (between admin login stages)
+ *  - short-lived Google sign-up ticket (between Google and the buyer's
+ *    agreement to the policies)
  */
 @Injectable()
 export class TokenService {
@@ -95,6 +102,50 @@ export class TokenService {
       return payload;
     } catch {
       throw new UnauthorizedException('Invalid or expired 2FA ticket');
+    }
+  }
+
+  /**
+   * Signed with its own key, derived from the session secret: the session
+   * strategy already refuses any `typ` but `seller`, and a key no session
+   * verifier holds means nothing that checks a session signature can be
+   * talked into reading one of these either.
+   */
+  private googleSignupSecret(): string {
+    return `${this.config.getOrThrow<string>('jwt.secret')}:google-signup`;
+  }
+
+  async signGoogleSignupTicket(
+    payload: Omit<GoogleSignupTicketPayload, 'typ'>,
+  ): Promise<string> {
+    return this.jwt.signAsync(
+      { ...payload, typ: 'google-signup' } satisfies GoogleSignupTicketPayload,
+      // Long enough to read the policies; short enough that a link left in a
+      // browser's history is worth nothing by the time anyone finds it.
+      { secret: this.googleSignupSecret(), expiresIn: '15m' } as JwtSignOptions,
+    );
+  }
+
+  async verifyGoogleSignupTicket(
+    token: string,
+  ): Promise<GoogleSignupTicketPayload> {
+    try {
+      const payload = await this.jwt.verifyAsync<GoogleSignupTicketPayload>(
+        token,
+        { secret: this.googleSignupSecret() },
+      );
+      if (payload.typ !== 'google-signup' || !payload.gid || !payload.email) {
+        throw new Error('wrong token type');
+      }
+      return payload;
+    } catch {
+      // 400, not 401: a 401 tells the storefront its own session has lapsed,
+      // and someone already signed in who tries a new Google account must not
+      // be signed out because that sign-up took too long.
+      throw new BadRequestException({
+        code: 'GOOGLE_SIGNUP_EXPIRED',
+        message: 'This sign-up has expired. Please continue with Google again.',
+      });
     }
   }
 }
