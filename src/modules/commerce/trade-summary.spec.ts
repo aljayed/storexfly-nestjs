@@ -12,7 +12,7 @@ function harness(results: unknown[][]) {
       const query = {
         from: () => query, innerJoin: () => query,
         where: (condition: unknown) => { call.where = condition; return query; },
-        orderBy: () => query, groupBy: () => query, limit: () => query,
+        orderBy: () => query, groupBy: () => query, limit: () => query, offset: () => query,
         then: (resolve: (value: unknown[]) => unknown) => Promise.resolve(results[index] ?? []).then(resolve),
       };
       return query;
@@ -100,5 +100,39 @@ describe('Trade console summaries', () => {
     ]);
     expect(calls).toEqual(['a:120', 'bad:10', 'b:199']);
     expect(result).toEqual({ updated: 2, failed: [{ id: 'bad', ok: false, error: 'Your selling price must cover the supplier price.' }] });
+  });
+  it('sources only products a reseller could actually add, with profit and listed flags', async () => {
+    const { service, calls, db } = harness([
+      [
+        { id: 'own', ownerId: 'me', paymentMethods: ['card'] },
+        { id: 'sibling', ownerId: 'me', paymentMethods: ['card'] },
+        { id: 'cod-only', ownerId: 'x', paymentMethods: ['cod'] },
+        { id: 'supplier', ownerId: 'y', paymentMethods: ['card', 'cod'] },
+      ],
+      [{ id: 'p1', name: 'Shirt', slug: 'shirt', cat: 'Fashion', unit: 'piece', stock: 9, emoji: '', tone: '', rating: 4.5, reviews: 3, image: null, priceCents: 50000, supplyCents: 30000, supplierName: 'S', supplierHandle: 's', supplierKyc: 'verified' }],
+      [{ n: 1 }],
+      [{ name: 'Fashion', n: 1 }],
+      [{ productId: 'p1' }],
+    ]);
+    Object.assign(db, { query: {
+      shops: { findFirst: async () => ({ id: 'own', ownerId: 'me', currency: 'BDT' }) },
+      paymentMethods: { findMany: async () => [{ kind: 'card' }] },
+    } });
+    const result = await service.sourcing('own', { sort: 'profit' });
+    // Own shop, a sibling shop of the same owner and a COD-only supplier are out.
+    expect(sqlText(calls[1].where).params).toEqual(expect.arrayContaining(['supplier']));
+    for (const excluded of ['own', 'sibling', 'cod-only']) expect(sqlText(calls[1].where).params).not.toContain(excluded);
+    expect(sqlText(calls[1].where).sql).toContain('"stock" > ');
+    expect(result.items[0]).toMatchObject({ supplyPrice: 300, retailPrice: 500, profitAtRetail: 200, listed: true, supplierVerified: true });
+    expect(result).toMatchObject({ total: 1, hasMore: false, categories: [{ name: 'Fashion', n: 1 }] });
+  });
+  it('returns an empty sourcing page without querying products when no supplier qualifies', async () => {
+    const { service, calls, db } = harness([[{ id: 'own', ownerId: 'me', paymentMethods: ['card'] }]]);
+    Object.assign(db, { query: {
+      shops: { findFirst: async () => ({ id: 'own', ownerId: 'me', currency: 'BDT' }) },
+      paymentMethods: { findMany: async () => [{ kind: 'card' }] },
+    } });
+    expect(await service.sourcing('own', {})).toEqual({ items: [], total: 0, page: 1, hasMore: false, categories: [] });
+    expect(calls).toHaveLength(1);
   });
 });

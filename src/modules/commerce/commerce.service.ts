@@ -6,7 +6,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { and, asc, count, desc, eq, gte, inArray, isNotNull, ne, sql } from 'drizzle-orm';
+import { and, asc, count, desc, eq, gt, gte, ilike, inArray, isNotNull, ne, or, sql } from 'drizzle-orm';
 import { DRIZZLE } from '../../database/database.constants';
 import type { DrizzleDB } from '../../database/drizzle.types';
 import {
@@ -80,6 +80,155 @@ export class CommerceService {
       stock: product.stock,
       supplierName: shop.name,
       supplierVerified: shop.kycStatus === 'verified',
+    };
+  }
+  /**
+   * What a reseller can add to their store right now: in-stock products
+   * other suppliers have opened to resellers, with the numbers that decide
+   * it - supply price, the supplier's own retail price, and the profit
+   * between them. Only products `importListing` would accept are returned,
+   * so nothing here dead-ends on "Add".
+   */
+  async sourcing(
+    shopId: string,
+    query: {
+      q?: string;
+      category?: string;
+      sort?: 'new' | 'profit' | 'rating';
+      page?: number;
+    },
+  ) {
+    const LIMIT = 24;
+    const page = query.page ?? 1;
+    const target = await this.db.query.shops.findFirst({
+      where: eq(shops.id, shopId),
+    });
+    if (!target) throw new NotFoundException('Shop not found');
+    const [candidates, collection] = await Promise.all([
+      this.db
+        .select({
+          id: shops.id,
+          ownerId: shops.ownerId,
+          paymentMethods: shops.paymentMethods,
+        })
+        .from(shops)
+        .where(and(eq(shops.live, true), eq(shops.currency, target.currency))),
+      this.db.query.paymentMethods.findMany({
+        where: and(
+          eq(paymentMethods.enabled, true),
+          ne(paymentMethods.gateway, 'none'),
+        ),
+      }),
+    ]);
+    const supplierIds = candidates
+      .filter(
+        (s) =>
+          s.id !== target.id &&
+          s.ownerId !== target.ownerId &&
+          collection.some((m) => s.paymentMethods.includes(m.kind)),
+      )
+      .map((s) => s.id);
+    if (!supplierIds.length)
+      return { items: [], total: 0, page, hasMore: false, categories: [] };
+
+    const supplyCents = sql<number>`(${products.commerce}->>'resellerPriceCents')::int`;
+    const eligible = and(
+      inArray(products.shopId, supplierIds),
+      eq(products.listingType, 'sale'),
+      gt(products.stock, 0),
+      sql`${products.commerce}->'channels' ? 'reseller'`,
+      sql`${supplyCents} > 0`,
+    );
+    const term = query.q?.trim()
+      ? `%${query.q.trim().replace(/[\\%_]/g, '\\$&')}%`
+      : undefined;
+    const where = and(
+      eligible,
+      term
+        ? or(
+            ilike(products.name, term),
+            ilike(products.cat, term),
+            ilike(shops.name, term),
+          )
+        : undefined,
+      query.category ? eq(products.cat, query.category) : undefined,
+    );
+    const order =
+      query.sort === 'profit'
+        ? [desc(sql`${products.priceCents} - ${supplyCents}`), desc(products.id)]
+        : query.sort === 'rating'
+          ? [desc(products.rating), desc(products.reviewsCount), desc(products.id)]
+          : [desc(products.createdAt), desc(products.id)];
+    const [rows, totals, categories, mine] = await Promise.all([
+      this.db
+        .select({
+          id: products.id,
+          name: products.name,
+          slug: products.slug,
+          cat: products.cat,
+          unit: products.unit,
+          stock: products.stock,
+          emoji: products.emoji,
+          tone: products.tone,
+          rating: products.rating,
+          reviews: products.reviewsCount,
+          image: sql<string | null>`${products.images}[1]`,
+          priceCents: products.priceCents,
+          supplyCents,
+          supplierName: shops.name,
+          supplierHandle: shops.handle,
+          supplierKyc: shops.kycStatus,
+        })
+        .from(products)
+        .innerJoin(shops, eq(shops.id, products.shopId))
+        .where(where)
+        .orderBy(...order)
+        .limit(LIMIT)
+        .offset((page - 1) * LIMIT),
+      this.db
+        .select({ n: count() })
+        .from(products)
+        .innerJoin(shops, eq(shops.id, products.shopId))
+        .where(where),
+      this.db
+        .select({ name: products.cat, n: count() })
+        .from(products)
+        .where(eligible)
+        .groupBy(products.cat)
+        .orderBy(desc(count())),
+      this.db
+        .select({ productId: resellerListings.productId })
+        .from(resellerListings)
+        .where(eq(resellerListings.shopId, shopId)),
+    ]);
+    const listed = new Set(mine.map((m) => m.productId));
+    const total = totals[0]?.n ?? 0;
+    return {
+      items: rows.map((r) => ({
+        id: r.id,
+        name: r.name,
+        slug: r.slug,
+        cat: r.cat,
+        unit: r.unit,
+        stock: r.stock,
+        emoji: r.emoji,
+        tone: r.tone,
+        rating: r.rating,
+        reviews: r.reviews,
+        image: r.image,
+        supplierName: r.supplierName,
+        supplierHandle: r.supplierHandle,
+        supplierVerified: r.supplierKyc === 'verified',
+        supplyPrice: r.supplyCents / 100,
+        retailPrice: r.priceCents / 100,
+        // Selling at the supplier's own retail price is the natural start.
+        profitAtRetail: Math.max(0, r.priceCents - r.supplyCents) / 100,
+        listed: listed.has(r.id),
+      })),
+      total,
+      page,
+      hasMore: page * LIMIT < total,
+      categories,
     };
   }
   async importListing(shopId: string, dto: ResellerListingDto) {

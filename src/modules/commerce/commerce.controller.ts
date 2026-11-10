@@ -6,6 +6,7 @@ import {
   ParseUUIDPipe,
   Patch,
   Post,
+  Query,
   UseGuards,
 } from '@nestjs/common';
 import { PlatformJwtAuthGuard } from '../../common/guards/platform-jwt-auth.guard';
@@ -26,6 +27,7 @@ import {
   ResolveDisputeDto,
   RespondQuoteDto,
   RepriceListingsDto,
+  SourcingQueryDto,
   ResellerListingDto,
   TradeMessageDto,
   UpdateResellerListingDto,
@@ -98,6 +100,12 @@ export class CommerceAdminController {
     @Param('shopId', ParseUUIDPipe) shopId: string,
   ) {
     return this.service.listings(shopId);
+  }
+  @RequirePerm('items.view') @Get('sourcing') sourcing(
+    @Param('shopId', ParseUUIDPipe) shopId: string,
+    @Query() query: SourcingQueryDto,
+  ) {
+    return this.service.sourcing(shopId, query);
   }
   @RequirePerm('items.add') @Get('source/:id') source(
     @Param('shopId', ParseUUIDPipe) shopId: string,

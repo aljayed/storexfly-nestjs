@@ -34,6 +34,16 @@ export class UpdateResellerListingDto {
   sellingPrice?: number;
   @IsOptional() @IsBoolean() active?: boolean;
 }
+/** Reseller sourcing: other suppliers' resellable products. */
+export class SourcingQueryDto {
+  @IsOptional() @IsString() @MaxLength(80) q?: string;
+  @IsOptional() @IsString() @MaxLength(80) category?: string;
+  @IsOptional() @IsIn(['new', 'profit', 'rating']) sort?:
+    | 'new'
+    | 'profit'
+    | 'rating';
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(500) page?: number;
+}
 export class RepriceItemDto {
   @IsUUID() id!: string;
   @Type(() => Number)
