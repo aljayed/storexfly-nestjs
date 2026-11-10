@@ -1,7 +1,7 @@
 import 'dotenv/config';
 import * as bcrypt from 'bcryptjs';
 import { randomBytes } from 'crypto';
-import { and, eq, inArray, notLike, or } from 'drizzle-orm';
+import { and, eq, inArray, like, notLike, or, sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
 import { COMMISSION_BPS } from '../common/constants/billing';
@@ -10,59 +10,88 @@ import type { CommercePolicy } from '../common/commerce/commerce';
 import { handleize } from '../common/utils/slug.util';
 import { generatePublicId } from '../common/utils/public-id.util';
 import * as schema from './schema';
-import type { OrderStatus, PaymentStatus, ProductTag } from './schema/enums';
+import type { OrderStatus, ProductTag } from './schema/enums';
 
 /**
- * Demo data for the three business types: a B2C retail shop, a B2B wholesale
- * supplier, and a reseller carrying that supplier's products - linked the way
- * real trade is (listings, reseller orders, quotes, a dispute), so every
- * trade console screen has something to show.
+ * B2B and reseller demo content for one real shop (Humri), so its wholesale
+ * and reseller consoles have something to show.
  *
- *   node dist/src/database/seed-trade-demo.js --force           # (re)create
- *   node dist/src/database/seed-trade-demo.js --force --remove  # take it out
+ * Reselling always involves two shops with different owners, so one demo
+ * partner shop (Krishi Bazar BD) stands on the other side of every trade:
+ *  - Humri supplies: agro products with tier prices, bulk orders from demo
+ *    business buyers, quote requests, a trade case - and orders from the
+ *    partner's customers, which Humri ships.
+ *  - Humri resells: listings of the partner's products, and the orders its
+ *    own customers placed for them.
+ *
+ *   node dist/src/database/seed-trade-demo.js --force             # (re)create
+ *   node dist/src/database/seed-trade-demo.js --force --remove    # take it out
  *   ... --dry-run   # do all of it inside the transaction, then roll back
  *
- * Scoped like seed.ts: it only ever touches its own `demo-` shop handles and
- * `@example.com` accounts. Re-running replaces the previous demo set with a
- * fresh one dated around "now" (orders age past their platform deadlines in
- * a few days, so re-run to refresh).
- *
- * Safety, because these shops are public:
- *  - Every contact is unreachable: emails on example.com (reserved, never
- *    delivered) and phones on the unassigned 010 prefix.
- *  - Owner passwords are random per run and printed once - never a known one.
- *  - Cleanup refuses to delete any order or quote it did not create (a real
- *    visitor's purchase from a demo shop), naming them instead.
+ * The target shop is real, so this is careful about what it touches:
+ *  - Only rows it made are removed: `demo-` shop handles, `@example.com`
+ *    accounts and orders, and Humri products named in HUMRI_ITEMS. Humri's
+ *    own products, orders and settings are never changed.
+ *  - Cleanup refuses to delete any order or quote made by a real account.
+ *  - Every demo order touching Humri is cash on delivery: settlements never
+ *    pay COD out of platform funds, so no payout to Humri's bank appears.
+ *  - Humri's sales credit is metered on its orders. The seed adds the demo
+ *    orders' value to the credit grant and cleanup takes the same amount
+ *    back (order totals never change), so Humri's real balance is unchanged.
+ *  - Order references continue Humri's own sequence (#1001 + count), and
+ *    cleanup refuses to leave a gap that would make the next real order
+ *    reuse an existing reference.
+ *  - Contacts are unreachable (example.com, the unassigned 010 prefix) and
+ *    the partner owner's password is random per run.
  */
 
+const TARGET_HANDLE = 'humri';
 const DOMAIN = 'example.com';
-const HANDLES = {
-  retail: 'demo-dhaka-daily',
-  wholesale: 'demo-shapla-textiles',
-  reseller: 'demo-trendy-corner',
-} as const;
-const OWNERS = {
-  retail: { email: `demo.retail@${DOMAIN}`, name: 'Farhana Akter (Demo)' },
-  wholesale: { email: `demo.supplier@${DOMAIN}`, name: 'Kamal Hossain (Demo)' },
-  reseller: { email: `demo.reseller@${DOMAIN}`, name: 'Tania Sultana (Demo)' },
-} as const;
+/** Every demo shop handle this script has ever created - all are cleared. */
+const DEMO_HANDLES = [
+  'demo-krishi-bazar',
+  'demo-dhaka-daily',
+  'demo-shapla-textiles',
+  'demo-trendy-corner',
+];
+const PARTNER_HANDLE = 'demo-krishi-bazar';
+const PARTNER_OWNER = {
+  email: `demo.partner@${DOMAIN}`,
+  name: 'Sohel Rana (Demo)',
+};
 const BUYERS = {
   rahim: {
-    email: `demo.rahim.traders@${DOMAIN}`,
-    name: 'Rahim Traders',
+    email: `demo.rahim.poultry@${DOMAIN}`,
+    name: 'Rahim Poultry Farm',
     person: 'Rahim Uddin',
-    area: 'Chattogram',
+    area: 'Gazipur',
   },
-  nadia: {
-    email: `demo.nadia.boutique@${DOMAIN}`,
-    name: 'Nadia Boutique',
+  dairy: {
+    email: `demo.greenvalley.dairy@${DOMAIN}`,
+    name: 'Green Valley Dairy',
     person: 'Nadia Islam',
-    area: 'Sylhet',
+    area: 'Bogura',
+  },
+  fish: {
+    email: `demo.meghna.hatchery@${DOMAIN}`,
+    name: 'Meghna Fish Hatchery',
+    person: 'Jahid Hasan',
+    area: 'Mymensingh',
   },
 } as const;
-const DEMO_EMAILS = [...Object.values(OWNERS), ...Object.values(BUYERS)].map(
-  (u) => u.email,
-);
+/** Accounts of earlier demo sets, cleared too. */
+const LEGACY_EMAILS = [
+  'demo.retail@example.com',
+  'demo.supplier@example.com',
+  'demo.reseller@example.com',
+  'demo.rahim.traders@example.com',
+  'demo.nadia.boutique@example.com',
+];
+const DEMO_EMAILS = [
+  PARTNER_OWNER.email,
+  ...Object.values(BUYERS).map((b) => b.email),
+  ...LEGACY_EMAILS,
+];
 
 const HOUR = 3_600_000;
 const DAY = 24 * HOUR;
@@ -73,13 +102,10 @@ const cents = (taka: number) => Math.round(taka * 100);
 let phoneSeq = 0;
 /** 010 is not an assigned Bangladeshi operator prefix: well-formed, unreachable. */
 const fakePhone = () => `010000${String(++phoneSeq).padStart(5, '0')}`;
-const password = () => randomBytes(12).toString('base64url');
 
 type Tx = Parameters<
   Parameters<ReturnType<typeof drizzle<typeof schema>>['transaction']>[0]
 >[0];
-
-/* ── Catalogues ─────────────────────────────────────────────────── */
 
 interface Item {
   name: string;
@@ -93,553 +119,253 @@ interface Item {
   rating: number;
   reviews: number;
   blurb: string;
-  /** Trade terms in taka; omitted = retail only. */
   reseller?: number;
   moq?: number;
   tiers?: [number, number][];
 }
 
-const RETAIL_ITEMS: Item[] = [
+/** Added to Humri - and identified by these names when cleared. */
+const HUMRI_ITEMS: Item[] = [
   {
-    name: 'Chinigura Aromatic Rice 5kg',
-    cat: 'Rice & grains',
-    price: 780,
-    unit: '5 kg bag',
-    stock: 60,
-    emoji: '🍚',
-    tone: '#f6f0e4',
-    tag: 'Bestseller',
-    rating: 4.8,
-    reviews: 124,
-    blurb:
-      'Small-grain, naturally fragrant rice from Dinajpur - the one for polao and payesh.',
-  },
-  {
-    name: 'Sundarbans Raw Honey',
-    cat: 'Honey',
-    price: 650,
-    unit: '500 g jar',
-    stock: 35,
-    emoji: '🍯',
-    tone: '#fbeede',
-    rating: 4.9,
-    reviews: 88,
-    blurb:
-      'Wild khalisha honey collected by mawals in the Sundarbans. Unheated, unfiltered.',
-  },
-  {
-    name: 'Cold-Pressed Mustard Oil',
-    cat: 'Oil',
-    price: 340,
-    unit: '1 litre',
-    stock: 48,
-    emoji: '🫒',
-    tone: '#f3f3dc',
-    rating: 4.7,
-    reviews: 61,
-    blurb: 'Ghani-pressed from Sirajganj mustard seed. Sharp, golden and pure.',
-  },
-  {
-    name: 'Premium Ajwa Dates',
-    cat: 'Dry fruits',
-    price: 990,
-    unit: '500 g box',
-    stock: 22,
-    emoji: '🌴',
-    tone: '#efe4dc',
-    tag: 'Gift',
-    rating: 4.9,
-    reviews: 47,
-    blurb:
-      'Soft Madinah Ajwa dates, packed in a gift box. A favourite for Ramadan and visits.',
-  },
-  {
-    name: 'Sylhet Garden Black Tea',
-    cat: 'Tea',
-    price: 420,
-    unit: '400 g pack',
-    stock: 70,
-    emoji: '🍵',
-    tone: '#e2f1e8',
-    rating: 4.6,
-    reviews: 39,
-    blurb: 'Strong, bright CTC tea from Srimangal estates. Made for milk tea.',
-  },
-  {
-    name: 'Nakshi Kantha Cushion Cover',
-    cat: 'Home',
-    price: 1250,
-    unit: '16 x 16 in',
-    stock: 12,
-    emoji: '🧵',
-    tone: '#fbe4ee',
-    tag: 'New',
-    rating: 5,
-    reviews: 9,
-    blurb:
-      'Hand-stitched by artisans in Jamalpur. Every piece is slightly different.',
-  },
-  {
-    name: 'Organic Turmeric Powder',
-    cat: 'Spices',
-    price: 180,
-    unit: '200 g pack',
-    stock: 3,
-    emoji: '🟡',
+    name: 'Layer Poultry Feed 50kg',
+    cat: 'Poultry feed',
+    price: 2950,
+    unit: '50 kg bag',
+    stock: 640,
+    emoji: '🐔',
     tone: '#fdf3d6',
-    rating: 4.8,
-    reviews: 52,
-    blurb: 'Sun-dried and stone-ground in Rangpur. Deep colour, no additives.',
-  },
-  {
-    name: 'Masala Chanachur',
-    cat: 'Snacks',
-    price: 120,
-    unit: '350 g pack',
-    stock: 140,
-    emoji: '🥜',
-    tone: '#f8e3dc',
-    tag: 'Snack',
-    rating: 4.5,
-    reviews: 210,
-    blurb:
-      'The tea-time classic: crunchy, spicy and impossible to stop eating.',
-  },
-];
-
-const SUPPLIER_ITEMS: Item[] = [
-  {
-    name: "Men's Cotton Panjabi",
-    cat: 'Menswear',
-    price: 1650,
-    unit: 'piece',
-    stock: 900,
-    emoji: '👔',
-    tone: '#e9eefc',
     tag: 'Bestseller',
-    rating: 4.7,
-    reviews: 64,
+    rating: 4.8,
+    reviews: 96,
     blurb:
-      'Breathable combed cotton with a classic band collar. Sizes M to XXL, five colours.',
-    reseller: 1100,
-    moq: 20,
+      'Balanced layer mash with 17% protein, calcium and vitamin premix for steady laying.',
+    reseller: 2450,
+    moq: 10,
     tiers: [
-      [20, 950],
-      [100, 850],
-      [500, 760],
+      [10, 2650],
+      [50, 2520],
+      [200, 2400],
     ],
   },
   {
-    name: "Women's Printed Three-Piece",
-    cat: 'Womenswear',
-    price: 2200,
-    unit: 'set',
+    name: 'Cattle Fattening Feed 25kg',
+    cat: 'Cattle feed',
+    price: 1450,
+    unit: '25 kg bag',
+    stock: 900,
+    emoji: '🐄',
+    tone: '#e2f1e8',
+    rating: 4.7,
+    reviews: 58,
+    blurb:
+      'High-energy pellet for beef fattening, with bypass protein and rumen buffers.',
+    reseller: 1180,
+    moq: 20,
+    tiers: [
+      [20, 1260],
+      [100, 1190],
+    ],
+  },
+  {
+    name: 'Floating Fish Feed 20kg',
+    cat: 'Fish feed',
+    price: 1650,
+    unit: '20 kg bag',
     stock: 420,
-    emoji: '👗',
-    tone: '#fbe4ee',
-    rating: 4.8,
+    emoji: '🐟',
+    tone: '#e9eefc',
+    rating: 4.6,
     reviews: 41,
     blurb:
-      'Kameez, salwar and orna in soft lawn cotton with screen-printed motifs.',
-    reseller: 1450,
-    moq: 10,
+      'Extruded floating pellet, 28% protein, for tilapia and pangas ponds.',
+    reseller: 1350,
+    moq: 20,
     tiers: [
-      [10, 1300],
-      [50, 1180],
-      [200, 1050],
+      [20, 1440],
+      [100, 1370],
     ],
   },
   {
-    name: 'Cotton Check Lungi (Pack of 2)',
-    cat: 'Menswear',
-    price: 750,
-    unit: 'pack of 2',
-    stock: 1200,
-    emoji: '🧺',
-    tone: '#e2f1e8',
-    rating: 4.6,
-    reviews: 120,
-    blurb:
-      'Yarn-dyed checks from Narsingdi looms. Colourfast and soft after the first wash.',
-    reseller: 480,
-    moq: 30,
-    tiers: [
-      [30, 420],
-      [150, 380],
-    ],
-  },
-  {
-    name: "Kids' Cotton T-Shirt",
-    cat: 'Kidswear',
-    price: 450,
-    unit: 'piece',
-    stock: 2400,
-    emoji: '👕',
-    tone: '#fdf3d6',
-    tag: 'New',
-    rating: 4.5,
-    reviews: 33,
-    blurb: 'Single-jersey cotton, tagless neck, ages 2 to 12. Eight prints.',
-    reseller: 290,
-    moq: 50,
-    tiers: [
-      [50, 240],
-      [300, 210],
-    ],
-  },
-  {
-    name: 'Jamdani-Pattern Cotton Saree',
-    cat: 'Womenswear',
-    price: 4800,
-    unit: 'piece',
-    stock: 8,
-    emoji: '🥻',
+    name: 'Vitamin & Mineral Premix 1kg',
+    cat: 'Supplements',
+    price: 480,
+    unit: '1 kg pack',
+    stock: 1500,
+    emoji: '💊',
     tone: '#ebe6f8',
-    tag: 'Gift',
-    rating: 4.9,
-    reviews: 18,
-    blurb:
-      'Machine-woven with traditional Jamdani motifs. Comes with blouse piece.',
-    reseller: 3400,
-    moq: 5,
-    tiers: [
-      [5, 3100],
-      [25, 2850],
-    ],
-  },
-  {
-    name: 'Hand-Woven Gamcha (Set of 3)',
-    cat: 'Home textiles',
-    price: 390,
-    unit: 'set of 3',
-    stock: 3000,
-    emoji: '🧣',
-    tone: '#f8e3dc',
+    tag: 'New',
     rating: 4.7,
-    reviews: 76,
+    reviews: 23,
     blurb:
-      'Thin, quick-drying red-and-white check towels from Kushtia weavers.',
-    reseller: 250,
+      'Mix 2.5 kg per tonne of feed. Covers A, D3, E, B-complex and trace minerals.',
+    reseller: 360,
     moq: 50,
     tiers: [
-      [50, 210],
-      [500, 180],
+      [50, 395],
+      [300, 365],
     ],
   },
   {
-    name: 'Linen-Blend Casual Shirt',
-    cat: 'Menswear',
-    price: 1450,
+    name: 'Liquid Calcium Supplement 1L',
+    cat: 'Supplements',
+    price: 350,
+    unit: '1 litre',
+    stock: 6,
+    emoji: '🧴',
+    tone: '#f8e3dc',
+    rating: 4.5,
+    reviews: 19,
+    blurb:
+      'Calcium, phosphorus and vitamin D3 for dairy cows after calving and for layers.',
+    reseller: 260,
+    moq: 48,
+    tiers: [[48, 285]],
+  },
+  {
+    name: 'Poultry Drinker 5L',
+    cat: 'Farm equipment',
+    price: 220,
     unit: 'piece',
-    stock: 0,
-    emoji: '🎽',
+    stock: 2000,
+    emoji: '🚰',
     tone: '#e9eefc',
     rating: 4.4,
-    reviews: 12,
-    blurb: 'Cool linen-cotton weave with a relaxed fit. Restocking soon.',
-    reseller: 950,
-    moq: 20,
-    tiers: [[20, 880]],
-  },
-  {
-    name: 'Embroidered Winter Shawl',
-    cat: 'Womenswear',
-    price: 1800,
-    unit: 'piece',
-    stock: 140,
-    emoji: '🧶',
-    tone: '#fbeede',
-    rating: 4.8,
-    reviews: 22,
+    reviews: 31,
     blurb:
-      'Warm acrylic-wool blend with hand-finished embroidery. Wholesale only for trade buyers.',
-    moq: 10,
+      'Food-grade plastic drinker with twist-lock base. Wholesale cartons of 100.',
+    moq: 100,
     tiers: [
-      [10, 1250],
-      [60, 1120],
+      [100, 150],
+      [500, 135],
     ],
-  },
-  {
-    name: 'Stretch Denim Jeans',
-    cat: 'Menswear',
-    price: 1900,
-    unit: 'piece',
-    stock: 75,
-    emoji: '👖',
-    tone: '#e9eefc',
-    rating: 4.3,
-    reviews: 27,
-    blurb: 'Mid-rise, slim fit, 2% stretch. Sold in our own store only.',
   },
 ];
 
-/** What the reseller carries, at its own price; `active: false` = paused. */
-const RESELL: { item: string; price: number; active?: boolean }[] = [
-  { item: "Men's Cotton Panjabi", price: 1490 },
-  { item: "Women's Printed Three-Piece", price: 1950 },
-  { item: "Kids' Cotton T-Shirt", price: 390 },
-  { item: 'Cotton Check Lungi (Pack of 2)', price: 499 }, // thin margin
-  { item: 'Linen-Blend Casual Shirt', price: 1290 }, // supplier out of stock
-  { item: 'Hand-Woven Gamcha (Set of 3)', price: 349, active: false },
-  { item: 'Jamdani-Pattern Cotton Saree', price: 4390 },
+/** The partner's catalogue - what Humri resells. */
+const PARTNER_ITEMS: Item[] = [
+  {
+    name: 'Hybrid Maize Seed 1kg',
+    cat: 'Seeds',
+    price: 650,
+    unit: '1 kg pack',
+    stock: 800,
+    emoji: '🌽',
+    tone: '#fdf3d6',
+    tag: 'Bestseller',
+    rating: 4.7,
+    reviews: 77,
+    blurb: 'High-yield hybrid for rabi season. 110 to 120 days to harvest.',
+    reseller: 480,
+  },
+  {
+    name: 'Organic Vermicompost 10kg',
+    cat: 'Fertiliser',
+    price: 420,
+    unit: '10 kg bag',
+    stock: 1200,
+    emoji: '🪱',
+    tone: '#efe4dc',
+    rating: 4.8,
+    reviews: 54,
+    blurb:
+      'Earthworm compost from Jashore. Improves soil structure and water holding.',
+    reseller: 300,
+  },
+  {
+    name: 'Knapsack Sprayer 16L',
+    cat: 'Farm equipment',
+    price: 2100,
+    unit: 'piece',
+    stock: 90,
+    emoji: '🧯',
+    tone: '#e2f1e8',
+    rating: 4.5,
+    reviews: 28,
+    blurb: 'Manual pressure sprayer with brass lance and three nozzles.',
+    reseller: 1650,
+  },
+  {
+    name: 'Drip Irrigation Starter Kit',
+    cat: 'Farm equipment',
+    price: 3800,
+    unit: 'kit for 1 bigha',
+    stock: 0,
+    emoji: '💧',
+    tone: '#e9eefc',
+    rating: 4.6,
+    reviews: 12,
+    blurb:
+      'Mainline, drippers and filter for one bigha of vegetables. Restocking soon.',
+    reseller: 3050,
+  },
+  {
+    name: 'Mineral Lick Block 5kg',
+    cat: 'Supplements',
+    price: 380,
+    unit: '5 kg block',
+    stock: 400,
+    emoji: '🧂',
+    tone: '#f8e3dc',
+    rating: 4.4,
+    reviews: 20,
+    blurb: 'Salt and trace-mineral block for cattle and goats.',
+    reseller: 340,
+  },
+  {
+    name: 'Vegetable Seed Combo Pack',
+    cat: 'Seeds',
+    price: 250,
+    unit: '6 varieties',
+    stock: 600,
+    emoji: '🥬',
+    tone: '#e2f1e8',
+    rating: 4.6,
+    reviews: 45,
+    blurb:
+      'Spinach, red amaranth, okra, bottle gourd, tomato and chilli seeds.',
+    reseller: 170,
+  },
+];
+
+/** The partner reselling Humri's products, at its own prices. */
+const PARTNER_RESELLS: { item: string; price: number }[] = [
+  { item: 'Layer Poultry Feed 50kg', price: 2890 },
+  { item: 'Cattle Fattening Feed 25kg', price: 1390 },
+  { item: 'Floating Fish Feed 20kg', price: 1590 },
+  { item: 'Vitamin & Mineral Premix 1kg', price: 449 },
+];
+/** Humri reselling the partner's products: live, thin margin, out of stock, paused. */
+const HUMRI_RESELLS: { item: string; price: number; active?: boolean }[] = [
+  { item: 'Hybrid Maize Seed 1kg', price: 599 },
+  { item: 'Organic Vermicompost 10kg', price: 399 },
+  { item: 'Knapsack Sprayer 16L', price: 1990 },
+  { item: 'Drip Irrigation Starter Kit', price: 3590 },
+  { item: 'Mineral Lick Block 5kg', price: 349 },
+  { item: 'Vegetable Seed Combo Pack', price: 229, active: false },
 ];
 
 const PEOPLE = [
-  ['Ayesha Siddiqua', 'Dhanmondi, Dhaka'],
-  ['Tanvir Ahmed', 'Mirpur, Dhaka'],
-  ['Sadia Rahman', 'Uttara, Dhaka'],
-  ['Mehedi Hasan', 'Agrabad, Chattogram'],
-  ['Nusrat Jahan', 'Zindabazar, Sylhet'],
-  ['Rafiq Islam', 'Sonadanga, Khulna'],
-  ['Shirin Akter', 'Gulshan, Dhaka'],
-  ['Imran Kabir', 'Shaheb Bazar, Rajshahi'],
-  ['Laila Begum', 'Mohammadpur, Dhaka'],
-  ['Arif Chowdhury', 'Nasirabad, Chattogram'],
-  ['Joya Das', 'Bashundhara, Dhaka'],
-  ['Sabbir Hossain', 'Kotwali, Barishal'],
+  ['Abdul Karim', 'Savar, Dhaka'],
+  ['Rokeya Begum', 'Trishal, Mymensingh'],
+  ['Mizanur Rahman', 'Sherpur, Bogura'],
+  ['Shahida Khatun', 'Kaliganj, Gazipur'],
+  ['Habibur Rahman', 'Chandina, Cumilla'],
+  ['Monira Akter', 'Pirganj, Rangpur'],
+  ['Jamal Uddin', 'Sreepur, Gazipur'],
+  ['Parvin Sultana', 'Ishwardi, Pabna'],
+  ['Kamrul Hasan', 'Fulbaria, Mymensingh'],
+  ['Salma Khatun', 'Sadar, Jashore'],
+  ['Delwar Hossain', 'Tangail Sadar'],
+  ['Nasrin Jahan', 'Keraniganj, Dhaka'],
 ] as const;
-
-/* ── Order plans ────────────────────────────────────────────────── */
 
 interface Plan {
   status: OrderStatus;
-  /** Age of the order. Kept inside the platform deadlines (see order-deadlines.ts). */
+  /** Age, kept inside the platform's order deadlines (order-deadlines.ts). */
   age: number;
-  pay: 'cod' | 'card';
-  person: number;
   lines: [string, number][];
 }
-
-// Retail: a month of ordinary trade across every pipeline stage.
-const RETAIL_PLANS: Plan[] = [
-  {
-    status: 'New',
-    age: 2 * HOUR,
-    pay: 'cod',
-    person: 0,
-    lines: [
-      ['Chinigura Aromatic Rice 5kg', 1],
-      ['Masala Chanachur', 2],
-    ],
-  },
-  {
-    status: 'New',
-    age: 9 * HOUR,
-    pay: 'card',
-    person: 1,
-    lines: [['Sundarbans Raw Honey', 2]],
-  },
-  {
-    status: 'New',
-    age: 30 * HOUR,
-    pay: 'cod',
-    person: 2,
-    lines: [['Premium Ajwa Dates', 1]],
-  },
-  {
-    status: 'Confirmed',
-    age: 1.5 * DAY,
-    pay: 'cod',
-    person: 3,
-    lines: [
-      ['Cold-Pressed Mustard Oil', 2],
-      ['Organic Turmeric Powder', 1],
-    ],
-  },
-  {
-    status: 'Packed',
-    age: 2 * DAY,
-    pay: 'card',
-    person: 4,
-    lines: [['Sylhet Garden Black Tea', 2]],
-  },
-  {
-    status: 'HandedOver',
-    age: 3 * DAY,
-    pay: 'cod',
-    person: 5,
-    lines: [['Nakshi Kantha Cushion Cover', 2]],
-  },
-  {
-    status: 'Shipped',
-    age: 4 * DAY,
-    pay: 'card',
-    person: 6,
-    lines: [
-      ['Premium Ajwa Dates', 2],
-      ['Sundarbans Raw Honey', 1],
-    ],
-  },
-  {
-    status: 'Delivered',
-    age: 5 * DAY,
-    pay: 'cod',
-    person: 0,
-    lines: [['Chinigura Aromatic Rice 5kg', 2]],
-  },
-  {
-    status: 'Delivered',
-    age: 6 * DAY,
-    pay: 'card',
-    person: 7,
-    lines: [['Masala Chanachur', 4]],
-  },
-  {
-    status: 'Delivered',
-    age: 8 * DAY,
-    pay: 'cod',
-    person: 8,
-    lines: [
-      ['Cold-Pressed Mustard Oil', 1],
-      ['Sylhet Garden Black Tea', 1],
-    ],
-  },
-  {
-    status: 'Cancelled',
-    age: 9 * DAY,
-    pay: 'cod',
-    person: 9,
-    lines: [['Organic Turmeric Powder', 2]],
-  },
-  {
-    status: 'Delivered',
-    age: 10 * DAY,
-    pay: 'cod',
-    person: 1,
-    lines: [
-      ['Sundarbans Raw Honey', 1],
-      ['Premium Ajwa Dates', 1],
-    ],
-  },
-  {
-    status: 'Delivered',
-    age: 12 * DAY,
-    pay: 'card',
-    person: 10,
-    lines: [['Nakshi Kantha Cushion Cover', 1]],
-  },
-  {
-    status: 'Delivered',
-    age: 13 * DAY,
-    pay: 'cod',
-    person: 0,
-    lines: [
-      ['Chinigura Aromatic Rice 5kg', 1],
-      ['Cold-Pressed Mustard Oil', 1],
-    ],
-  },
-  {
-    status: 'Delivered',
-    age: 16 * DAY,
-    pay: 'cod',
-    person: 11,
-    lines: [['Masala Chanachur', 3]],
-  },
-  {
-    status: 'Delivered',
-    age: 19 * DAY,
-    pay: 'card',
-    person: 6,
-    lines: [['Premium Ajwa Dates', 3]],
-  },
-  {
-    status: 'Delivered',
-    age: 22 * DAY,
-    pay: 'cod',
-    person: 2,
-    lines: [['Sylhet Garden Black Tea', 3]],
-  },
-  {
-    status: 'Delivered',
-    age: 26 * DAY,
-    pay: 'cod',
-    person: 3,
-    lines: [
-      ['Chinigura Aromatic Rice 5kg', 2],
-      ['Masala Chanachur', 1],
-    ],
-  },
-];
-
-// Customers of the reseller's store, fulfilled by the supplier.
-const RESELL_PLANS: Plan[] = [
-  {
-    status: 'New',
-    age: 3 * HOUR,
-    pay: 'card',
-    person: 4,
-    lines: [["Men's Cotton Panjabi", 2]],
-  },
-  {
-    status: 'Confirmed',
-    age: 1 * DAY,
-    pay: 'card',
-    person: 8,
-    lines: [["Women's Printed Three-Piece", 1]],
-  },
-  {
-    status: 'Packed',
-    age: 2 * DAY,
-    pay: 'card',
-    person: 10,
-    lines: [["Kids' Cotton T-Shirt", 3]],
-  },
-  {
-    status: 'Shipped',
-    age: 3 * DAY,
-    pay: 'card',
-    person: 1,
-    lines: [["Men's Cotton Panjabi", 1]],
-  },
-  {
-    status: 'Delivered',
-    age: 5 * DAY,
-    pay: 'card',
-    person: 2,
-    lines: [["Women's Printed Three-Piece", 2]],
-  },
-  {
-    status: 'Delivered',
-    age: 7 * DAY,
-    pay: 'card',
-    person: 6,
-    lines: [['Jamdani-Pattern Cotton Saree', 1]],
-  },
-  {
-    status: 'Delivered',
-    age: 9 * DAY,
-    pay: 'card',
-    person: 11,
-    lines: [["Men's Cotton Panjabi", 3]],
-  },
-  {
-    status: 'Delivered',
-    age: 12 * DAY,
-    pay: 'card',
-    person: 5,
-    lines: [["Kids' Cotton T-Shirt", 4]],
-  },
-  {
-    status: 'Cancelled',
-    age: 13 * DAY,
-    pay: 'card',
-    person: 9,
-    lines: [['Cotton Check Lungi (Pack of 2)', 1]],
-  },
-  {
-    status: 'Delivered',
-    age: 18 * DAY,
-    pay: 'card',
-    person: 0,
-    lines: [
-      ["Women's Printed Three-Piece", 1],
-      ["Kids' Cotton T-Shirt", 2],
-    ],
-  },
-];
-
-// Bulk orders from business buyers at tier prices.
-const WHOLESALE_PLANS: (Omit<Plan, 'person'> & {
+const WHOLESALE_PLANS: (Plan & {
   buyer: keyof typeof BUYERS;
   quote?: true;
   dispute?: string;
@@ -647,99 +373,198 @@ const WHOLESALE_PLANS: (Omit<Plan, 'person'> & {
   {
     status: 'New',
     age: 5 * HOUR,
-    pay: 'card',
-    buyer: 'nadia',
-    lines: [["Women's Printed Three-Piece", 50]],
+    buyer: 'dairy',
+    lines: [['Cattle Fattening Feed 25kg', 60]],
   },
   {
     status: 'Confirmed',
     age: 1 * DAY,
-    pay: 'card',
     buyer: 'rahim',
-    lines: [
-      ["Men's Cotton Panjabi", 120],
-      ['Cotton Check Lungi (Pack of 2)', 150],
-    ],
+    lines: [['Layer Poultry Feed 50kg', 120]],
     quote: true,
   },
   {
     status: 'Packed',
     age: 2 * DAY,
-    pay: 'cod',
-    buyer: 'rahim',
-    lines: [["Kids' Cotton T-Shirt", 300]],
+    buyer: 'fish',
+    lines: [['Floating Fish Feed 20kg', 100]],
   },
   {
     status: 'Shipped',
     age: 4 * DAY,
-    pay: 'card',
-    buyer: 'nadia',
-    lines: [['Embroidered Winter Shawl', 60]],
+    buyer: 'rahim',
+    lines: [
+      ['Poultry Drinker 5L', 500],
+      ['Vitamin & Mineral Premix 1kg', 100],
+    ],
   },
   {
     status: 'Delivered',
     age: 8 * DAY,
-    pay: 'card',
-    buyer: 'rahim',
-    lines: [['Hand-Woven Gamcha (Set of 3)', 500]],
+    buyer: 'dairy',
+    lines: [['Cattle Fattening Feed 25kg', 100]],
     dispute:
-      '18 of the 500 gamcha sets arrived with loose stitching along the hem. Photos sent on chat - please replace or credit them.',
+      '7 of the 100 bags arrived torn and wet from rain during unloading. Photos are in the chat - please replace or credit them.',
   },
   {
     status: 'Delivered',
     age: 15 * DAY,
-    pay: 'card',
-    buyer: 'nadia',
-    lines: [["Women's Printed Three-Piece", 200]],
+    buyer: 'fish',
+    lines: [['Floating Fish Feed 20kg', 200]],
   },
   {
     status: 'Delivered',
     age: 24 * DAY,
-    pay: 'card',
     buyer: 'rahim',
-    lines: [["Men's Cotton Panjabi", 100]],
+    lines: [['Layer Poultry Feed 50kg', 50]],
+  },
+];
+/** The partner's customers buying Humri's products; Humri ships. */
+const VIA_PARTNER: (Plan & { person: number })[] = [
+  {
+    status: 'New',
+    age: 4 * HOUR,
+    person: 0,
+    lines: [['Layer Poultry Feed 50kg', 2]],
+  },
+  {
+    status: 'Confirmed',
+    age: 1 * DAY,
+    person: 1,
+    lines: [['Floating Fish Feed 20kg', 3]],
+  },
+  {
+    status: 'HandedOver',
+    age: 3 * DAY,
+    person: 2,
+    lines: [['Cattle Fattening Feed 25kg', 4]],
+  },
+  {
+    status: 'Delivered',
+    age: 6 * DAY,
+    person: 3,
+    lines: [['Vitamin & Mineral Premix 1kg', 5]],
+  },
+  {
+    status: 'Delivered',
+    age: 11 * DAY,
+    person: 4,
+    lines: [['Layer Poultry Feed 50kg', 3]],
+  },
+  {
+    status: 'Delivered',
+    age: 20 * DAY,
+    person: 5,
+    lines: [['Cattle Fattening Feed 25kg', 2]],
+  },
+];
+/** Humri's own customers buying the partner's products; the partner ships. */
+const HUMRI_RESOLD: (Plan & { person: number })[] = [
+  {
+    status: 'New',
+    age: 2 * HOUR,
+    person: 6,
+    lines: [['Hybrid Maize Seed 1kg', 4]],
+  },
+  {
+    status: 'Confirmed',
+    age: 20 * HOUR,
+    person: 7,
+    lines: [['Knapsack Sprayer 16L', 1]],
+  },
+  {
+    status: 'Packed',
+    age: 2 * DAY,
+    person: 8,
+    lines: [['Organic Vermicompost 10kg', 6]],
+  },
+  {
+    status: 'Shipped',
+    age: 3 * DAY,
+    person: 9,
+    lines: [['Hybrid Maize Seed 1kg', 10]],
+  },
+  {
+    status: 'Delivered',
+    age: 5 * DAY,
+    person: 10,
+    lines: [['Knapsack Sprayer 16L', 2]],
+  },
+  {
+    status: 'Delivered',
+    age: 9 * DAY,
+    person: 11,
+    lines: [['Organic Vermicompost 10kg', 10]],
+  },
+  {
+    status: 'Delivered',
+    age: 13 * DAY,
+    person: 0,
+    lines: [['Hybrid Maize Seed 1kg', 5]],
+  },
+  {
+    status: 'Cancelled',
+    age: 14 * DAY,
+    person: 3,
+    lines: [['Mineral Lick Block 5kg', 4]],
+  },
+  {
+    status: 'Delivered',
+    age: 19 * DAY,
+    person: 2,
+    lines: [['Organic Vermicompost 10kg', 8]],
   },
 ];
 
 /* ── Cleanup ────────────────────────────────────────────────────── */
 
-async function clear(tx: Tx): Promise<void> {
-  const shops = await tx
-    .select({ id: schema.shops.id })
-    .from(schema.shops)
-    .where(inArray(schema.shops.handle, Object.values(HANDLES)));
-  const users = await tx
+const NONE = ['00000000-0000-0000-0000-000000000000'];
+const ids = (xs: { id: string }[]) => (xs.length ? xs.map((x) => x.id) : NONE);
+const refNumber = (r: string) => Number(r.replace(/\D/g, '')) || 0;
+
+async function clear(
+  tx: Tx,
+  target: typeof schema.shops.$inferSelect,
+): Promise<void> {
+  const S = ids(
+    await tx
+      .select({ id: schema.shops.id })
+      .from(schema.shops)
+      .where(inArray(schema.shops.handle, DEMO_HANDLES)),
+  );
+  const userRows = await tx
     .select({ id: schema.users.id })
     .from(schema.users)
     .where(inArray(schema.users.email, DEMO_EMAILS));
-  const shopIds = shops.map((s) => s.id);
-  const userIds = users.map((u) => u.id);
-  if (!shopIds.length && !userIds.length) return;
-  const productIds = shopIds.length
-    ? (
-        await tx
-          .select({ id: schema.products.id })
-          .from(schema.products)
-          .where(inArray(schema.products.shopId, shopIds))
-      ).map((p) => p.id)
-    : [];
-  const none = ['00000000-0000-0000-0000-000000000000'];
-  const S = shopIds.length ? shopIds : none;
-  const U = userIds.length ? userIds : none;
-  const P = productIds.length ? productIds : none;
-
-  const listings = await tx
-    .select({
-      id: schema.resellerListings.id,
-      shopId: schema.resellerListings.shopId,
-    })
-    .from(schema.resellerListings)
-    .where(
-      or(
-        inArray(schema.resellerListings.shopId, S),
-        inArray(schema.resellerListings.productId, P),
+  const U = ids(userRows);
+  const P = ids(
+    await tx
+      .select({ id: schema.products.id })
+      .from(schema.products)
+      .where(
+        or(
+          inArray(schema.products.shopId, S),
+          and(
+            eq(schema.products.shopId, target.id),
+            inArray(
+              schema.products.name,
+              HUMRI_ITEMS.map((i) => i.name),
+            ),
+          ),
+        ),
       ),
-    );
+  );
+  const L = ids(
+    await tx
+      .select({ id: schema.resellerListings.id })
+      .from(schema.resellerListings)
+      .where(
+        or(
+          inArray(schema.resellerListings.shopId, S),
+          inArray(schema.resellerListings.productId, P),
+        ),
+      ),
+  );
   const quotes = await tx
     .select({ id: schema.tradeQuotes.id, buyerId: schema.tradeQuotes.buyerId })
     .from(schema.tradeQuotes)
@@ -750,41 +575,59 @@ async function clear(tx: Tx): Promise<void> {
         inArray(schema.tradeQuotes.buyerId, U),
       ),
     );
-  const L = listings.length ? listings.map((l) => l.id) : none;
-  const Q = quotes.length ? quotes.map((q) => q.id) : none;
+  const Q = ids(quotes);
+  const demoOnTarget = and(
+    eq(schema.orders.shopId, target.id),
+    like(schema.orders.email, `%@${DOMAIN}`),
+  );
   const touching = or(
     inArray(schema.orders.shopId, S),
     inArray(schema.orders.resellerShopId, S),
     inArray(schema.orders.resellerListingId, L),
     inArray(schema.orders.tradeQuoteId, Q),
     inArray(schema.orders.userId, U),
+    demoOnTarget,
   );
 
-  // Never delete what a real person did with a demo shop.
+  // Never delete what a real person did.
   const foreign = await tx
-    .select({ reference: schema.orders.reference, email: schema.orders.email })
+    .select({ reference: schema.orders.reference })
     .from(schema.orders)
     .where(and(touching, notLike(schema.orders.email, `%@${DOMAIN}`)));
-  const foreignQuotes = quotes.filter((q) => !userIds.includes(q.buyerId));
+  const foreignQuotes = quotes.filter(
+    (q) => !userRows.some((u) => u.id === q.buyerId),
+  );
   if (foreign.length || foreignQuotes.length) {
     throw new Error(
       `Refusing to clear the demo set: ${foreign.length} order(s) and ${foreignQuotes.length} quote(s) involve real accounts ` +
         `(${foreign.map((o) => o.reference).join(', ')}). Handle them by hand first.`,
     );
   }
-  const foreignListings = listings.filter((l) => !shopIds.includes(l.shopId));
-  if (foreignListings.length)
-    console.log(
-      `  Note: removing ${foreignListings.length} listing(s) other shops made of demo products.`,
-    );
 
-  const orderIds = (
+  // Take back exactly the credit the seed added: the value of the demo orders
+  // on the target shop (totals never change, only statuses).
+  const [{ value }] = await tx
+    .select({
+      value: sql<string>`coalesce(sum(${schema.orders.totalCents}), 0)`,
+    })
+    .from(schema.orders)
+    .where(demoOnTarget);
+  const offset = Number(value);
+  if (offset) {
+    await tx
+      .update(schema.subscriptions)
+      .set({
+        creditGrantedCents: sql`${schema.subscriptions.creditGrantedCents} - ${offset}`,
+      })
+      .where(eq(schema.subscriptions.shopId, target.id));
+  }
+
+  const O = ids(
     await tx
       .select({ id: schema.orders.id })
       .from(schema.orders)
-      .where(touching)
-  ).map((o) => o.id);
-  const O = orderIds.length ? orderIds : none;
+      .where(touching),
+  );
   await tx
     .delete(schema.tradeDisputes)
     .where(
@@ -799,86 +642,44 @@ async function clear(tx: Tx): Promise<void> {
   await tx
     .delete(schema.resellerListings)
     .where(inArray(schema.resellerListings.id, L));
-  if (shopIds.length)
-    await tx.delete(schema.shops).where(inArray(schema.shops.id, shopIds));
-  if (userIds.length)
-    await tx.delete(schema.users).where(inArray(schema.users.id, userIds));
+  await tx
+    .delete(schema.customers)
+    .where(
+      and(
+        eq(schema.customers.shopId, target.id),
+        like(schema.customers.email, `%@${DOMAIN}`),
+      ),
+    );
+  await tx
+    .delete(schema.products)
+    .where(
+      and(
+        eq(schema.products.shopId, target.id),
+        inArray(schema.products.id, P),
+      ),
+    );
+  await tx.delete(schema.shops).where(inArray(schema.shops.id, S));
+  await tx.delete(schema.users).where(inArray(schema.users.id, U));
+
+  // The next real order is numbered #1001 + count. If real orders arrived
+  // after the demo ones, removing the demo would make that number collide.
+  const left = await tx
+    .select({ reference: schema.orders.reference })
+    .from(schema.orders)
+    .where(eq(schema.orders.shopId, target.id));
+  const highest = Math.max(1000, ...left.map((o) => refNumber(o.reference)));
+  if (highest > 1000 + left.length) {
+    throw new Error(
+      `Refusing: ${target.name} has real orders numbered up to #${highest}, but only ${left.length} would remain, so its next order ` +
+        `(#${1001 + left.length}) would reuse a reference. Leave the demo orders in place.`,
+    );
+  }
   console.log(
-    `  Cleared ${shopIds.length} demo shop(s), ${userIds.length} account(s), ${orderIds.length} order(s).`,
+    `  Cleared ${O === NONE ? 0 : O.length} demo order(s); credit adjustment of ৳${offset / 100} reversed.`,
   );
 }
 
 /* ── Seeding ────────────────────────────────────────────────────── */
-
-async function createUser(
-  tx: Tx,
-  u: { email: string; name: string },
-  pass?: string,
-) {
-  const [row] = await tx
-    .insert(schema.users)
-    .values({
-      publicId: generatePublicId(),
-      name: u.name,
-      email: u.email,
-      phone: fakePhone(),
-      passwordHash: pass ? await bcrypt.hash(pass, 12) : null,
-      via: 'email',
-      emailVerified: true,
-      phoneVerified: true,
-    })
-    .returning();
-  return row;
-}
-
-async function createShop(
-  tx: Tx,
-  ownerId: string,
-  v: {
-    name: string;
-    handle: string;
-    tagline: string;
-    cat: string;
-    swatch: keyof typeof BRAND_SWATCHES;
-    type: 'retail' | 'wholesale' | 'reseller';
-    verified?: boolean;
-  },
-) {
-  const sw = BRAND_SWATCHES[v.swatch];
-  const [shop] = await tx
-    .insert(schema.shops)
-    .values({
-      name: v.name,
-      handle: v.handle,
-      tagline: v.tagline,
-      cat: v.cat as never,
-      brandId: v.swatch,
-      brand: sw.c,
-      brandSoft: sw.soft,
-      ownerId,
-      businessType: v.type,
-      paymentMethods: ['card', 'cod'],
-      supportPhone: fakePhone(),
-      supportEmail: `support.${v.handle}@${DOMAIN}`,
-      kycStatus: v.verified ? 'verified' : 'unsubmitted',
-    })
-    .returning();
-  // Paid plan with credit: a free shop deactivates at 10 lifetime orders,
-  // which would switch the demo off mid-tour.
-  await tx.insert(schema.subscriptions).values({
-    shopId: shop.id,
-    ownerId,
-    status: 'active',
-    billingMode: 'credits',
-    currency: 'BDT',
-    commissionBps: COMMISSION_BPS,
-    creditGrantedCents: cents(500_000),
-    meterStartAt: ago(40 * DAY),
-    startedAt: ago(40 * DAY),
-    nextBillingAt: ahead(20 * DAY),
-  });
-  return shop;
-}
 
 async function createProducts(tx: Tx, shopId: string, items: Item[]) {
   const out = new Map<string, { id: string; item: Item }>();
@@ -920,22 +721,14 @@ async function createProducts(tx: Tx, shopId: string, items: Item[]) {
   return out;
 }
 
-/** Timestamps an order at `status` would carry, kept inside its deadlines. */
-function lifecycle(
-  status: OrderStatus,
-  placedAt: Date,
-  payMethod: 'cod' | 'card',
-) {
+/** Timestamps an order at `status` would carry. Cash on delivery throughout. */
+function lifecycle(status: OrderStatus, placedAt: Date) {
   const at = (h: number) =>
     new Date(Math.min(placedAt.getTime() + h * HOUR, NOW - 10 * 60_000));
   const reached = (s: OrderStatus[]) => s.includes(status);
-  const paid: PaymentStatus =
-    payMethod === 'card' || status === 'Delivered' ? 'Paid' : 'Due';
   return {
-    pay:
-      status === 'Cancelled' && payMethod === 'card'
-        ? ('Refunded' as const)
-        : paid,
+    paymentMethod: 'cod',
+    pay: status === 'Delivered' ? ('Paid' as const) : ('Due' as const),
     confirmedAt: reached([
       'Confirmed',
       'Packed',
@@ -981,223 +774,176 @@ async function seed(): Promise<void> {
   if (!url) throw new Error('DATABASE_URL is not set');
   const client = postgres(url, { max: 1 });
   const db = drizzle(client, { schema });
-  const passwords: Record<string, string> = {};
+  let partnerPassword = '';
 
   try {
     await db.transaction(async (tx) => {
-      console.log(
-        'Clearing the previous demo set (demo- handles, @example.com accounts only)…',
-      );
-      await clear(tx);
+      const target = await tx.query.shops.findFirst({
+        where: eq(schema.shops.handle, TARGET_HANDLE),
+      });
+      if (!target) throw new Error(`No shop with handle "${TARGET_HANDLE}".`);
+      const sub = await tx.query.subscriptions.findFirst({
+        where: eq(schema.subscriptions.shopId, target.id),
+      });
+      if (!sub)
+        throw new Error(
+          `${target.name} has no billing record; refusing to add metered orders.`,
+        );
+      if (!target.paymentMethods.includes('card'))
+        throw new Error(
+          `${target.name} accepts no online payment, so its products cannot be resold.`,
+        );
+
+      console.log(`Clearing earlier demo content (target: ${target.name})…`);
+      await clear(tx, target);
       if (remove) return;
 
-      console.log('Creating accounts…');
-      const owners = {} as Record<
-        keyof typeof OWNERS,
-        typeof schema.users.$inferSelect
-      >;
-      for (const k of Object.keys(OWNERS) as (keyof typeof OWNERS)[]) {
-        passwords[OWNERS[k].email] = password();
-        owners[k] = await createUser(tx, OWNERS[k], passwords[OWNERS[k].email]);
-      }
+      console.log('Creating the partner shop and demo buyers…');
+      partnerPassword = randomBytes(12).toString('base64url');
+      const mkUser = async (
+        u: { email: string; name: string },
+        pass?: string,
+      ) =>
+        (
+          await tx
+            .insert(schema.users)
+            .values({
+              publicId: generatePublicId(),
+              name: u.name,
+              email: u.email,
+              phone: fakePhone(),
+              passwordHash: pass ? await bcrypt.hash(pass, 12) : null,
+              via: 'email',
+              emailVerified: true,
+              phoneVerified: true,
+            })
+            .returning()
+        )[0];
+      const partnerOwner = await mkUser(PARTNER_OWNER, partnerPassword);
       const buyers = {} as Record<
         keyof typeof BUYERS,
         typeof schema.users.$inferSelect
       >;
       for (const k of Object.keys(BUYERS) as (keyof typeof BUYERS)[])
-        buyers[k] = await createUser(tx, {
+        buyers[k] = await mkUser({
           email: BUYERS[k].email,
           name: BUYERS[k].person,
         });
+      const sw = BRAND_SWATCHES.green;
+      const [partner] = await tx
+        .insert(schema.shops)
+        .values({
+          name: 'Krishi Bazar BD',
+          handle: PARTNER_HANDLE,
+          tagline:
+            'Seeds, inputs and farm tools for growers across Bangladesh.',
+          cat: target.cat,
+          brandId: 'green',
+          brand: sw.c,
+          brandSoft: sw.soft,
+          ownerId: partnerOwner.id,
+          businessType: 'reseller',
+          paymentMethods: ['card', 'cod'],
+          supportPhone: fakePhone(),
+          supportEmail: `support.${PARTNER_HANDLE}@${DOMAIN}`,
+          kycStatus: 'verified',
+        })
+        .returning();
+      await tx.insert(schema.subscriptions).values({
+        shopId: partner.id,
+        ownerId: partnerOwner.id,
+        status: 'active',
+        billingMode: 'credits',
+        currency: 'BDT',
+        commissionBps: COMMISSION_BPS,
+        creditGrantedCents: cents(500_000),
+        meterStartAt: ago(40 * DAY),
+        startedAt: ago(40 * DAY),
+        nextBillingAt: ahead(20 * DAY),
+      });
 
-      console.log('Creating shops…');
-      const retail = await createShop(tx, owners.retail.id, {
-        name: 'Dhaka Daily Mart',
-        handle: HANDLES.retail,
-        tagline:
-          'Pantry staples and local favourites, delivered across Bangladesh.',
-        cat: 'Food & grocery',
-        swatch: 'amber',
-        type: 'retail',
-      });
-      const supplier = await createShop(tx, owners.wholesale.id, {
-        name: 'Shapla Textiles',
-        handle: HANDLES.wholesale,
-        tagline:
-          'Narsingdi-made clothing at factory prices, for shops and resellers.',
-        cat: 'Fashion',
-        swatch: 'blue',
-        type: 'wholesale',
-        verified: true,
-      });
-      const reseller = await createShop(tx, owners.reseller.id, {
-        name: 'Trendy Corner BD',
-        handle: HANDLES.reseller,
-        tagline: 'Hand-picked everyday fashion, delivered to your door.',
-        cat: 'Fashion',
-        swatch: 'rose',
-        type: 'reseller',
-      });
-
-      console.log('Creating catalogues…');
-      const retailProducts = await createProducts(tx, retail.id, RETAIL_ITEMS);
-      const supplierProducts = await createProducts(
+      console.log('Adding catalogues…');
+      const humriProducts = await createProducts(tx, target.id, HUMRI_ITEMS);
+      const partnerProducts = await createProducts(
         tx,
-        supplier.id,
-        SUPPLIER_ITEMS,
+        partner.id,
+        PARTNER_ITEMS,
       );
-
-      console.log('Creating reviews…');
-      const reviewLines: [string, string, number, string][] = [
+      for (const [name, author, rating, body] of [
         [
-          'Chinigura Aromatic Rice 5kg',
-          'Ayesha Siddiqua',
+          'Layer Poultry Feed 50kg',
+          'Abdul Karim',
           5,
-          'Exactly like the rice from my grandmother’s village. The polao smelled amazing.',
+          'Laying went up within two weeks of switching. Bags arrive sealed and dry.',
         ],
         [
-          'Chinigura Aromatic Rice 5kg',
-          'Mehedi Hasan',
+          'Cattle Fattening Feed 25kg',
+          'Mizanur Rahman',
           4,
-          'Good quality, delivery took two days to Chattogram.',
+          'Good weight gain before Eid. Delivery to Bogura took three days.',
         ],
         [
-          'Sundarbans Raw Honey',
-          'Tanvir Ahmed',
+          'Floating Fish Feed 20kg',
+          'Rokeya Begum',
           5,
-          'Thick and real. You can taste the difference from supermarket honey.',
+          'Pellets really float, much less waste in the pond.',
         ],
-        [
-          'Premium Ajwa Dates',
-          'Shirin Akter',
-          5,
-          'Beautiful box, perfect as a gift for my in-laws.',
-        ],
-        [
-          "Men's Cotton Panjabi",
-          'Imran Kabir',
-          5,
-          'Comfortable fabric, stitching is clean. Bought two more for Eid.',
-        ],
-        [
-          "Women's Printed Three-Piece",
-          'Joya Das',
-          4,
-          'Colours are lovely, the orna is a bit thin but fine for summer.',
-        ],
-      ];
-      for (const [name, author, rating, body] of reviewLines) {
-        const p = retailProducts.get(name) ?? supplierProducts.get(name)!;
+      ] as const) {
         await tx.insert(schema.reviews).values({
-          productId: p.id,
+          productId: humriProducts.get(name)!.id,
           author,
           rating,
           body,
           verified: true,
-          createdAt: ago(
-            (3 + reviewLines.indexOf(reviewLines.find((r) => r[0] === name)!)) *
-              DAY,
-          ),
+          createdAt: ago(6 * DAY),
         });
       }
 
-      console.log('Listing supplier products in the reseller store…');
-      const listingByItem = new Map<
+      console.log('Creating reseller listings both ways…');
+      const listing = new Map<
         string,
-        { id: string; sellCents: number; supplyCents: number }
+        {
+          id: string;
+          shop: 'humri' | 'partner';
+          sellCents: number;
+          supplyCents: number;
+        }
       >();
-      for (const r of RESELL) {
-        const p = supplierProducts.get(r.item)!;
+      for (const r of PARTNER_RESELLS) {
+        const p = humriProducts.get(r.item)!;
         const [row] = await tx
           .insert(schema.resellerListings)
           .values({
-            shopId: reseller.id,
+            shopId: partner.id,
+            productId: p.id,
+            sellingPriceCents: cents(r.price),
+            createdAt: ago(30 * DAY),
+          })
+          .returning({ id: schema.resellerListings.id });
+        listing.set(r.item, {
+          id: row.id,
+          shop: 'partner',
+          sellCents: cents(r.price),
+          supplyCents: cents(p.item.reseller!),
+        });
+      }
+      for (const r of HUMRI_RESELLS) {
+        const p = partnerProducts.get(r.item)!;
+        const [row] = await tx
+          .insert(schema.resellerListings)
+          .values({
+            shopId: target.id,
             productId: p.id,
             sellingPriceCents: cents(r.price),
             active: r.active ?? true,
             createdAt: ago(30 * DAY),
           })
           .returning({ id: schema.resellerListings.id });
-        listingByItem.set(r.item, {
+        listing.set(r.item, {
           id: row.id,
+          shop: 'humri',
           sellCents: cents(r.price),
           supplyCents: cents(p.item.reseller!),
-        });
-      }
-
-      const built: Built[] = [];
-      const refs = new Map<string, number>();
-      const nextRef = (shopId: string) => {
-        const n = (refs.get(shopId) ?? 1000) + 1;
-        refs.set(shopId, n);
-        return `#${n}`;
-      };
-      const person = (i: number) => {
-        const [name, area] = PEOPLE[i % PEOPLE.length];
-        return {
-          name,
-          area,
-          email: `demo.${handleize(name)}@${DOMAIN}`,
-          phone: `0100001${String(i).padStart(4, '0')}`,
-        };
-      };
-
-      // Oldest first, so references read in the order things happened.
-      console.log('Creating retail orders…');
-      for (const plan of [...RETAIL_PLANS].sort((a, b) => b.age - a.age)) {
-        const who = person(plan.person);
-        const placedAt = ago(plan.age);
-        const lines = plan.lines.map(([n, qty]) => ({
-          p: retailProducts.get(n)!,
-          qty,
-        }));
-        const deliveryCents = who.area.includes('Dhaka')
-          ? cents(60)
-          : cents(120);
-        const goods = lines.reduce(
-          (s, l) => s + cents(l.p.item.price) * l.qty,
-          0,
-        );
-        const life = lifecycle(plan.status, placedAt, plan.pay);
-        const [order] = await tx
-          .insert(schema.orders)
-          .values({
-            reference: nextRef(retail.id),
-            shopId: retail.id,
-            customerName: who.name,
-            email: who.email,
-            phone: who.phone,
-            qty: lines.reduce((s, l) => s + l.qty, 0),
-            totalCents: goods + deliveryCents,
-            deliveryCents,
-            status: plan.status,
-            paymentMethod: plan.pay,
-            channel: 'Store',
-            commerceMode: 'retail',
-            address: {
-              line: 'House 12, Road 4',
-              area: who.area,
-              pincode: '1205',
-            },
-            placedAt,
-            ...life,
-          })
-          .returning({ id: schema.orders.id });
-        await tx.insert(schema.orderItems).values(
-          lines.map((l) => ({
-            orderId: order.id,
-            productId: l.p.id,
-            name: l.p.item.name,
-            qty: l.qty,
-            units: l.qty,
-            unitPriceCents: cents(l.p.item.price),
-          })),
-        );
-        built.push({
-          shopId: retail.id,
-          ...who,
-          totalCents: goods + deliveryCents,
-          placedAt,
         });
       }
 
@@ -1207,7 +953,7 @@ async function seed(): Promise<void> {
         item: string;
         qty: number;
         kind?: 'bulk' | 'sample';
-        status: 'requested' | 'quoted' | 'accepted' | 'declined' | 'cancelled';
+        status: 'requested' | 'quoted' | 'accepted' | 'declined';
         age: number;
         unit?: number;
         expires?: number;
@@ -1218,129 +964,121 @@ async function seed(): Promise<void> {
       const QUOTES: QuoteSeed[] = [
         {
           buyer: 'rahim',
-          item: "Men's Cotton Panjabi",
+          item: 'Layer Poultry Feed 50kg',
           qty: 400,
           status: 'requested',
           age: 30 * HOUR,
-          ask: 'We need 400 panjabis in white and sky blue for Eid stock. What is your best price with delivery to Chattogram?',
+          ask: 'We need 400 bags of layer feed every month for our 12,000-bird farm. What is your best monthly contract price?',
         },
         {
-          buyer: 'nadia',
-          item: 'Jamdani-Pattern Cotton Saree',
-          qty: 30,
+          buyer: 'fish',
+          item: 'Floating Fish Feed 20kg',
+          qty: 300,
           status: 'requested',
           age: 20 * HOUR,
-          ask: 'Can you do 30 sarees in mixed colours? Wedding season order for our boutique.',
+          ask: 'Stocking season is starting. Can you supply 300 bags to Mymensingh within a week?',
         },
         {
-          buyer: 'nadia',
-          item: "Women's Printed Three-Piece",
+          buyer: 'dairy',
+          item: 'Liquid Calcium Supplement 1L',
           qty: 2,
           kind: 'sample',
           status: 'requested',
           age: 5 * HOUR,
-          ask: 'Could we get 2 samples first to check fabric quality before a bulk order?',
+          ask: 'Could we try 2 bottles on our fresh cows before ordering cartons?',
         },
         {
-          buyer: 'rahim',
-          item: "Kids' Cotton T-Shirt",
-          qty: 800,
+          buyer: 'dairy',
+          item: 'Vitamin & Mineral Premix 1kg',
+          qty: 500,
           status: 'quoted',
           age: 2 * DAY,
-          unit: 200,
+          unit: 355,
           expires: 5 * DAY,
-          ask: 'Looking for 800 kids tees, assorted prints, sizes 4-10.',
+          ask: '500 packs of premix for our feed mill - any better price than the listed tier?',
           thread: [
             [
               'supplier',
-              'We can do ৳200 per piece for 800, packed in dozens. Ready in 6 days.',
-              2 * DAY - 4 * HOUR,
+              'We can do ৳355 per pack for 500, delivered to Bogura in 4 days.',
+              2 * DAY - 3 * HOUR,
             ],
           ],
         },
         {
-          buyer: 'nadia',
-          item: 'Embroidered Winter Shawl',
-          qty: 120,
+          buyer: 'fish',
+          item: 'Floating Fish Feed 20kg',
+          qty: 150,
           status: 'accepted',
           age: 3 * DAY,
-          unit: 1090,
+          unit: 1360,
           expires: 4 * DAY,
-          ask: 'Need 120 shawls for winter. Can you match ৳1,100?',
+          ask: 'Can you match ৳1,350 for 150 bags?',
           thread: [
             [
               'supplier',
-              'We can do ৳1,090 if you take 120. Valid for a week.',
+              '৳1,360 is our best for 150 bags, valid a week.',
               3 * DAY - 2 * HOUR,
             ],
-            [
-              'buyer',
-              'Deal, accepting now. Will check out this week.',
-              2 * DAY,
-            ],
+            ['buyer', 'Accepted. We will check out this week.', 2 * DAY],
           ],
         },
         {
           buyer: 'rahim',
-          item: "Men's Cotton Panjabi",
+          item: 'Layer Poultry Feed 50kg',
           qty: 120,
           status: 'accepted',
           age: 6 * DAY,
-          unit: 880,
+          unit: 2480,
           expires: 1 * DAY,
           used: true,
-          ask: 'Repeat order: 120 panjabis plus lungis. Same price as last time?',
+          ask: 'Repeat order: 120 bags at last month’s price?',
           thread: [
-            [
-              'supplier',
-              'Yes - ৳880 per panjabi for 120 pieces.',
-              6 * DAY - 1 * HOUR,
-            ],
+            ['supplier', 'Yes, ৳2,480 per bag for 120.', 6 * DAY - HOUR],
             ['buyer', 'Accepted, placing the order.', 5 * DAY],
           ],
         },
         {
-          buyer: 'rahim',
-          item: 'Hand-Woven Gamcha (Set of 3)',
-          qty: 2000,
+          buyer: 'dairy',
+          item: 'Cattle Fattening Feed 25kg',
+          qty: 1000,
           status: 'declined',
           age: 10 * DAY,
-          ask: 'Can you do 2000 sets at ৳150?',
+          ask: 'Can you do 1,000 bags at ৳1,000?',
           thread: [
             [
               'supplier',
-              'Sorry, ৳150 is below our cost. Our best for 2000 is ৳175.',
-              10 * DAY - 6 * HOUR,
+              'Sorry, ৳1,000 is below our cost. Our best for 1,000 bags is ৳1,150.',
+              10 * DAY - 5 * HOUR,
             ],
           ],
         },
         {
-          buyer: 'nadia',
-          item: 'Cotton Check Lungi (Pack of 2)',
-          qty: 300,
+          buyer: 'rahim',
+          item: 'Poultry Drinker 5L',
+          qty: 1000,
           status: 'quoted',
           age: 12 * DAY,
-          unit: 370,
+          unit: 128,
           expires: -2 * DAY,
-          ask: '300 packs of lungi for a corporate gift order?',
+          ask: '1,000 drinkers for a new shed?',
           thread: [
             [
               'supplier',
-              '৳370 per pack for 300. Offer valid 10 days.',
-              12 * DAY - 30 * HOUR,
+              '৳128 each for 1,000. Offer valid 10 days.',
+              12 * DAY - 28 * HOUR,
             ],
           ],
         },
       ];
       let wonQuoteId: string | null = null;
       for (const q of QUOTES) {
-        const p = supplierProducts.get(q.item)!;
+        const p = humriProducts.get(q.item)!;
         const createdAt = ago(q.age);
         const [row] = await tx
           .insert(schema.tradeQuotes)
           .values({
             buyerId: buyers[q.buyer].id,
-            shopId: supplier.id,
+            shopId: target.id,
             productId: p.id,
             kind: q.kind ?? 'bulk',
             qty: q.qty,
@@ -1360,184 +1098,204 @@ async function seed(): Promise<void> {
             .values({ quoteId: row.id, sender, text, createdAt: ago(at) });
       }
 
-      console.log('Creating wholesale and reseller orders…');
-      const tierPrice = (it: Item, qty: number) =>
+      console.log('Creating orders…');
+      // Continue each shop's own reference sequence.
+      const [{ n: existing }] = await tx
+        .select({ n: sql<number>`count(*)::int` })
+        .from(schema.orders)
+        .where(eq(schema.orders.shopId, target.id));
+      const refs = new Map<string, number>([
+        [target.id, 1000 + existing],
+        [partner.id, 1000],
+      ]);
+      const nextRef = (shopId: string) => {
+        const n = refs.get(shopId)! + 1;
+        refs.set(shopId, n);
+        return `#${n}`;
+      };
+      const person = (i: number) => {
+        const [name, area] = PEOPLE[i % PEOPLE.length];
+        return {
+          name,
+          area,
+          email: `demo.${handleize(name)}@${DOMAIN}`,
+          phone: `0100001${String(i).padStart(4, '0')}`,
+        };
+      };
+      const tier = (it: Item, qty: number) =>
         [...(it.tiers ?? [])].reverse().find(([min]) => qty >= min)?.[1] ??
         it.price;
-      type Supplied = { placedAt: Date; insert: () => Promise<void> };
-      const supplied: Supplied[] = [];
+      const built: Built[] = [];
+      const jobs: { placedAt: Date; run: () => Promise<void> }[] = [];
+
+      const insertOrder = async (o: {
+        shopId: string;
+        plan: Plan;
+        who: { name: string; email: string; phone: string; area: string };
+        userId?: string;
+        lines: {
+          productId: string;
+          name: string;
+          qty: number;
+          unitCents: number;
+        }[];
+        deliveryCents: number;
+        marginCents?: number;
+        mode: 'wholesale' | 'reseller';
+        resellerShop?: typeof partner;
+        listingId?: string;
+        quoteId?: string | null;
+        dispute?: { buyerId: string; reason: string };
+      }) => {
+        const placedAt = ago(o.plan.age);
+        const goods = o.lines.reduce((s, l) => s + l.unitCents * l.qty, 0);
+        const totalCents = goods + o.deliveryCents + (o.marginCents ?? 0);
+        const [order] = await tx
+          .insert(schema.orders)
+          .values({
+            reference: nextRef(o.shopId),
+            shopId: o.shopId,
+            userId: o.userId,
+            customerName: o.who.name,
+            email: o.who.email,
+            phone: o.who.phone,
+            qty: o.lines.reduce((s, l) => s + l.qty, 0),
+            totalCents,
+            deliveryCents: o.deliveryCents,
+            status: o.plan.status,
+            channel: 'Store',
+            commerceMode: o.mode,
+            buyerShop: o.resellerShop
+              ? {
+                  name: o.resellerShop.name,
+                  handle: o.resellerShop.handle,
+                  supportPhone: o.resellerShop.supportPhone ?? undefined,
+                }
+              : undefined,
+            resellerShopId: o.resellerShop?.id,
+            resellerListingId: o.listingId,
+            resellerMarginCents: o.marginCents ?? 0,
+            tradeQuoteId: o.quoteId ?? null,
+            address: {
+              line: 'Village road, near the bazar',
+              area: o.who.area,
+              pincode: '1700',
+            },
+            placedAt,
+            ...lifecycle(o.plan.status, placedAt),
+          })
+          .returning({ id: schema.orders.id });
+        await tx.insert(schema.orderItems).values(
+          o.lines.map((l) => ({
+            orderId: order.id,
+            productId: l.productId,
+            name: l.name,
+            qty: l.qty,
+            units: l.qty,
+            unitPriceCents: l.unitCents,
+          })),
+        );
+        if (o.dispute)
+          await tx.insert(schema.tradeDisputes).values({
+            orderId: order.id,
+            buyerId: o.dispute.buyerId,
+            shopId: o.shopId,
+            reason: o.dispute.reason,
+            status: 'open',
+            createdAt: ago(o.plan.age - 3 * DAY),
+          });
+        built.push({ shopId: o.shopId, ...o.who, totalCents, placedAt });
+      };
+
       for (const plan of WHOLESALE_PLANS) {
-        const b = BUYERS[plan.buyer];
-        const placedAt = ago(plan.age);
-        supplied.push({
-          placedAt,
-          insert: async () => {
-            const lines = plan.lines.map(([n, qty]) => {
-              const p = supplierProducts.get(n)!;
-              const unit =
-                plan.quote && n === "Men's Cotton Panjabi"
-                  ? 880
-                  : tierPrice(p.item, qty);
-              return { p, qty, unitCents: cents(unit) };
-            });
-            const deliveryCents = cents(450);
-            const goods = lines.reduce((s, l) => s + l.unitCents * l.qty, 0);
-            const life = lifecycle(plan.status, placedAt, plan.pay);
-            const email = b.email;
-            const phone = fakePhone();
-            const [order] = await tx
-              .insert(schema.orders)
-              .values({
-                reference: nextRef(supplier.id),
-                shopId: supplier.id,
-                userId: buyers[plan.buyer].id,
-                customerName: `${b.name} (${b.person})`,
-                email,
-                phone,
-                qty: lines.reduce((s, l) => s + l.qty, 0),
-                totalCents: goods + deliveryCents,
-                deliveryCents,
-                status: plan.status,
-                paymentMethod: plan.pay,
-                channel: 'Store',
-                commerceMode: 'wholesale',
-                tradeQuoteId: plan.quote ? wonQuoteId : null,
-                address: {
-                  line: 'Shop 14, Reazuddin Bazar',
-                  area: b.area,
-                  pincode: '4000',
-                },
-                placedAt,
-                ...life,
-              })
-              .returning({ id: schema.orders.id });
-            await tx.insert(schema.orderItems).values(
-              lines.map((l) => ({
-                orderId: order.id,
-                productId: l.p.id,
-                name: l.p.item.name,
-                qty: l.qty,
-                units: l.qty,
-                unitPriceCents: l.unitCents,
-              })),
-            );
-            if (plan.dispute)
-              await tx.insert(schema.tradeDisputes).values({
-                orderId: order.id,
-                buyerId: buyers[plan.buyer].id,
-                shopId: supplier.id,
-                reason: plan.dispute,
-                status: 'open',
-                createdAt: ago(plan.age - 3 * DAY),
-              });
-            built.push({
-              shopId: supplier.id,
-              name: `${b.name} (${b.person})`,
-              email,
-              phone,
-              area: b.area,
-              totalCents: goods + deliveryCents,
-              placedAt,
+        jobs.push({
+          placedAt: ago(plan.age),
+          run: () => {
+            const b = BUYERS[plan.buyer];
+            return insertOrder({
+              shopId: target.id,
+              plan,
+              mode: 'wholesale',
+              userId: buyers[plan.buyer].id,
+              who: {
+                name: `${b.name} (${b.person})`,
+                email: b.email,
+                phone: buyers[plan.buyer].phone ?? fakePhone(),
+                area: b.area,
+              },
+              lines: plan.lines.map(([n, qty]) => {
+                const p = humriProducts.get(n)!;
+                return {
+                  productId: p.id,
+                  name: n,
+                  qty,
+                  unitCents: cents(plan.quote ? 2480 : tier(p.item, qty)),
+                };
+              }),
+              deliveryCents: cents(1500),
+              quoteId: plan.quote ? wonQuoteId : null,
+              dispute: plan.dispute
+                ? { buyerId: buyers[plan.buyer].id, reason: plan.dispute }
+                : undefined,
             });
           },
         });
       }
-      for (const plan of RESELL_PLANS) {
-        const placedAt = ago(plan.age);
-        supplied.push({
-          placedAt,
-          insert: async () => {
-            const who = person(plan.person);
-            const [[name, qty]] = plan.lines;
-            const extra = plan.lines.slice(1);
-            const listing = listingByItem.get(name)!;
-            const p = supplierProducts.get(name)!;
-            // Real checkout: lines at supply price, the reseller's margin on top.
-            let marginCents = (listing.sellCents - listing.supplyCents) * qty;
-            const lines = [{ p, qty, unitCents: listing.supplyCents }];
-            for (const [n, q] of extra) {
-              const l = listingByItem.get(n)!;
-              marginCents += (l.sellCents - l.supplyCents) * q;
-              lines.push({
-                p: supplierProducts.get(n)!,
-                qty: q,
-                unitCents: l.supplyCents,
-              });
-            }
-            const deliveryCents = who.area.includes('Dhaka')
-              ? cents(60)
-              : cents(120);
-            const goods = lines.reduce((s, l) => s + l.unitCents * l.qty, 0);
-            const life = lifecycle(plan.status, placedAt, plan.pay);
-            const [order] = await tx
-              .insert(schema.orders)
-              .values({
-                reference: nextRef(supplier.id),
-                shopId: supplier.id,
-                customerName: who.name,
-                email: who.email,
-                phone: who.phone,
-                qty: lines.reduce((s, l) => s + l.qty, 0),
-                totalCents: goods + deliveryCents + marginCents,
-                deliveryCents,
-                status: plan.status,
-                paymentMethod: plan.pay,
-                channel: 'Store',
-                commerceMode: 'reseller',
-                buyerShop: {
-                  name: reseller.name,
-                  handle: reseller.handle,
-                  supportPhone: reseller.supportPhone ?? undefined,
-                },
-                resellerShopId: reseller.id,
-                resellerListingId: listing.id,
-                resellerMarginCents: marginCents,
-                address: {
-                  line: 'Flat 3B, Lake View',
-                  area: who.area,
-                  pincode: '1207',
-                },
-                placedAt,
-                ...life,
-              })
-              .returning({ id: schema.orders.id });
-            await tx.insert(schema.orderItems).values(
-              lines.map((l) => ({
-                orderId: order.id,
-                productId: l.p.id,
-                name: l.p.item.name,
-                qty: l.qty,
-                units: l.qty,
-                unitPriceCents: l.unitCents,
-              })),
-            );
-            built.push({
-              shopId: supplier.id,
-              ...who,
-              totalCents: goods + deliveryCents + marginCents,
-              placedAt,
-            });
-          },
-        });
-      }
-      // One reference sequence for the supplier, oldest order first.
-      for (const s of supplied.sort(
+      const resold = (
+        plan: Plan & { person: number },
+        supplierId: string,
+        resellerShop: typeof partner,
+        products: typeof humriProducts,
+      ) => ({
+        placedAt: ago(plan.age),
+        run: () => {
+          const lines = plan.lines.map(([n, qty]) => ({
+            l: listing.get(n)!,
+            p: products.get(n)!,
+            qty,
+          }));
+          return insertOrder({
+            shopId: supplierId,
+            plan,
+            mode: 'reseller',
+            who: person(plan.person),
+            resellerShop,
+            listingId: lines[0].l.id,
+            lines: lines.map(({ l, p, qty }) => ({
+              productId: p.id,
+              name: p.item.name,
+              qty,
+              unitCents: l.supplyCents,
+            })),
+            marginCents: lines.reduce(
+              (s, { l, qty }) => s + (l.sellCents - l.supplyCents) * qty,
+              0,
+            ),
+            deliveryCents: cents(120),
+          });
+        },
+      });
+      for (const plan of VIA_PARTNER)
+        jobs.push(resold(plan, target.id, partner, humriProducts));
+      for (const plan of HUMRI_RESOLD)
+        jobs.push(resold(plan, partner.id, target, partnerProducts));
+      for (const j of jobs.sort(
         (a, b) => a.placedAt.getTime() - b.placedAt.getTime(),
       ))
-        await s.insert();
+        await j.run();
 
-      console.log('Building customer records…');
-      const byKey = new Map<string, Built[]>();
+      console.log('Recording customers…');
+      const groups = new Map<string, Built[]>();
       for (const b of built)
-        byKey.set(`${b.shopId}|${b.email}`, [
-          ...(byKey.get(`${b.shopId}|${b.email}`) ?? []),
+        groups.set(`${b.shopId}|${b.email}`, [
+          ...(groups.get(`${b.shopId}|${b.email}`) ?? []),
           b,
         ]);
-      for (const list of byKey.values()) {
+      for (const list of groups.values()) {
         const first = list.reduce((a, b) => (a.placedAt < b.placedAt ? a : b));
         const last = list.reduce((a, b) => (a.placedAt > b.placedAt ? a : b));
         const spent = list.reduce((s, b) => s + b.totalCents, 0);
-        const [customer] = await tx
+        const [c] = await tx
           .insert(schema.customers)
           .values({
             shopId: first.shopId,
@@ -1559,7 +1317,7 @@ async function seed(): Promise<void> {
           .returning({ id: schema.customers.id });
         await tx
           .update(schema.orders)
-          .set({ customerId: customer.id })
+          .set({ customerId: c.id })
           .where(
             and(
               eq(schema.orders.shopId, first.shopId),
@@ -1568,17 +1326,31 @@ async function seed(): Promise<void> {
           );
       }
 
+      // Keep the target's sales credit where it was (see the header).
+      const offset = built
+        .filter((b) => b.shopId === target.id)
+        .reduce((s, b) => s + b.totalCents, 0);
+      await tx
+        .update(schema.subscriptions)
+        .set({
+          creditGrantedCents: sql`${schema.subscriptions.creditGrantedCents} + ${offset}`,
+        })
+        .where(eq(schema.subscriptions.shopId, target.id));
+
+      const onTarget = built.filter((b) => b.shopId === target.id).length;
       console.log(
-        `\n✅ Demo set ready: ${built.length} orders, ${QUOTES.length} quotes, ${RESELL.length} reseller listings.\n`,
+        `\n✅ ${target.name}: ${HUMRI_ITEMS.length} trade products, ${onTarget} orders to ship, ${HUMRI_RESOLD.length} resold orders, ${QUOTES.length} quotes, ${HUMRI_RESELLS.length} resell listings.`,
       );
-      console.log('Storefronts:');
-      for (const [type, handle] of Object.entries(HANDLES))
-        console.log(`  ${type.padEnd(9)} https://hoomri.com/shop/${handle}`);
-      console.log('\nSeller logins (new random passwords - shown once):');
+      console.log(
+        `   Credit grant raised by ৳${offset / 100} to cover the demo orders (reversed on --remove).`,
+      );
+      console.log(`   Partner: https://hoomri.com/shop/${PARTNER_HANDLE}`);
       if (dryRun) throw new DryRun();
-      for (const [email, pass] of Object.entries(passwords))
-        console.log(`  ${email.padEnd(32)} ${pass}`);
     });
+    if (partnerPassword && !remove)
+      console.log(
+        `   Partner login: ${PARTNER_OWNER.email}  ${partnerPassword}`,
+      );
   } catch (e) {
     if (!(e instanceof DryRun)) throw e;
     console.log(
