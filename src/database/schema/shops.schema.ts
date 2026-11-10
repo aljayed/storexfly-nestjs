@@ -188,6 +188,14 @@ export const shops = pgTable(
     // shop drowning in fake Cash-on-Delivery orders can shut the door on
     // throwaway ones.
     requireBuyerLogin: boolean('require_buyer_login').notNull().default(false),
+    // How the seller runs this shop: B2C retail, B2B wholesale supply, or
+    // reselling other suppliers' products. Shapes the console (theme, menu,
+    // dashboard, items and orders) - never what buyers may purchase, which
+    // stays per product (products.commerce).
+    businessType: varchar('business_type', { length: 16 })
+      .$type<'retail' | 'wholesale' | 'reseller'>()
+      .notNull()
+      .default('retail'),
     // Bank/wallet account monthly settlements are transferred to.
     payoutBank: jsonb('payout_bank').$type<PayoutBank>(),
     // ── Business verification (trade-license KYC) ──────────────────

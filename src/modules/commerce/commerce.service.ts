@@ -6,11 +6,12 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { and, asc, desc, eq, inArray, ne } from 'drizzle-orm';
+import { and, asc, count, desc, eq, gte, inArray, isNotNull, ne, sql } from 'drizzle-orm';
 import { DRIZZLE } from '../../database/database.constants';
 import type { DrizzleDB } from '../../database/drizzle.types';
 import {
   orders,
+  orderItems,
   reviews,
   paymentMethods,
   products,
@@ -162,6 +163,7 @@ export class CommerceService {
       stock: product.stock,
       active: listing.active,
       available:
+        product.stock > 0 &&
         supplier.live &&
         product.listingType === 'sale' &&
         product.commerce.channels.includes('reseller') &&
@@ -171,6 +173,7 @@ export class CommerceService {
           supplier.paymentMethods.includes(method.kind),
         ),
       supplierName: supplier.name,
+      supplierHandle: supplier.handle,
       supplierVerified: supplier.kycStatus === 'verified',
       sellingPrice: listing.sellingPriceCents / 100,
       supplyPrice: (product.commerce.resellerPriceCents ?? 0) / 100,
@@ -203,6 +206,39 @@ export class CommerceService {
       .set({ active: dto.active ?? listing.active })
       .where(eq(resellerListings.id, id));
     return { ok: true };
+  }
+  /**
+   * Apply one pricing rule across many listings. Each price goes through the
+   * same checks as a single edit (supplier still open to resellers, price
+   * covers supply), and one refusal never blocks the rest - the reseller is
+   * told which listings kept their old price and why.
+   */
+  async repriceListings(
+    shopId: string,
+    items: { id: string; sellingPrice: number }[],
+  ) {
+    const seen = new Set<string>();
+    const results: { id: string; ok: boolean; error?: string }[] = [];
+    for (const item of items) {
+      if (seen.has(item.id)) continue;
+      seen.add(item.id);
+      try {
+        await this.updateListing(shopId, item.id, {
+          sellingPrice: item.sellingPrice,
+        });
+        results.push({ id: item.id, ok: true });
+      } catch (e) {
+        results.push({
+          id: item.id,
+          ok: false,
+          error: e instanceof Error ? e.message : 'Could not update',
+        });
+      }
+    }
+    return {
+      updated: results.filter((r) => r.ok).length,
+      failed: results.filter((r) => !r.ok),
+    };
   }
   async publicListing(id: string) {
     const listing = await this.db.query.resellerListings.findFirst({
@@ -334,23 +370,233 @@ export class CommerceService {
     };
   }
   async resellerOrders(shopId: string) {
-    const rows = await this.db.query.orders.findMany({
-      where: eq(orders.resellerShopId, shopId),
-      orderBy: desc(orders.placedAt),
-      limit: 200,
-    });
-    return rows.map((o) => ({
+    const rows = await this.db
+      .select({ order: orders, supplierName: shops.name, supplierHandle: shops.handle })
+      .from(orders)
+      .innerJoin(shops, eq(shops.id, orders.shopId))
+      .where(and(eq(orders.resellerShopId, shopId), ne(orders.pay, 'Pending')))
+      .orderBy(desc(orders.placedAt))
+      .limit(200);
+    const items = rows.length
+      ? await this.db
+          .select({ orderId: orderItems.orderId, name: orderItems.name, qty: orderItems.qty, variant: orderItems.variant })
+          .from(orderItems)
+          .where(and(inArray(orderItems.orderId, rows.map((r) => r.order.id)), isNotNull(orderItems.productId)))
+      : [];
+    return rows.map(({ order: o, supplierName, supplierHandle }) => ({
       id: o.id,
       reference: o.reference,
       customer: o.customerName,
+      phone: o.phone,
+      area: o.address?.area ?? null,
       status: o.status,
       pay: o.pay,
       total: o.totalCents / 100,
       margin: o.resellerMarginCents / 100,
       placedAt: o.placedAt,
       courierTrackingCode: o.courierTrackingCode,
+      supplierName,
+      supplierHandle,
+      items: items
+        .filter((i) => i.orderId === o.id)
+        .map(({ name, qty, variant }) => ({ name, qty, variant })),
     }));
   }
+
+  /**
+   * One read for the console dashboards. Both sides of the network are
+   * answered for the same shop - what it supplies (wholesale buyers and the
+   * resellers carrying its products) and what it resells - so a shop that
+   * switches business type sees its numbers straight away.
+   */
+  async summary(shopId: string) {
+    const DAY = 86_400_000;
+    const now = Date.now();
+    const since30 = new Date(now - 30 * DAY);
+    const since14 = new Date(now - 13 * DAY);
+    since14.setUTCHours(0, 0, 0, 0);
+    const paid = sql`${orders.pay} = 'Paid' and ${orders.status} <> 'Cancelled'`;
+
+    const [
+      catalog,
+      partnerRows,
+      supplierModes,
+      supplierDaily,
+      quoteRows,
+      myListings,
+      resold,
+      resoldDaily,
+      topResold,
+      openCases,
+    ] = await Promise.all([
+      this.db
+        .select({
+          id: products.id,
+          name: products.name,
+          image: sql<string | null>`${products.images}[1]`,
+          stock: products.stock,
+          priceCents: products.priceCents,
+          commerce: products.commerce,
+        })
+        .from(products)
+        .where(and(eq(products.shopId, shopId), eq(products.listingType, 'sale'))),
+      // Shops reselling this shop's products.
+      this.db
+        .select({
+          shopId: resellerListings.shopId,
+          name: shops.name,
+          handle: shops.handle,
+          verified: shops.kycStatus,
+          listings: count(),
+          active: sql<number>`count(*) filter (where ${resellerListings.active})`.mapWith(Number),
+          since: sql<Date>`min(${resellerListings.createdAt})`,
+        })
+        .from(resellerListings)
+        .innerJoin(products, eq(products.id, resellerListings.productId))
+        .innerJoin(shops, eq(shops.id, resellerListings.shopId))
+        .where(eq(products.shopId, shopId))
+        .groupBy(resellerListings.shopId, shops.name, shops.handle, shops.kycStatus),
+      // Trade this shop fulfilled as the supplier, last 30 days.
+      this.db
+        .select({
+          mode: orders.commerceMode,
+          orders: count(),
+          // Qualified by hand: inside the subquery a bare "id" would bind to order_items.
+          units: sql<number>`coalesce(sum((select sum(oi.qty) from order_items oi where oi.order_id = "orders"."id" and oi.product_id is not null)), 0)`.mapWith(Number),
+          revenueCents: sql<number>`coalesce(sum(${orders.totalCents} - ${orders.resellerMarginCents}) filter (where ${paid}), 0)`.mapWith(Number),
+          open: sql<number>`count(*) filter (where ${orders.status} in ('New','Confirmed','Packed'))`.mapWith(Number),
+        })
+        .from(orders)
+        .where(and(eq(orders.shopId, shopId), ne(orders.commerceMode, 'retail'), ne(orders.pay, 'Pending'), gte(orders.placedAt, since30)))
+        .groupBy(orders.commerceMode),
+      this.db
+        .select({
+          day: sql<string>`to_char(date_trunc('day', ${orders.placedAt} at time zone 'UTC'), 'YYYY-MM-DD')`,
+          cents: sql<number>`coalesce(sum(${orders.totalCents} - ${orders.resellerMarginCents}) filter (where ${paid}), 0)`.mapWith(Number),
+          orders: count(),
+        })
+        .from(orders)
+        .where(and(eq(orders.shopId, shopId), ne(orders.commerceMode, 'retail'), ne(orders.pay, 'Pending'), gte(orders.placedAt, since14)))
+        .groupBy(sql`1`),
+      this.db
+        .select({ status: tradeQuotes.status, n: count(), expired: sql<number>`count(*) filter (where ${tradeQuotes.expiresAt} <= now() and ${tradeQuotes.usedAt} is null)`.mapWith(Number), used: sql<number>`count(*) filter (where ${tradeQuotes.usedAt} is not null)`.mapWith(Number), valueCents: sql<number>`coalesce(sum(${tradeQuotes.unitPriceCents} * ${tradeQuotes.qty}) filter (where ${tradeQuotes.usedAt} is null and (${tradeQuotes.expiresAt} is null or ${tradeQuotes.expiresAt} > now())), 0)`.mapWith(Number) })
+        .from(tradeQuotes)
+        .where(eq(tradeQuotes.shopId, shopId))
+        .groupBy(tradeQuotes.status),
+      // What this shop resells.
+      this.db
+        .select({ total: count(), active: sql<number>`count(*) filter (where ${resellerListings.active})`.mapWith(Number), suppliers: sql<number>`count(distinct ${products.shopId})`.mapWith(Number) })
+        .from(resellerListings)
+        .innerJoin(products, eq(products.id, resellerListings.productId))
+        .where(eq(resellerListings.shopId, shopId)),
+      this.db
+        .select({
+          orders: count(),
+          marginCents: sql<number>`coalesce(sum(${orders.resellerMarginCents}) filter (where ${paid}), 0)`.mapWith(Number),
+          earnedCents: sql<number>`coalesce(sum(${orders.resellerMarginCents}) filter (where ${paid} and ${orders.status} = 'Delivered'), 0)`.mapWith(Number),
+          salesCents: sql<number>`coalesce(sum(${orders.totalCents}) filter (where ${paid}), 0)`.mapWith(Number),
+          inTransit: sql<number>`count(*) filter (where ${orders.status} in ('New','Confirmed','Packed','HandedOver','Shipped'))`.mapWith(Number),
+        })
+        .from(orders)
+        .where(and(eq(orders.resellerShopId, shopId), ne(orders.pay, 'Pending'), gte(orders.placedAt, since30))),
+      this.db
+        .select({
+          day: sql<string>`to_char(date_trunc('day', ${orders.placedAt} at time zone 'UTC'), 'YYYY-MM-DD')`,
+          cents: sql<number>`coalesce(sum(${orders.resellerMarginCents}) filter (where ${paid}), 0)`.mapWith(Number),
+          orders: count(),
+        })
+        .from(orders)
+        .where(and(eq(orders.resellerShopId, shopId), ne(orders.pay, 'Pending'), gte(orders.placedAt, since14)))
+        .groupBy(sql`1`),
+      this.db
+        .select({
+          listingId: orders.resellerListingId,
+          orders: count(),
+          marginCents: sql<number>`coalesce(sum(${orders.resellerMarginCents}) filter (where ${paid}), 0)`.mapWith(Number),
+        })
+        .from(orders)
+        .where(and(eq(orders.resellerShopId, shopId), ne(orders.pay, 'Pending'), gte(orders.placedAt, since30)))
+        .groupBy(orders.resellerListingId)
+        .orderBy(desc(count()))
+        .limit(5),
+      this.db
+        .select({ n: count() })
+        .from(tradeDisputes)
+        .where(and(eq(tradeDisputes.shopId, shopId), ne(tradeDisputes.status, 'resolved'))),
+    ]);
+
+    const days = Array.from({ length: 14 }, (_, i) => new Date(since14.getTime() + i * DAY).toISOString().slice(0, 10));
+    const series = (rows: { day: string; cents: number; orders: number }[]) =>
+      days.map((day) => {
+        const hit = rows.find((r) => r.day === day);
+        return { day, value: (hit?.cents ?? 0) / 100, orders: hit?.orders ?? 0 };
+      });
+    const mode = (m: string) => supplierModes.find((r) => r.mode === m);
+    const quotes = Object.fromEntries(quoteRows.map((r) => [r.status, r]));
+    const carried = new Map<string, number>();
+    if (catalog.length) {
+      const rows = await this.db
+        .select({ productId: resellerListings.productId, n: count() })
+        .from(resellerListings)
+        .where(and(inArray(resellerListings.productId, catalog.map((p) => p.id)), eq(resellerListings.active, true)))
+        .groupBy(resellerListings.productId);
+      for (const r of rows) carried.set(r.productId, r.n);
+    }
+    const topIds = topResold.map((t) => t.listingId).filter((id): id is string => !!id);
+    const topNames = topIds.length
+      ? await this.db
+          .select({ id: resellerListings.id, name: products.name, image: sql<string | null>`${products.images}[1]` })
+          .from(resellerListings)
+          .innerJoin(products, eq(products.id, resellerListings.productId))
+          .where(inArray(resellerListings.id, topIds))
+      : [];
+    const r = resold[0];
+    const l = myListings[0];
+    return {
+      supplier: {
+        wholesaleProducts: catalog.filter((p) => p.commerce.channels.includes('wholesale')).length,
+        resellableProducts: catalog.filter((p) => p.commerce.channels.includes('reseller')).length,
+        catalogProducts: catalog.length,
+        tradeReadyProducts: catalog.filter((p) => p.commerce.channels.some((c) => c !== 'retail')).length,
+        lowStock: catalog
+          .filter((p) => p.commerce.channels.some((c) => c !== 'retail') && p.stock < Math.max(10, p.commerce.wholesaleMoq ?? 1))
+          .map((p) => ({ id: p.id, name: p.name, image: p.image, stock: p.stock, moq: p.commerce.wholesaleMoq ?? 1 }))
+          .slice(0, 6),
+        partners: partnerRows
+          .map((p) => ({ ...p, verified: p.verified === 'verified' }))
+          .sort((a, b) => b.active - a.active),
+        carriedBy: Object.fromEntries(carried),
+        wholesale30d: { orders: mode('wholesale')?.orders ?? 0, units: mode('wholesale')?.units ?? 0, revenue: (mode('wholesale')?.revenueCents ?? 0) / 100, open: mode('wholesale')?.open ?? 0 },
+        dropship30d: { orders: mode('reseller')?.orders ?? 0, units: mode('reseller')?.units ?? 0, revenue: (mode('reseller')?.revenueCents ?? 0) / 100, open: mode('reseller')?.open ?? 0 },
+        quotes: {
+          requested: quotes.requested?.n ?? 0,
+          quoted: (quotes.quoted?.n ?? 0) - (quotes.quoted?.expired ?? 0),
+          accepted: (quotes.accepted?.n ?? 0) - (quotes.accepted?.used ?? 0) - (quotes.accepted?.expired ?? 0),
+          won: quotes.accepted?.used ?? 0,
+          lost: (quotes.declined?.n ?? 0) + (quotes.cancelled?.n ?? 0) + (quotes.quoted?.expired ?? 0) + (quotes.accepted?.expired ?? 0),
+          pipelineValue: ((quotes.quoted?.valueCents ?? 0) + (quotes.accepted?.valueCents ?? 0)) / 100,
+        },
+        openCases: openCases[0]?.n ?? 0,
+        series: series(supplierDaily),
+      },
+      reseller: {
+        listings: l?.total ?? 0,
+        activeListings: l?.active ?? 0,
+        suppliers: l?.suppliers ?? 0,
+        orders30d: r?.orders ?? 0,
+        sales30d: (r?.salesCents ?? 0) / 100,
+        margin30d: (r?.marginCents ?? 0) / 100,
+        earned30d: (r?.earnedCents ?? 0) / 100,
+        inTransit: r?.inTransit ?? 0,
+        top: topResold.map((t) => {
+          const named = topNames.find((n) => n.id === t.listingId);
+          return { listingId: t.listingId, name: named?.name ?? '-', image: named?.image ?? null, orders: t.orders, margin: t.marginCents / 100 };
+        }),
+        series: series(resoldDaily),
+      },
+    };
+  }
+
   async buyerOrders(buyerId: string) {
     const rows = await this.db
       .select({ order: orders, currency: shops.currency })

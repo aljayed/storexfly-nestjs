@@ -1,5 +1,8 @@
 import { Transform, Type } from 'class-transformer';
 import {
+  ArrayMaxSize,
+  ArrayMinSize,
+  IsArray,
   IsBoolean,
   IsIn,
   IsInt,
@@ -12,6 +15,7 @@ import {
   MaxLength,
   Min,
   MinLength,
+  ValidateNested,
 } from 'class-validator';
 export class ResellerListingDto {
   @IsUUID() productId!: string;
@@ -29,6 +33,23 @@ export class UpdateResellerListingDto {
   @Max(10_000_000)
   sellingPrice?: number;
   @IsOptional() @IsBoolean() active?: boolean;
+}
+export class RepriceItemDto {
+  @IsUUID() id!: string;
+  @Type(() => Number)
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0.01)
+  @Max(10_000_000)
+  sellingPrice!: number;
+}
+/** Several listings repriced in one go (a pricing rule applied to a view). */
+export class RepriceListingsDto {
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(200)
+  @ValidateNested({ each: true })
+  @Type(() => RepriceItemDto)
+  items!: RepriceItemDto[];
 }
 export class RequestQuoteDto {
   @IsUUID() productId!: string;

@@ -48,6 +48,8 @@ export class ShopResponse {
     description: 'Accept orders only from buyers who are signed in',
   })
   requireBuyerLogin!: boolean;
+  @ApiProperty({ enum: ['retail', 'wholesale', 'reseller'] })
+  businessType!: 'retail' | 'wholesale' | 'reseller';
   @ApiProperty({ enum: ['free', 'paid'] }) plan!: string;
   /**
    * How long this shop takes to deliver, in days. Public, unlike the pickup
@@ -137,6 +139,7 @@ export class ShopResponse {
       paymentMethods: row.paymentMethods,
       codAdvanceEnabled: row.codAdvanceEnabled,
       requireBuyerLogin: row.requireBuyerLogin,
+      businessType: row.businessType ?? 'retail',
       plan: row.plan,
       deliveryInsideDays: row.deliveryInsideDays,
       deliveryOutsideDays: row.deliveryOutsideDays,

@@ -165,6 +165,14 @@ export class UpdateShopDto extends DeliverySettingsDto {
   @IsBoolean()
   requireBuyerLogin?: boolean;
 
+  @ApiPropertyOptional({
+    enum: ['retail', 'wholesale', 'reseller'],
+    description: 'How this shop is run - shapes the seller console',
+  })
+  @IsOptional()
+  @IsIn(['retail', 'wholesale', 'reseller'])
+  businessType?: 'retail' | 'wholesale' | 'reseller';
+
   // Storefront hero banner images as data URLs (or hosted URLs). Replaces the
   // whole set; an empty array clears all banners. Capped to keep the row small.
   @ApiPropertyOptional({

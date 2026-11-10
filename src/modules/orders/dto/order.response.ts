@@ -78,6 +78,8 @@ export class OrderAdjustmentResponse {
 export class OrderResponse {
   @ApiPropertyOptional() resellerStore?: { name: string; handle: string; supportPhone?: string; supportEmail?: string };
   @ApiProperty() resellerMargin!: number;
+  @ApiProperty({ description: 'Placed from an accepted wholesale quotation' })
+  fromQuote!: boolean;
   @ApiProperty({ enum: ['retail', 'reseller', 'wholesale'] }) commerceMode!: string;
   @ApiProperty({ example: '#1042', description: 'Human-facing reference' })
   id!: string;
@@ -196,6 +198,7 @@ export class OrderResponse {
       commerceMode: row.commerceMode ?? 'retail',
       resellerStore: row.buyerShop ?? undefined,
       resellerMargin: centsToDollars(row.resellerMarginCents ?? 0),
+      fromQuote: !!row.tradeQuoteId,
       id: row.reference,
       shopId: row.shopId,
       customer: row.customerName,

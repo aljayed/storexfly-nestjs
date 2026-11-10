@@ -736,6 +736,13 @@
       "when": 1794960000000,
       "tag": "0107_commerce_channels",
       "breakpoints": true
+    },
+    {
+      "idx": 108,
+      "version": "7",
+      "when": 1795046400000,
+      "tag": "0108_shop_business_type",
+      "breakpoints": true
     }
   ]
 }

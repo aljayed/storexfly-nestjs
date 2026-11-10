@@ -687,6 +687,9 @@ export class ShopsService {
     if (dto.requireBuyerLogin !== undefined) {
       patch.requireBuyerLogin = dto.requireBuyerLogin;
     }
+    if (dto.businessType !== undefined) {
+      patch.businessType = dto.businessType;
+    }
     // The buyer-facing delivery window. Deliberately not in `deliveryKeys`
     // below: those are the courier pickup address, and validating a whole
     // pickup store because a seller changed "5 days" to "4" would refuse a

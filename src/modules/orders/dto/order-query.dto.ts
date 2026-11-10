@@ -12,6 +12,9 @@ type SalesChannel = (typeof salesChannelEnum.enumValues)[number];
 export const ORDER_SORTS = ['newest', 'oldest', 'total'] as const;
 export type OrderSort = (typeof ORDER_SORTS)[number];
 
+export const ORDER_MODES = ['retail', 'reseller', 'wholesale', 'trade'] as const;
+export type OrderModeFilter = (typeof ORDER_MODES)[number];
+
 export class OrderQueryDto extends PaginationQueryDto {
   @ApiPropertyOptional({ enum: orderStatusEnum.enumValues })
   @IsOptional()
@@ -28,6 +31,12 @@ export class OrderQueryDto extends PaginationQueryDto {
   @IsString()
   @MaxLength(120)
   q?: string;
+
+  /** Which selling channel: one mode, or `trade` for reseller + wholesale. */
+  @ApiPropertyOptional({ enum: ORDER_MODES })
+  @IsOptional()
+  @IsEnum(ORDER_MODES)
+  commerceMode?: OrderModeFilter;
 
   @ApiPropertyOptional({ enum: ORDER_SORTS, default: 'newest' })
   @IsOptional()

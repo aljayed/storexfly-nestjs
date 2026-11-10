@@ -2210,12 +2210,24 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
       channel?: SalesChannel;
       q?: string;
       sort?: 'newest' | 'oldest' | 'total';
+      commerceMode?: 'retail' | 'reseller' | 'wholesale' | 'trade';
       page: number;
       limit: number;
       offset: number;
     },
   ): Promise<OrderListResponse> {
-    const visible = and(eq(orders.shopId, shopId), ne(orders.pay, 'Pending'))!;
+    // The channel narrows the whole envelope - rows, tab counts and revenue -
+    // so a wholesale screen's numbers describe wholesale alone.
+    const mode = query.commerceMode;
+    const visible = and(
+      eq(orders.shopId, shopId),
+      ne(orders.pay, 'Pending'),
+      mode === 'trade'
+        ? ne(orders.commerceMode, 'retail')
+        : mode
+          ? eq(orders.commerceMode, mode)
+          : undefined,
+    )!;
     const conditions = [visible];
     if (query.status) conditions.push(eq(orders.status, query.status));
     if (query.channel) conditions.push(eq(orders.channel, query.channel));

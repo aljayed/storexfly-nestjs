@@ -25,6 +25,7 @@ import {
   RequestQuoteDto,
   ResolveDisputeDto,
   RespondQuoteDto,
+  RepriceListingsDto,
   ResellerListingDto,
   TradeMessageDto,
   UpdateResellerListingDto,
@@ -110,12 +111,24 @@ export class CommerceAdminController {
   ) {
     return this.service.importListing(shopId, dto);
   }
+  // Declared before `listings/:id` so the literal path is never read as an id.
+  @RequirePerm('items.edit') @Post('listings/reprice') reprice(
+    @Param('shopId', ParseUUIDPipe) shopId: string,
+    @Body() dto: RepriceListingsDto,
+  ) {
+    return this.service.repriceListings(shopId, dto.items);
+  }
   @RequirePerm('items.edit') @Patch('listings/:id') update(
     @Param('shopId', ParseUUIDPipe) shopId: string,
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: UpdateResellerListingDto,
   ) {
     return this.service.updateListing(shopId, id, dto);
+  }
+  @RequirePerm('reports.view') @Get('summary') summary(
+    @Param('shopId', ParseUUIDPipe) shopId: string,
+  ) {
+    return this.service.summary(shopId);
   }
   @RequirePerm('orders.manage') @Get('orders') orders(
     @Param('shopId', ParseUUIDPipe) shopId: string,
