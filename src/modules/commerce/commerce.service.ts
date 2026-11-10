@@ -182,6 +182,16 @@ export class CommerceService {
           (product.commerce.resellerPriceCents ?? 0)) /
         100,
       sharePath: `/shop/${target?.handle}/p/resell-${listing.id}`,
+      // For the listing's detail view. Images are capped: they can be data
+      // URLs, and this list loads in full.
+      images: (product.images ?? []).slice(0, 4),
+      slug: product.slug,
+      blurb: product.blurb,
+      unit: product.unit,
+      cat: product.cat,
+      emoji: product.emoji,
+      tone: product.tone,
+      supplierRetailPrice: product.priceCents / 100,
     }));
   }
   async updateListing(
