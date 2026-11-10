@@ -85,3 +85,18 @@ describe('resellerVariantCombinations', () => {
       resellerVariantCombinations(product, 35000).map((v) => v.priceCents),
     ).toEqual([35000, 0]));
 });
+
+describe('validateCommerce price floor', () => {
+  it('refuses a zero supply price for resellers', () =>
+    expect(() =>
+      validateCommerce({ channels: ['reseller'], resellerPriceCents: 0 }),
+    ).toThrow('supply price'));
+  it('refuses a free wholesale tier', () =>
+    expect(() =>
+      validateCommerce({
+        channels: ['wholesale'],
+        wholesaleMoq: 10,
+        wholesaleTiers: [{ minQty: 10, unitPriceCents: 0 }],
+      }),
+    ).toThrow('Give every wholesale tier a price.'));
+});

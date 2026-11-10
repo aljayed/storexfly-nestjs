@@ -33,7 +33,7 @@ export function validateCommerce(policy: CommercePolicy): CommercePolicy {
   }
   if (
     policy.channels.includes('reseller') &&
-    policy.resellerPriceCents === undefined
+    !policy.resellerPriceCents
   ) {
     throw new BadRequestException('Reseller products need a supply price.');
   }
@@ -66,6 +66,12 @@ export function validateCommerce(policy: CommercePolicy): CommercePolicy {
         'Wholesale tiers need unique quantities and prices that do not increase with quantity.',
       );
     }
+  }
+  if (
+    policy.channels.includes('wholesale') &&
+    tiers.some((tier) => tier.unitPriceCents <= 0)
+  ) {
+    throw new BadRequestException('Give every wholesale tier a price.');
   }
   if (
     policy.channels.includes('wholesale') &&
