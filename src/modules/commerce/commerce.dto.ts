@@ -38,11 +38,21 @@ export class UpdateResellerListingDto {
 export class SourcingQueryDto {
   @IsOptional() @IsString() @MaxLength(80) q?: string;
   @IsOptional() @IsString() @MaxLength(80) category?: string;
+  /** A supplier's shop handle: only that supplier's products. */
+  @IsOptional() @IsString() @MaxLength(80) supplier?: string;
   @IsOptional() @IsIn(['new', 'profit', 'rating']) sort?:
     | 'new'
     | 'profit'
     | 'rating';
   @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(500) page?: number;
+}
+/** Find suppliers: shops a reseller could source from. */
+export class SuppliersQueryDto {
+  @IsOptional() @IsString() @MaxLength(80) q?: string;
+  @IsOptional() @IsIn(['products', 'margin', 'new']) sort?:
+    | 'products'
+    | 'margin'
+    | 'new';
 }
 export class RepriceItemDto {
   @IsUUID() id!: string;

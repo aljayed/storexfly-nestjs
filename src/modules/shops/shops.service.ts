@@ -275,6 +275,7 @@ export class ShopsService {
       handle,
       handlePending,
       tagline: dto.tagline,
+      businessType: dto.businessType ?? 'retail',
       supportEmail: dto.supportEmail,
       supportPhone: dto.supportPhone,
       deliveryMode: dto.deliveryMode,

@@ -135,4 +135,68 @@ describe('Trade console summaries', () => {
     expect(await service.sourcing('own', {})).toEqual({ items: [], total: 0, page: 1, hasMore: false, categories: [] });
     expect(calls).toHaveLength(1);
   });
+  it('narrows sourcing to one supplier when their handle is given', async () => {
+    const { service, calls, db } = harness([
+      [
+        { id: 'a', ownerId: 'x', paymentMethods: ['card'], handle: 'alpha' },
+        { id: 'b', ownerId: 'y', paymentMethods: ['card'], handle: 'beta' },
+      ],
+      [], [{ n: 0 }], [], [],
+    ]);
+    Object.assign(db, { query: {
+      shops: { findFirst: async () => ({ id: 'own', ownerId: 'me', currency: 'BDT' }) },
+      paymentMethods: { findMany: async () => [{ kind: 'card' }] },
+    } });
+    await service.sourcing('own', { supplier: 'beta' });
+    expect(sqlText(calls[1].where).params).toContain('b');
+    expect(sqlText(calls[1].where).params).not.toContain('a');
+    // An unknown handle is an empty shelf, not everyone's products.
+    const none = harness([[{ id: 'a', ownerId: 'x', paymentMethods: ['card'], handle: 'alpha' }]]);
+    Object.assign(none.db, { query: (db as unknown as { query: unknown }).query });
+    expect((await none.service.sourcing('own', { supplier: 'nobody' })).items).toEqual([]);
+    expect(none.calls).toHaveLength(1);
+  });
+  it('lists suppliers a reseller can source from, with catalogue numbers and what is already listed', async () => {
+    const shop = (id: string, extra: Record<string, unknown> = {}) => ({
+      id, ownerId: `owner-${id}`, paymentMethods: ['card'], name: id.toUpperCase(), handle: id, tagline: null,
+      brand: '#123456', city: 'Dhaka', kycStatus: 'unsubmitted', createdAt: new Date('2026-01-01'), ...extra,
+    });
+    const run = async (query: Parameters<CommerceService['suppliers']>[1]) => {
+      const { service, calls, db } = harness([
+        [
+          shop('own', { ownerId: 'me' }),
+          shop('cod-only', { paymentMethods: ['cod'] }),
+          shop('small', { createdAt: new Date('2026-03-01') }),
+          shop('big', { kycStatus: 'verified', tagline: 'Feed and farm supply' }),
+          shop('empty'),
+        ],
+        [
+          { shopId: 'small', products: 2, fromCents: 9000, bestProfitCents: 6000, avgMarginPct: 40, categories: ['Fashion'], previews: [] },
+          { shopId: 'big', products: 12, fromCents: 50000, bestProfitCents: 30000, avgMarginPct: 22, categories: ['Feed', 'Cattle feed'], previews: [{ image: 'a.jpg', emoji: null, tone: null }] },
+        ],
+        [{ shopId: 'big', n: 3 }],
+      ]);
+      Object.assign(db, { query: {
+        shops: { findFirst: async () => ({ id: 'own', ownerId: 'me', currency: 'BDT' }) },
+        paymentMethods: { findMany: async () => [{ kind: 'card' }] },
+      } });
+      return { result: await service.suppliers('own', query), calls };
+    };
+    const { result, calls } = await run({});
+    // Own and COD-only shops never reach the product query; a shop with
+    // nothing resellable has no row and so no card.
+    for (const excluded of ['own', 'cod-only']) expect(sqlText(calls[1].where).params).not.toContain(excluded);
+    expect(result.total).toBe(2);
+    expect(result.suppliers.map((s) => s.handle)).toEqual(['big', 'small']);
+    expect(result.suppliers[0]).toMatchObject({
+      name: 'BIG', verified: true, products: 12, fromPrice: 500, bestProfit: 300, avgMarginPct: 22,
+      categories: ['Cattle feed', 'Feed'], previews: [{ image: 'a.jpg', emoji: null, tone: null }], listed: 3, city: 'Dhaka',
+    });
+    expect(result.suppliers[1]).toMatchObject({ previews: [], listed: 0 });
+    expect((await run({ sort: 'margin' })).result.suppliers.map((s) => s.handle)).toEqual(['small', 'big']);
+    expect((await run({ sort: 'new' })).result.suppliers.map((s) => s.handle)).toEqual(['small', 'big']);
+    expect((await run({ q: 'cattle' })).result.suppliers.map((s) => s.handle)).toEqual(['big']);
+    expect((await run({ q: 'farm' })).result.suppliers.map((s) => s.handle)).toEqual(['big']);
+    expect((await run({ q: 'zzz' })).result).toEqual({ suppliers: [], total: 0 });
+  });
 });

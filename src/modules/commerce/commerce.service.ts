@@ -83,6 +83,151 @@ export class CommerceService {
     };
   }
   /**
+   * The shops a reseller could source from: live, in the same currency, not
+   * their own (or a sibling shop of the same owner), and able to collect
+   * money online - a reseller order pays the supplier at checkout.
+   */
+  private async sourcingSuppliers(shopId: string) {
+    const target = await this.db.query.shops.findFirst({
+      where: eq(shops.id, shopId),
+    });
+    if (!target) throw new NotFoundException('Shop not found');
+    const [candidates, collection] = await Promise.all([
+      this.db
+        .select({
+          id: shops.id,
+          ownerId: shops.ownerId,
+          paymentMethods: shops.paymentMethods,
+          name: shops.name,
+          handle: shops.handle,
+          tagline: shops.tagline,
+          brand: shops.brand,
+          city: shops.deliveryCity,
+          kycStatus: shops.kycStatus,
+          createdAt: shops.createdAt,
+        })
+        .from(shops)
+        .where(and(eq(shops.live, true), eq(shops.currency, target.currency))),
+      this.db.query.paymentMethods.findMany({
+        where: and(
+          eq(paymentMethods.enabled, true),
+          ne(paymentMethods.gateway, 'none'),
+        ),
+      }),
+    ]);
+    return candidates.filter(
+      (s) =>
+        s.id !== target.id &&
+        s.ownerId !== target.ownerId &&
+        collection.some((m) => s.paymentMethods.includes(m.kind)),
+    );
+  }
+  /** In stock, for sale, open to resellers and priced for them. */
+  private resellable(supplierIds: string[]) {
+    const supplyCents = sql<number>`(${products.commerce}->>'resellerPriceCents')::int`;
+    return {
+      supplyCents,
+      eligible: and(
+        inArray(products.shopId, supplierIds),
+        eq(products.listingType, 'sale'),
+        gt(products.stock, 0),
+        sql`${products.commerce}->'channels' ? 'reseller'`,
+        sql`${supplyCents} > 0`,
+      ),
+    };
+  }
+  /**
+   * Find suppliers: every shop this reseller could source from, summed up the
+   * way a reseller sizes up a partner - how much they offer, what it costs to
+   * get in, how much margin their catalogue leaves, and whether you already
+   * sell for them. Only shops with at least one product `importListing` would
+   * accept appear, so no card opens onto an empty shelf.
+   */
+  async suppliers(
+    shopId: string,
+    query: { q?: string; sort?: 'products' | 'margin' | 'new' },
+  ) {
+    const LIMIT = 60;
+    const shopsById = new Map(
+      (await this.sourcingSuppliers(shopId)).map((s) => [s.id, s]),
+    );
+    if (!shopsById.size) return { suppliers: [], total: 0 };
+    const { supplyCents, eligible } = this.resellable([...shopsById.keys()]);
+    const [stats, mine] = await Promise.all([
+      this.db
+        .select({
+          shopId: products.shopId,
+          products: count(),
+          fromCents: sql<number>`min(${supplyCents})::int`,
+          bestProfitCents: sql<number>`max(${products.priceCents} - ${supplyCents})::int`,
+          avgMarginPct: sql<number>`coalesce(round(avg((${products.priceCents} - ${supplyCents})::numeric * 100 / nullif(${products.priceCents}, 0))), 0)::int`,
+          categories: sql<string[]>`array_agg(distinct ${products.cat})`,
+          // The newest few products stand in for the shelf on the card; a
+          // product without a photo still shows its emoji tile.
+          previews: sql<
+            {
+              image: string | null;
+              emoji: string | null;
+              tone: string | null;
+            }[]
+          >`(array_agg(json_build_object('image', ${products.images}[1], 'emoji', ${products.emoji}, 'tone', ${products.tone}) order by ${products.createdAt} desc))[1:4]`,
+        })
+        .from(products)
+        .where(eligible)
+        .groupBy(products.shopId),
+      this.db
+        .select({ shopId: products.shopId, n: count() })
+        .from(resellerListings)
+        .innerJoin(products, eq(products.id, resellerListings.productId))
+        .where(eq(resellerListings.shopId, shopId))
+        .groupBy(products.shopId),
+    ]);
+    const listed = new Map(mine.map((m) => [m.shopId, m.n]));
+    const term = query.q?.trim().toLowerCase();
+    const rows = stats
+      .map((r) => {
+        const shop = shopsById.get(r.shopId)!;
+        return {
+          name: shop.name,
+          handle: shop.handle,
+          tagline: shop.tagline,
+          brand: shop.brand,
+          city: shop.city,
+          verified: shop.kycStatus === 'verified',
+          joinedAt: shop.createdAt,
+          products: r.products,
+          categories: (r.categories ?? []).filter(Boolean).sort(),
+          fromPrice: r.fromCents / 100,
+          bestProfit: Math.max(0, r.bestProfitCents) / 100,
+          avgMarginPct: Math.max(0, r.avgMarginPct),
+          previews: r.previews ?? [],
+          listed: listed.get(r.shopId) ?? 0,
+        };
+      })
+      .filter(
+        (s) =>
+          !term ||
+          [
+            s.name,
+            s.handle,
+            s.tagline ?? '',
+            s.city ?? '',
+            ...s.categories,
+          ].some((v) => v.toLowerCase().includes(term)),
+      )
+      .sort((a, b) =>
+        query.sort === 'margin'
+          ? b.avgMarginPct - a.avgMarginPct || b.products - a.products
+          : query.sort === 'new'
+            ? +new Date(b.joinedAt) - +new Date(a.joinedAt)
+            : // Verified suppliers with the deepest catalogue lead by default.
+              Number(b.verified) - Number(a.verified) ||
+              b.products - a.products ||
+              a.name.localeCompare(b.name),
+      );
+    return { suppliers: rows.slice(0, LIMIT), total: rows.length };
+  }
+  /**
    * What a reseller can add to their store right now: in-stock products
    * other suppliers have opened to resellers, with the numbers that decide
    * it - supply price, the supplier's own retail price, and the profit
@@ -94,51 +239,21 @@ export class CommerceService {
     query: {
       q?: string;
       category?: string;
+      supplier?: string;
       sort?: 'new' | 'profit' | 'rating';
       page?: number;
     },
   ) {
     const LIMIT = 24;
     const page = query.page ?? 1;
-    const target = await this.db.query.shops.findFirst({
-      where: eq(shops.id, shopId),
-    });
-    if (!target) throw new NotFoundException('Shop not found');
-    const [candidates, collection] = await Promise.all([
-      this.db
-        .select({
-          id: shops.id,
-          ownerId: shops.ownerId,
-          paymentMethods: shops.paymentMethods,
-        })
-        .from(shops)
-        .where(and(eq(shops.live, true), eq(shops.currency, target.currency))),
-      this.db.query.paymentMethods.findMany({
-        where: and(
-          eq(paymentMethods.enabled, true),
-          ne(paymentMethods.gateway, 'none'),
-        ),
-      }),
-    ]);
-    const supplierIds = candidates
-      .filter(
-        (s) =>
-          s.id !== target.id &&
-          s.ownerId !== target.ownerId &&
-          collection.some((m) => s.paymentMethods.includes(m.kind)),
-      )
+    const supplierIds = (await this.sourcingSuppliers(shopId))
+      // One supplier's shelf, when the reseller came in through their card.
+      .filter((s) => !query.supplier || s.handle === query.supplier)
       .map((s) => s.id);
     if (!supplierIds.length)
       return { items: [], total: 0, page, hasMore: false, categories: [] };
 
-    const supplyCents = sql<number>`(${products.commerce}->>'resellerPriceCents')::int`;
-    const eligible = and(
-      inArray(products.shopId, supplierIds),
-      eq(products.listingType, 'sale'),
-      gt(products.stock, 0),
-      sql`${products.commerce}->'channels' ? 'reseller'`,
-      sql`${supplyCents} > 0`,
-    );
+    const { supplyCents, eligible } = this.resellable(supplierIds);
     const term = query.q?.trim()
       ? `%${query.q.trim().replace(/[\\%_]/g, '\\$&')}%`
       : undefined;

@@ -2,6 +2,7 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform, Type } from 'class-transformer';
 import {
   IsEnum,
+  IsIn,
   IsEmail,
   IsObject,
   IsOptional,
@@ -61,6 +62,15 @@ export class CreateShopDto extends DeliverySettingsDto {
   @ApiProperty({ enum: brandSwatchEnum.enumValues })
   @IsEnum(brandSwatchEnum.enumValues)
   brandId!: BrandSwatchId;
+
+  @ApiPropertyOptional({
+    enum: ['retail', 'wholesale', 'reseller'],
+    description:
+      'How the seller said they will run this shop at sign-up, so it opens on the matching console. Retail when omitted; changeable in settings.',
+  })
+  @IsOptional()
+  @IsIn(['retail', 'wholesale', 'reseller'])
+  businessType?: 'retail' | 'wholesale' | 'reseller';
 
   @ApiPropertyOptional({ description: 'Public customer support email' })
   @IsOptional()

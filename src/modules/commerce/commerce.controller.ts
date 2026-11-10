@@ -28,6 +28,7 @@ import {
   RespondQuoteDto,
   RepriceListingsDto,
   SourcingQueryDto,
+  SuppliersQueryDto,
   ResellerListingDto,
   TradeMessageDto,
   UpdateResellerListingDto,
@@ -106,6 +107,12 @@ export class CommerceAdminController {
     @Query() query: SourcingQueryDto,
   ) {
     return this.service.sourcing(shopId, query);
+  }
+  @RequirePerm('items.view') @Get('suppliers') suppliers(
+    @Param('shopId', ParseUUIDPipe) shopId: string,
+    @Query() query: SuppliersQueryDto,
+  ) {
+    return this.service.suppliers(shopId, query);
   }
   @RequirePerm('items.add') @Get('source/:id') source(
     @Param('shopId', ParseUUIDPipe) shopId: string,
