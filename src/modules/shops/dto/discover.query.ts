@@ -1,8 +1,13 @@
+import { COMMERCE_MODES, type CommerceMode } from '../../../common/commerce/commerce';
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform, Type } from 'class-transformer';
 import { IsIn, IsInt, IsOptional, IsString, Max, MaxLength, Min } from 'class-validator';
 
 export class DiscoverQuery {
+  @ApiPropertyOptional({ enum: COMMERCE_MODES, default: 'retail' })
+  @IsIn(COMMERCE_MODES)
+  mode: CommerceMode = 'retail';
+
   @ApiPropertyOptional({ description: 'Search products, categories and shop names' })
   @IsOptional()
   @IsString()

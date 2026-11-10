@@ -1,3 +1,4 @@
+import { CommerceModule } from './modules/commerce/commerce.module';
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { APP_FILTER, APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
@@ -64,6 +65,7 @@ import { UsersModule } from './modules/users/users.module';
     SubscriptionsModule,
     PlatformModule,
     ProductsModule,
+    CommerceModule,
     CombosModule,
     ShopCouponsModule,
     ChatOffersModule,

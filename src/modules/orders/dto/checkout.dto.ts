@@ -1,3 +1,4 @@
+import { COMMERCE_MODES, type CommerceMode } from '../../../common/commerce/commerce';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import {
@@ -13,7 +14,9 @@ import {
   IsObject,
   IsOptional,
   IsString,
+  IsUUID,
   Matches,
+  Max,
   MaxLength,
   Min,
   ValidateNested,
@@ -87,6 +90,7 @@ export class CheckoutItemDto {
   @Type(() => Number)
   @IsInt()
   @Min(1)
+  @Max(1_000_000)
   qty!: number;
 
   @ApiPropertyOptional({
@@ -105,6 +109,13 @@ export class CheckoutItemDto {
 
 /** Inline product-page checkout payload (the `CheckoutRequest` interface). */
 export class CheckoutDto {
+  @ApiPropertyOptional() @IsOptional() @IsUUID() resellerListingId?: string;
+  @ApiPropertyOptional() @IsOptional() @IsUUID() tradeQuoteId?: string;
+
+  @ApiPropertyOptional({ enum: COMMERCE_MODES, default: 'retail' })
+  @IsOptional() @IsIn(COMMERCE_MODES)
+  commerceMode?: CommerceMode;
+
   @ApiProperty()
   @IsString()
   shopId!: string;
@@ -167,6 +178,7 @@ export class CheckoutDto {
   @Type(() => Number)
   @IsInt()
   @Min(1)
+  @Max(1_000_000)
   qty?: number;
 
   @ApiPropertyOptional({
@@ -239,6 +251,13 @@ export class CheckoutDto {
  * cart shape as a checkout, minus the parts that only matter once money moves.
  */
 export class CouponQuoteDto {
+  @ApiPropertyOptional() @IsOptional() @IsUUID() resellerListingId?: string;
+  @ApiPropertyOptional() @IsOptional() @IsUUID() tradeQuoteId?: string;
+
+  @ApiPropertyOptional({ enum: COMMERCE_MODES, default: 'retail' })
+  @IsOptional() @IsIn(COMMERCE_MODES)
+  commerceMode?: CommerceMode;
+
   @ApiProperty() @IsString() shopId!: string;
 
   @ApiProperty({ example: 'EID25' })
@@ -264,6 +283,7 @@ export class CouponQuoteDto {
   @Type(() => Number)
   @IsInt()
   @Min(1)
+  @Max(1_000_000)
   qty?: number;
 
   @ApiPropertyOptional()

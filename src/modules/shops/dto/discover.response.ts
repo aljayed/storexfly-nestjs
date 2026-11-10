@@ -16,6 +16,8 @@ export class DiscoverShopResponse {
 }
 
 export class DiscoverProductResponse {
+  @ApiProperty() commerceMode!: string;
+  @ApiProperty() wholesaleMoq!: number;
   @ApiProperty() id!: string;
   @ApiProperty() category!: string;
   @ApiProperty() name!: string;

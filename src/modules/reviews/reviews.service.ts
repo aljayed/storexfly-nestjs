@@ -12,6 +12,7 @@ import type { DrizzleDB } from '../../database/drizzle.types';
 import {
   orderItems,
   orders,
+  resellerListings,
   products,
   reviews,
   shops,
@@ -62,6 +63,12 @@ export class ReviewsService {
     slug: string,
   ): Promise<ProductRow> {
     const shop = await this.shops.requireLiveByHandle(handle);
+    if (/^resell-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(slug)) {
+      const listing = await this.db.query.resellerListings.findFirst({ where: and(eq(resellerListings.id, slug.slice(7)), eq(resellerListings.shopId, shop.id)) });
+      const source = listing && await this.db.query.products.findFirst({ where: eq(products.id, listing.productId) });
+      if (!source) throw new NotFoundException('Product not found');
+      return source;
+    }
     const product = await this.db.query.products.findFirst({
       where: and(eq(products.shopId, shop.id), eq(products.slug, slug)),
     });

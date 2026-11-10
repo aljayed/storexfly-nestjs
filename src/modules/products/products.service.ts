@@ -1,10 +1,12 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Inject,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { toCommerce } from './dto/commerce.dto';
 import { randomUUID } from 'crypto';
 import { and, asc, desc, eq } from 'drizzle-orm';
 import { dollarsToCents } from '../../common/utils/money.util';
@@ -13,6 +15,8 @@ import { handleize } from '../../common/utils/slug.util';
 import { DRIZZLE } from '../../database/database.constants';
 import type { DrizzleDB } from '../../database/drizzle.types';
 import {
+  resellerListings,
+  tradeQuotes,
   products,
   reviews,
   subscriptions,
@@ -332,10 +336,18 @@ export class ProductsService {
     );
   }
 
+  async supplyPricing(handle: string, slug: string) {
+    const shop = await this.shops.requireLiveByHandle(handle);
+    const product = await this.db.query.products.findFirst({ where: and(eq(products.shopId, shop.id), eq(products.slug, slug)) });
+    if (!product || product.listingType !== 'sale' || !product.commerce?.channels.includes('reseller')) throw new NotFoundException('Reseller supply product not found');
+    return { resellerPrice: (product.commerce.resellerPriceCents ?? 0) / 100 };
+  }
+
   async create(
     shopId: string,
     dto: CreateProductDto,
   ): Promise<ProductResponse> {
+    const commerce = dto.commerce ? toCommerce(dto.commerce) : undefined;
     await this.shops.requireById(shopId);
     // The catalog itself is never capped - a shop pays for the selling it
     // does, not for the listings it keeps. A cancelled subscription still
@@ -376,6 +388,7 @@ export class ProductsService {
         slug,
         cat: dto.cat,
         listingType,
+        commerce,
         priceCents: catalogCombination?.priceCents ?? dollarsToCents(dto.price),
         // 0 (or absent) means "no compare-at price" - stored as null.
         comparePriceCents: catalogCombination
@@ -419,7 +432,7 @@ export class ProductsService {
         packs: this.toPacks(dto.packs),
       })
       .returning();
-    return ProductResponse.fromRow(row);
+    return this.consoleProduct(row);
   }
 
   /**
@@ -469,6 +482,7 @@ export class ProductsService {
     this.assertGroupLimit(combinationGroups, effective);
     const catalogCombination = this.catalogCombination(effective);
     const patch: Partial<ProductRow> = {
+      commerce: dto.commerce ? toCommerce(dto.commerce) : undefined,
       name: dto.name ?? undefined,
       cat: dto.cat ?? undefined,
       listingType: dto.listingType ?? undefined,
@@ -541,11 +555,13 @@ export class ProductsService {
       .set(patch)
       .where(eq(products.id, id))
       .returning();
-    return ProductResponse.fromRow(row);
+    return this.consoleProduct(row);
   }
 
   async remove(shopId: string, id: string): Promise<{ ok: true }> {
     await this.requireOwned(shopId, id);
+    const [listing, quote] = await Promise.all([this.db.query.resellerListings.findFirst({ where: eq(resellerListings.productId, id) }), this.db.query.tradeQuotes.findFirst({ where: eq(tradeQuotes.productId, id) })]);
+    if (listing || quote) throw new ConflictException('This product has trade history. Switch it to showcase or disable its selling channels to stop future orders while preserving those records.');
     await this.db.delete(products).where(eq(products.id, id));
     return { ok: true };
   }
@@ -556,7 +572,11 @@ export class ProductsService {
       where: eq(products.shopId, shopId),
       orderBy: [asc(products.name)],
     });
-    return rows.map(ProductResponse.fromRow);
+    return rows.map((row) => this.consoleProduct(row));
+  }
+
+  private consoleProduct(row: ProductRow): ProductResponse {
+    return { ...ProductResponse.fromRow(row), resellerPrice: row.commerce?.resellerPriceCents == null ? undefined : row.commerce.resellerPriceCents / 100 };
   }
 
   private async requireOwned(shopId: string, id: string): Promise<ProductRow> {

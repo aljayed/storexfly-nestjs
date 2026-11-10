@@ -192,3 +192,16 @@ Copy `.env.example` → `.env` and fill in:
 - `JWT_SECRET` / `ADMIN_JWT_SECRET` / `ADMIN_2FA_TICKET_SECRET` - strong random values
 - `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` - leave blank to disable Google OAuth
 - `CORS_ORIGINS` - comma-separated Vue app origins
+
+## Retail, reseller, and wholesale commerce
+
+Migration `0107_commerce_channels.sql` adds product selling policies, reseller offers, quote negotiation, trade support cases, and order attribution. Apply with `pnpm db:migrate` before releasing the API, AI search service, and frontend together. Existing products and orders default to retail.
+
+- `/market?mode=retail|reseller|wholesale` uses the same catalog and inventory. Sellers configure channels, supply prices, MOQ, and decreasing quantity tiers in the product editor. MOQ and tiers apply to each variant separately.
+- `/admin/commerce` imports supplier products as linked reseller offers. Prices and availability come from the supplier; the reseller owns the selling price and share link. Customer checkout creates a supplier fulfillment order with immutable reseller attribution and margin. Reseller offers use full gateway payment, so the platform can allocate supplier revenue and reseller margin through the existing settlement process after delivery. Customer invoices, labels, order history, and notifications use the reseller brand. Never include supplier cost documents in the customer parcel.
+- `/account/trade` manages bulk and sample RFQs, negotiation messages, accepted quotes, trade orders, and disputes. Accepted quotes bind buyer, product, quantity, variant, final unit price, and expiry, and can create only one order. Samples use supplier-approved quotes to buy one unit without bypassing normal wholesale MOQ on ordinary orders.
+- Suppliers answer requests in `/admin/commerce`. Support cases hold unpaid settlement while open. Supplier proposals require buyer acceptance; rejected proposals escalate to `/platform-admin/trade-cases` for operator review. Closing a case records the outcome; actual refunds use the existing order refund action.
+
+Commerce APIs live under `/api/commerce`, `/api/shops/:shopId/trade`, `/api/buyer/trade`, and `/api/platform/trade`. Supplier costs are excluded from anonymous product and discovery responses. Stock deductions, cancellation restocks, gateway callbacks, delivery deadlines, and refunds reuse the existing order pipeline.
+
+Validate with `pnpm test --runInBand` and `pnpm build`; run the AI service tests and frontend production build as well. This does not configure live payment/courier credentials or apply a migration to a production database.

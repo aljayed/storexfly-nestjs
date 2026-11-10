@@ -16,6 +16,7 @@ import {
   ApiOperation,
   ApiTags,
 } from '@nestjs/swagger';
+import { StorefrontSession } from '../../common/decorators/storefront-session.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { Public } from '../../common/decorators/public.decorator';
 import { AdminJwtAuthGuard } from '../../common/guards/admin-jwt-auth.guard';
@@ -54,6 +55,13 @@ export class ProductsController {
   @ApiOperation({ summary: 'Product page - product + reviews' })
   getOne(@Param('handle') handle: string, @Param('slug') slug: string) {
     return this.products.getBySlug(handle, slug);
+  }
+
+  @StorefrontSession()
+  @Get('shops/:handle/supply/:slug')
+  @ApiOperation({ summary: 'Signed-in buyer: reseller supply pricing' })
+  supply(@Param('handle') handle: string, @Param('slug') slug: string) {
+    return this.products.supplyPricing(handle, slug);
   }
 
   // ── Admin (console) ──────────────────────────────────────────

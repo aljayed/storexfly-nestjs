@@ -68,15 +68,24 @@ import type {
 /** Split protected COD into the platform-held advance and door-collected
  * balance. Keeping both buckets makes sales totals reconcile without ever
  * paying the seller the COD portion from platform funds. */
-function addOrderForSettlement(
+export function addOrderForSettlement(
   bucket: Buckets,
   order: {
     paymentMethod: string | null;
     totalCents: number;
     advanceCents: number;
     pay: string;
+    shopId?: string;
+    resellerShopId?: string | null;
+    resellerMarginCents?: number;
   },
+  beneficiaryShopId?: string,
 ): void {
+  if (order.resellerShopId) {
+    const totalCents = beneficiaryShopId === order.resellerShopId ? (order.resellerMarginCents ?? 0) : order.totalCents - (order.resellerMarginCents ?? 0);
+    addOrder(bucket, order.paymentMethod, totalCents, 1);
+    return;
+  }
   if (order.advanceCents > 0) {
     addOrder(bucket, order.paymentMethod, order.advanceCents, 1);
     if (order.pay === 'Paid') {
@@ -143,8 +152,9 @@ export class SettlementsService {
       this.methods.getBanner(),
       this.db.query.orders.findMany({
         where: and(
-          eq(orders.shopId, shopId),
+          or(eq(orders.shopId, shopId), eq(orders.resellerShopId, shopId)),
           or(eq(orders.pay, 'Paid'), isNotNull(orders.advancePaidAt)),
+          sql`not exists (select 1 from trade_disputes as dispute where dispute.order_id = ${orders.id} and dispute.status <> 'resolved')`,
           ne(orders.status, 'Cancelled'),
           ne(orders.pay, 'Refunded'),
           // An exchange replacement carries the money of the order it
@@ -153,6 +163,8 @@ export class SettlementsService {
           isNull(orders.exchangedFromOrderId),
         ),
         columns: {
+          resellerShopId: true,
+          resellerMarginCents: true,
           totalCents: true,
           paymentMethod: true,
           advanceCents: true,
@@ -175,7 +187,7 @@ export class SettlementsService {
       if (!arrived) continue;
       const period = periodOf(arrived);
       const b = byPeriod.get(period) ?? emptyBuckets();
-      addOrderForSettlement(b, r);
+      addOrderForSettlement(b, r, shopId);
       byPeriod.set(period, b);
     }
     const paidByPeriod = new Map(paidRows.map((s) => [s.period, s]));
@@ -213,6 +225,7 @@ export class SettlementsService {
       this.db.query.orders.findMany({
         where: and(
           or(eq(orders.pay, 'Paid'), isNotNull(orders.advancePaidAt)),
+          sql`not exists (select 1 from trade_disputes as dispute where dispute.order_id = ${orders.id} and dispute.status <> 'resolved')`,
           ne(orders.status, 'Cancelled'),
           ne(orders.pay, 'Refunded'),
           // An exchange replacement carries the money of the order it
@@ -223,6 +236,8 @@ export class SettlementsService {
         columns: {
           shopId: true,
           paymentMethod: true,
+          resellerShopId: true,
+          resellerMarginCents: true,
           totalCents: true,
           advanceCents: true,
           pay: true,
@@ -246,6 +261,11 @@ export class SettlementsService {
       const b = shops.get(r.shopId) ?? emptyBuckets();
       addOrderForSettlement(b, r);
       shops.set(r.shopId, b);
+      if (r.resellerShopId && r.resellerMarginCents) {
+        const resellerBucket = shops.get(r.resellerShopId) ?? emptyBuckets();
+        addOrderForSettlement(resellerBucket, r, r.resellerShopId);
+        shops.set(r.resellerShopId, resellerBucket);
+      }
       byPeriod.set(periodOf(arrived), shops);
     }
 
@@ -544,14 +564,17 @@ export class SettlementsService {
     const [from, end] = monthRange(period);
     const rows = await this.db.query.orders.findMany({
       where: and(
-        eq(orders.shopId, shopId),
+        or(eq(orders.shopId, shopId), eq(orders.resellerShopId, shopId)),
         or(eq(orders.pay, 'Paid'), isNotNull(orders.advancePaidAt)),
+        sql`not exists (select 1 from trade_disputes as dispute where dispute.order_id = ${orders.id} and dispute.status <> 'resolved')`,
         ne(orders.status, 'Cancelled'),
         ne(orders.pay, 'Refunded'),
         isNull(orders.exchangedFromOrderId),
         SettlementsService.settledWithin(from, end),
       ),
       columns: {
+        resellerShopId: true,
+        resellerMarginCents: true,
         totalCents: true,
         paymentMethod: true,
         advanceCents: true,
@@ -559,7 +582,7 @@ export class SettlementsService {
       },
     });
     const b = emptyBuckets();
-    for (const r of rows) addOrderForSettlement(b, r);
+    for (const r of rows) addOrderForSettlement(b, r, shopId);
     return b;
   }
 

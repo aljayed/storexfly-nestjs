@@ -45,7 +45,7 @@ export class NotificationsService {
    */
   async orderEvent(
     executor: DbExecutor,
-    order: Pick<OrderRow, 'id' | 'shopId' | 'reference' | 'email' | 'phone'>,
+    order: Pick<OrderRow, 'id' | 'shopId' | 'reference' | 'email' | 'phone'> & Partial<Pick<OrderRow, 'buyerShop'>>,
     type:
       | 'order_placed'
       | 'order_status'
@@ -78,8 +78,8 @@ export class NotificationsService {
         title,
         body,
         orderReference: order.reference,
-        shopName: shop?.name ?? null,
-        shopHandle: shop?.handle ?? null,
+        shopName: order.buyerShop?.name ?? shop?.name ?? null,
+        shopHandle: order.buyerShop?.handle ?? shop?.handle ?? null,
       });
     } catch (err) {
       this.logger.warn(

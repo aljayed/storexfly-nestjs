@@ -1,3 +1,4 @@
+import { CommerceDto } from './commerce.dto';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import {
@@ -217,6 +218,12 @@ export class PackDto {
 }
 
 export class CreateProductDto {
+  @ApiPropertyOptional({ type: CommerceDto, description: 'Shared catalog selling channels and pricing. Replaced as a whole when supplied.' })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => CommerceDto)
+  commerce?: CommerceDto;
+
   @ApiProperty({ example: 'Alphonso Mango Box' })
   @IsString()
   @MinLength(2)

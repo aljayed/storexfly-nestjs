@@ -1,3 +1,4 @@
+import type { CommercePolicy } from '../../common/commerce/commerce';
 import { relations } from 'drizzle-orm';
 import {
   doublePrecision,
@@ -112,6 +113,7 @@ export const products = pgTable(
     // contact the seller to purchase offline. Showcase items can't be ordered.
     listingType: listingTypeEnum('listing_type').notNull().default('sale'),
     priceCents: integer('price_cents').notNull(),
+    commerce: jsonb('commerce').$type<CommercePolicy>().notNull().default({ channels: ['retail'] }),
     // Seller-entered "compare at" (regular) price, struck through next to the
     // real price. Null = no discount display; the storefront also hides it
     // unless it's genuinely above the selling price - never fabricated.

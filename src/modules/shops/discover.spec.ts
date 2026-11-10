@@ -24,7 +24,7 @@ describe('public marketplace discovery', () => {
     const valid = plainToInstance(DiscoverQuery, { page: '2', limit: '24', q: '  mug  ' });
     expect(await validate(valid)).toHaveLength(0);
     expect(valid).toMatchObject({ q: 'mug', page: 2, limit: 24 });
-    for (const input of [{ page: '0' }, { page: '-1' }, { page: '1.5' }, { limit: '999' }, { sort: 'anything' }, { q: ['one', 'two'] }, { q: 'x'.repeat(101) }]) {
+    for (const input of [{ page: '0' }, { page: '-1' }, { page: '1.5' }, { limit: '999' }, { sort: 'anything' }, { mode: 'invalid' }, { q: ['one', 'two'] }, { q: 'x'.repeat(101) }]) {
       expect((await validate(plainToInstance(DiscoverQuery, input))).length).toBeGreaterThan(0);
     }
   });
@@ -43,6 +43,7 @@ describe('public marketplace discovery', () => {
     expect(results.sql).not.toContain('100%_cotton');
     expect(results.params).toContain('%100\\%\\_cotton%');
     expect(results.params).toContain('sale');
+    expect(results.params).toContain('retail');
     expect(results.params).toContain('Home');
     expect(results.params.slice(-2)).toEqual([12, 12]);
     expect(count.params).toEqual(results.params.slice(0, -2));
@@ -63,7 +64,7 @@ describe('public marketplace discovery', () => {
   });
 
   it('returns lightweight public cards with real prices and correct final-page metadata', async () => {
-    const row = ['id-1', 'Home', 'Ceramic mug', 'mug', 'sale', 65000, 80000, 'piece', 8, '☕', '#eee', null, 4.5, 2, '/api/media/mug.webp', 'studio', 'Studio', 'BDT'];
+    const row = ['id-1', 'Home', 'Ceramic mug', 'mug', 'sale', 65000, { channels: ['retail'] }, 80000, 'piece', 8, '☕', '#eee', null, 4.5, 2, '/api/media/mug.webp', 'studio', 'Studio', 'BDT'];
     const h = harness([row], 25);
     const result = await h.service.discover(Object.assign(new DiscoverQuery(), { page: 2 }));
     expect(result).toMatchObject({ total: 25, page: 2, hasMore: false });
@@ -71,5 +72,21 @@ describe('public marketplace discovery', () => {
     expect(result.products[0]).not.toHaveProperty('images');
     const showcase = [...row]; showcase[4] = 'showcase';
     expect((await harness([showcase]).service.discover()).products[0].comparePrice).toBeUndefined();
+  });
+});
+
+
+describe('business marketplace discovery', () => {
+  it('uses wholesale starting prices without exposing supplier cost or a retail discount', async () => {
+    const policy = { channels: ['reseller', 'wholesale'], resellerPriceCents: 30000, wholesaleMoq: 10, wholesaleTiers: [{ minQty: 10, unitPriceCents: 27000 }] };
+    const row = ['id', 'Home', 'Mug', 'mug', 'sale', 50000, policy, 60000, 'piece', 100, '', '#eee', null, 0, 0, null, 'supplier', 'Supplier', 'BDT'];
+    const h = harness([row], 1);
+    const result = await h.service.discover(Object.assign(new DiscoverQuery(), { mode: 'wholesale' }));
+    const suppliers = h.queries.find((q) => q.sql.includes('exists'))!;
+    expect(suppliers.sql).toContain('"products"."shop_id"');
+    expect(suppliers.sql).not.toContain('"shops"."shop_id"');
+    expect(result.products[0]).toMatchObject({ price: 270, commerceMode: 'wholesale', wholesaleMoq: 10 });
+    expect(result.products[0].comparePrice).toBeUndefined();
+    expect(JSON.stringify(result.products[0])).not.toContain('resellerPrice');
   });
 });

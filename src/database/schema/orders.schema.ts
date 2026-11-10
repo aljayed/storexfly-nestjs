@@ -1,6 +1,8 @@
+import type { CommerceMode } from '../../common/commerce/commerce';
 import { relations } from 'drizzle-orm';
 import {
   index,
+  type AnyPgColumn,
   integer,
   jsonb,
   pgTable,
@@ -20,6 +22,7 @@ import { shops } from './shops.schema';
 import { customers } from './customers.schema';
 import { users } from './users.schema';
 import { products } from './products.schema';
+import { resellerListings, tradeQuotes } from './commerce.schema';
 import { orderAmountAdjustments } from './order-amount-adjustments.schema';
 
 /** Shape of the embedded delivery address (maps to `DeliveryAddress`). */
@@ -82,6 +85,12 @@ export const orders = pgTable(
     advanceCents: integer('advance_cents').notNull().default(0),
     advancePaidAt: timestamp('advance_paid_at', { withTimezone: true }),
     channel: salesChannelEnum('channel').notNull().default('Store'),
+    buyerShop: jsonb('buyer_shop').$type<{ name: string; handle: string; supportPhone?: string; supportEmail?: string }>(),
+    resellerShopId: uuid('reseller_shop_id').references(() => shops.id, { onDelete: 'restrict' }),
+    resellerListingId: uuid('reseller_listing_id').references((): AnyPgColumn => resellerListings.id, { onDelete: 'restrict' }),
+    resellerMarginCents: integer('reseller_margin_cents').notNull().default(0),
+    tradeQuoteId: uuid('trade_quote_id').references((): AnyPgColumn => tradeQuotes.id, { onDelete: 'restrict' }),
+    commerceMode: varchar('commerce_mode', { length: 16 }).$type<CommerceMode>().notNull().default('retail'),
     address: jsonb('address').$type<DeliveryAddressValue>(),
     // ── Shop coupon the buyer redeemed (null = none) ───────────────
     // The code is copied in so the order still reads correctly after the
@@ -146,6 +155,8 @@ export const orders = pgTable(
       .$onUpdate(() => new Date()),
   },
   (table) => [
+    uniqueIndex('orders_trade_quote_unique_idx').on(table.tradeQuoteId),
+    index('orders_reseller_shop_idx').on(table.resellerShopId, table.placedAt),
     uniqueIndex('orders_shop_reference_unique_idx').on(
       table.shopId,
       table.reference,

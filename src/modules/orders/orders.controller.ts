@@ -195,8 +195,8 @@ export class OrdersController {
   @Post('checkout/coupon')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Check what a coupon code takes off this cart' })
-  quoteCoupon(@Body() dto: CouponQuoteDto) {
-    return this.orders.quoteCoupon(dto);
+  quoteCoupon(@Body() dto: CouponQuoteDto, @Req() req: Request) {
+    return this.orders.quoteCoupon(dto, this.accountOf(req));
   }
 
   // A read of the account's own shops, using the same session as the home.

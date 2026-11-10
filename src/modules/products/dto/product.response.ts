@@ -1,3 +1,4 @@
+import { publicCommerce } from './commerce.dto';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { centsToDollars } from '../../../common/utils/money.util';
 import type { ProductRow } from '../../../database/schema';
@@ -49,6 +50,8 @@ export interface PublicPack {
 
 /** Public-facing product shape (the `Product` interface from the design handoff). */
 export class ProductResponse {
+  @ApiProperty() commerce!: ReturnType<typeof publicCommerce>;
+  @ApiPropertyOptional({ description: 'Supply price, available only in the seller console' }) resellerPrice?: number;
   @ApiProperty() id!: string;
   @ApiProperty() shopId!: string;
   @ApiProperty() name!: string;
@@ -148,6 +151,7 @@ export class ProductResponse {
 
   static fromRow(row: ProductRow): ProductResponse {
     return {
+      commerce: publicCommerce(row.commerce),
       id: row.id,
       shopId: row.shopId,
       name: row.name,

@@ -10,6 +10,7 @@ import {
   type OnModuleDestroy,
   type OnModuleInit,
 } from '@nestjs/common';
+import { commerceUnitPrice, resellerVariantCombinations, type CommerceMode } from '../../common/commerce/commerce';
 import { ConfigService } from '@nestjs/config';
 import {
   and,
@@ -50,6 +51,8 @@ import { creditPosition } from '../subscriptions/credit-balance';
 import { DRIZZLE } from '../../database/database.constants';
 import type { DrizzleDB } from '../../database/drizzle.types';
 import {
+  resellerListings,
+  tradeQuotes,
   combos,
   courierWebhookEvents,
   subscriptions,
@@ -463,6 +466,11 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
     dto: CheckoutDto,
     caller: CheckoutCaller = { ip: null, device: null, accountId: null },
   ): Promise<CheckoutResultResponse> {
+    const reseller = await this.resellerCheckoutContext(dto, caller.accountId);
+    await this.validateTradeQuote(dto, caller.accountId);
+    if (!reseller && dto.commerceMode && dto.commerceMode !== 'retail' && !caller.accountId) {
+      throw new ForbiddenException('Sign in to place reseller or wholesale orders.');
+    }
     // Ahead of the identity gates, because the gates need to know how this
     // order is paid for. The catalog is platform-managed: the code must be
     // live right now, so a method removed by an operator disappears from
@@ -476,6 +484,7 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
       );
     }
     await this.assertGatewayAvailable(method);
+    if (reseller && (method.gateway === 'none' || dto.paymentPlan)) throw new BadRequestException('Reseller orders use full online payment so both businesses receive their earnings.');
     const usesCodProtection = dto.paymentPlan !== undefined;
     const wantsCodAdvance = dto.paymentPlan === 'cod_advance';
     const checkoutKind = usesCodProtection ? 'cod' : method.kind;
@@ -687,6 +696,31 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
           ? await this.buildComboCart(tx, dto, checkoutKind, delivery)
           : await this.buildProductCart(tx, dto, checkoutKind, delivery);
 
+      let buyerShop: { name: string; handle: string; supportPhone?: string; supportEmail?: string } | undefined;
+      let resellerMarginCents = 0;
+      if (reseller) {
+        const [listing] = await tx.select().from(resellerListings).where(eq(resellerListings.id, reseller.id)).for('update');
+        const resellerShop = listing && await tx.query.shops.findFirst({ where: eq(shops.id, listing.shopId) });
+        const source = listing && await tx.query.products.findFirst({ where: eq(products.id, listing.productId) });
+        if (!listing?.active || !resellerShop?.live || !source || source.shopId !== dto.shopId || !source.commerce.channels.includes('reseller')) throw new ConflictException('This reseller offer is unavailable.');
+        buyerShop = { name: resellerShop.name, handle: resellerShop.handle, supportPhone: resellerShop.supportPhone ?? undefined, supportEmail: resellerShop.supportEmail ?? undefined };
+        const cost = source.commerce.resellerPriceCents;
+        if (cost == null || listing.sellingPriceCents < cost) throw new ConflictException('The supplier price has changed. This offer needs to be updated.');
+        const line = cart.lines.find((line) => line.productId === source.id)!;
+        const customerPick = this.priceProductPick({ ...source, priceCents: listing.sellingPriceCents, commerce: { channels: ['retail'] },
+          variantCombinations: resellerVariantCombinations(source, listing.sellingPriceCents) },
+          { qty: dto.qty ?? 1, variant: dto.variant }, null, 'retail');
+        resellerMarginCents = (customerPick.line.unitPriceCents - line.unitPriceCents) * line.qty;
+        line.unitPriceCents = customerPick.line.unitPriceCents;
+        cart.totalCents += resellerMarginCents;
+      }
+      if (dto.tradeQuoteId) {
+        const consumed = await tx.update(tradeQuotes).set({ usedAt: new Date() }).where(and(eq(tradeQuotes.id, dto.tradeQuoteId), isNull(tradeQuotes.usedAt), eq(tradeQuotes.status, 'accepted'))).returning();
+        if (!consumed.length) throw new ConflictException('This quotation has already been used.');
+      }
+
+      if (!Number.isSafeInteger(cart.totalCents) || cart.totalCents > 2_147_483_647) throw new BadRequestException('This order exceeds the maximum supported value. Split it into smaller orders.');
+
       // The authoritative pass, under the shop lock that serializes checkouts
       // for this shop - which is what actually stops a double-tapped button
       // placing two cash-on-delivery orders. Reads the priced cart, so it sees
@@ -772,6 +806,12 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
           mobileBankApp: dto.mobileBankApp,
           advanceCents,
           channel: 'Store',
+          commerceMode: dto.commerceMode ?? 'retail',
+          buyerShop,
+          resellerShopId: reseller?.shopId,
+          resellerListingId: reseller?.id,
+          resellerMarginCents,
+          tradeQuoteId: dto.tradeQuoteId,
           couponCode: applied?.coupon.code ?? null,
           discountCents: applied?.discountCents ?? 0,
           address: {
@@ -949,7 +989,9 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
    * is the number charged. Payment-method checks are skipped - the buyer may
    * not have picked one yet, and the method can't change the discount.
    */
-  async quoteCoupon(dto: CouponQuoteDto): Promise<CouponQuoteResponse> {
+  async quoteCoupon(dto: CouponQuoteDto, accountId: string | null = null): Promise<CouponQuoteResponse> {
+    if (dto.resellerListingId || dto.tradeQuoteId) throw new BadRequestException('Coupons do not apply to reseller offers or negotiated quotations.');
+    if (dto.commerceMode && dto.commerceMode !== 'retail' && !accountId) throw new ForbiddenException('Sign in to price supply orders.');
     const shapes = [dto.productId, dto.comboId, dto.items].filter(Boolean);
     if (shapes.length !== 1) {
       throw new BadRequestException(
@@ -1118,6 +1160,7 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
             `“${item.name}” is no longer available - ask the seller for a new offer.`,
           );
         }
+        commerceUnitPrice(product.commerce, 'retail', item.qty, product.priceCents);
         if ((product.variantCombinations ?? []).length) {
           throw new ConflictException(
             `“${product.name}” now has buyer-selectable variants - ask the seller for a new offer.`,
@@ -1537,6 +1580,30 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
     return Number(n);
   }
 
+  private async resellerCheckoutContext(dto: CheckoutDto, accountId: string | null) {
+    if (!dto.resellerListingId) return null;
+    if (dto.items || dto.comboId || dto.packId || dto.tradeQuoteId || dto.couponCode) throw new BadRequestException('A reseller offer is checked out on its own.');
+    const listing = await this.db.query.resellerListings.findFirst({ where: eq(resellerListings.id, dto.resellerListingId) });
+    const source = listing && await this.db.query.products.findFirst({ where: eq(products.id, listing.productId) });
+    const reseller = listing && await this.db.query.shops.findFirst({ where: eq(shops.id, listing.shopId) });
+    if (!listing?.active || !source || !reseller?.live || dto.shopId !== listing.shopId || dto.productId !== listing.id) throw new NotFoundException('Reseller offer not found');
+    if (accountId === reseller.ownerId) throw new ForbiddenException('You cannot buy from your own reseller store.');
+    dto.shopId = source.shopId;
+    dto.productId = source.id;
+    dto.commerceMode = 'reseller';
+    return listing;
+  }
+
+  private async validateTradeQuote(dto: CheckoutDto, accountId: string | null) {
+    if (!dto.tradeQuoteId) return;
+    if (!accountId || dto.items || dto.comboId || dto.packId || dto.couponCode) throw new BadRequestException('Sign in and check out the quoted product on its own.');
+    const quote = await this.db.query.tradeQuotes.findFirst({ where: and(eq(tradeQuotes.id, dto.tradeQuoteId), eq(tradeQuotes.buyerId, accountId)) });
+    if (!quote || quote.shopId !== dto.shopId || quote.productId !== dto.productId || quote.qty !== dto.qty || quote.usedAt || quote.status !== 'accepted' || !quote.expiresAt || quote.expiresAt <= new Date()) throw new ConflictException('The quote does not match this order or has expired.');
+    const entries = (v: Record<string, string>) => JSON.stringify(Object.entries(v).sort(([a], [b]) => a.localeCompare(b)));
+    if (entries(quote.variant) !== entries(dto.variant ?? {})) throw new BadRequestException('Use the variant in the accepted quote.');
+    dto.commerceMode = 'wholesale';
+  }
+
   /**
    * Price one picked line of a product: the variant selection (one option per
    * group the product defines) and an optional multi-buy pack. Deltas apply
@@ -1548,6 +1615,8 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
     product: ProductRow,
     pick: { qty: number; variant?: Record<string, string>; packId?: string },
     _payKind: string | null,
+    mode: CommerceMode = 'retail',
+    quotedPriceCents?: number,
   ): {
     line: CheckoutCart['lines'][number];
     units: number;
@@ -1617,9 +1686,12 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
       }
     }
 
+    const baseCents = quotedPriceCents !== undefined ? quotedPriceCents : commerceUnitPrice(product.commerce, mode, pick.qty, product.priceCents);
+    if (mode !== 'retail' && pick.packId) throw new BadRequestException('Supply orders use individual units, not retail packs.');
+
     // A pack re-prices the line: qty counts packs, each consuming pack.units.
     let unitsPerPick = 1;
-    let unitPriceCents = Math.max(0, product.priceCents + deltaCents);
+    let unitPriceCents = quotedPriceCents ?? Math.max(0, baseCents + deltaCents);
     if (pick.packId) {
       const pack = (product.packs ?? []).find((p) => p.id === pick.packId);
       if (!pack) {
@@ -1794,10 +1866,18 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
       throw new NotFoundException('Product not found in this shop');
     }
 
+    let quotedPriceCents: number | undefined;
+    if (dto.tradeQuoteId) {
+      const [quote] = await tx.select().from(tradeQuotes).where(eq(tradeQuotes.id, dto.tradeQuoteId)).for('update');
+      if (!quote || quote.status !== 'accepted' || quote.usedAt || !quote.expiresAt || quote.expiresAt <= new Date() || quote.unitPriceCents == null || !product.commerce.channels.includes('wholesale')) throw new ConflictException('The accepted quote is no longer available.');
+      quotedPriceCents = quote.unitPriceCents;
+    }
     const { line, units, variantPick, combinationId } = this.priceProductPick(
       product,
       { qty: dto.qty ?? 1, variant: dto.variant, packId: dto.packId },
       payKind,
+      dto.commerceMode ?? 'retail',
+      quotedPriceCents,
     );
     if (product.stock < units) {
       throw new ConflictException('Not enough stock for this quantity');
@@ -1833,6 +1913,9 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
     delivery: CartDelivery,
   ): Promise<CheckoutCart> {
     const picks = dto.items!;
+    if (dto.commerceMode === 'wholesale' && new Set(picks.map((p) => p.productId + JSON.stringify(Object.entries(p.variant ?? {}).sort()))).size !== picks.length) {
+      throw new BadRequestException('Combine duplicate wholesale variants into one quantity.');
+    }
     const ids = [...new Set(picks.map((i) => i.productId))];
     const rows = await tx.query.products.findMany({
       where: and(inArray(products.id, ids), eq(products.shopId, dto.shopId)),
@@ -1856,6 +1939,7 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
         product,
         pick,
         payKind,
+        dto.commerceMode ?? 'retail',
       );
       lines.push(line);
       unitsByProduct.set(
@@ -1931,6 +2015,7 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
     _payKind: string | null,
     delivery: CartDelivery,
   ): Promise<CheckoutCart> {
+    if (dto.commerceMode && dto.commerceMode !== 'retail') throw new BadRequestException('Combo offers are available for retail orders only.');
     const combo = await tx.query.combos.findFirst({
       where: and(eq(combos.id, dto.comboId!), eq(combos.shopId, dto.shopId)),
       with: { items: { with: { product: true } } },
@@ -1947,6 +2032,7 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
     const lines: CheckoutCart['lines'] = [];
     for (const item of combo.items) {
       const product = item.product;
+      commerceUnitPrice(product.commerce, 'retail', item.qty, product.priceCents);
       if (
         product.listingType !== 'sale' ||
         (product.variantCombinations ?? []).length
@@ -2405,6 +2491,7 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
     input: { newTotal: number; reason: string },
   ): Promise<OrderResponse> {
     const order = await this.requireOwned(shopId, id);
+    if (order.resellerListingId || order.tradeQuoteId) throw new ConflictException('Reseller offers and accepted quotes have fixed prices. Cancel and place a new order to change the amount.');
     const reason = input.reason.trim();
     if (!reason) {
       throw new BadRequestException('Add a short reason for the change.');
@@ -3103,13 +3190,19 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
             `Not enough stock of ${product.name} for this exchange`,
           );
         }
-        totalCents += product.priceCents * qty;
+        let replacementPrice = commerceUnitPrice(product.commerce, order.commerceMode ?? 'retail', qty, product.priceCents);
+        if (order.resellerListingId) {
+          const listing = await tx.query.resellerListings.findFirst({ where: eq(resellerListings.id, order.resellerListingId) });
+          if (!listing || listing.productId !== product.id) throw new ConflictException('Reseller exchanges use the original product. Refund the order to substitute another product.');
+          replacementPrice = listing.sellingPriceCents;
+        }
+        totalCents += replacementPrice * qty;
         totalUnits += qty;
         rows.push({
           productId: product.id,
           name: product.name,
           qty,
-          unitPriceCents: product.priceCents,
+          unitPriceCents: replacementPrice,
         });
       }
 
@@ -3135,6 +3228,10 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
           pay: 'Paid',
           paymentMethod: order.paymentMethod,
           channel: order.channel,
+          commerceMode: order.commerceMode,
+          resellerShopId: order.resellerShopId,
+          resellerListingId: order.resellerListingId,
+          buyerShop: order.buyerShop,
           address: order.address,
           confirmedAt: new Date(),
           exchangedFromOrderId: order.id,
@@ -3267,8 +3364,8 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
     return {
       reference: order.reference,
       shopId: order.shopId,
-      shopName: order.shop?.name ?? 'Shop',
-      shopHandle: order.shop?.handle ?? '',
+      shopName: order.buyerShop?.name ?? order.shop?.name ?? 'Shop',
+      shopHandle: order.buyerShop?.handle ?? order.shop?.handle ?? '',
       status: order.status,
       pay: order.pay,
       placedAt: order.placedAt.toISOString(),

@@ -76,6 +76,9 @@ export class OrderAdjustmentResponse {
 
 /** Public-facing order shape (the `Order` interface from the design handoff). */
 export class OrderResponse {
+  @ApiPropertyOptional() resellerStore?: { name: string; handle: string; supportPhone?: string; supportEmail?: string };
+  @ApiProperty() resellerMargin!: number;
+  @ApiProperty({ enum: ['retail', 'reseller', 'wholesale'] }) commerceMode!: string;
   @ApiProperty({ example: '#1042', description: 'Human-facing reference' })
   id!: string;
   @ApiProperty() shopId!: string;
@@ -190,6 +193,9 @@ export class OrderResponse {
     hasBuyerAccount = false,
   ): OrderResponse {
     return {
+      commerceMode: row.commerceMode ?? 'retail',
+      resellerStore: row.buyerShop ?? undefined,
+      resellerMargin: centsToDollars(row.resellerMarginCents ?? 0),
       id: row.reference,
       shopId: row.shopId,
       customer: row.customerName,

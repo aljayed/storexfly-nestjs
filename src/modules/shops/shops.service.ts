@@ -36,6 +36,8 @@ import type { DbExecutor, DrizzleDB } from '../../database/drizzle.types';
 import {
   deletedShopSettlements,
   orders,
+  resellerListings,
+  tradeQuotes,
   products,
   settlements,
   shopDrafts,
@@ -520,6 +522,8 @@ export class ShopsService {
     const term = q ? `%${q.replace(/[\\%_]/g, '\\$&')}%` : undefined;
     const where = and(
       eq(shops.live, true),
+      sql`${products.commerce}->'channels' ? ${query.mode ?? 'retail'}`,
+      query.mode && query.mode !== 'retail' ? eq(products.listingType, 'sale') : undefined,
       term ? or(ilike(products.name, term), ilike(category, term), ilike(shops.name, term), ilike(shops.handle, term)) : undefined,
       selectedCategory ? eq(category, selectedCategory) : undefined,
       availability === 'stock' ? and(eq(products.listingType, 'sale'), gt(products.stock, 0)) : undefined,
@@ -529,19 +533,10 @@ export class ShopsService {
       ? [desc(products.rating), desc(products.reviewsCount), desc(products.createdAt), desc(products.id)]
       : [desc(products.createdAt), desc(products.id)];
     const [shopRows, productRows, totals, categories] = await Promise.all([
-      this.db.query.shops.findMany({
-        where: eq(shops.live, true),
-        orderBy: [desc(shops.createdAt)],
-        limit: DISCOVER_SHOPS,
-        columns: {
-          name: true,
-          handle: true,
-          tagline: true,
-          cat: true,
-          brand: true,
-          brandSoft: true,
-        },
-      }),
+      this.db.select({ name: shops.name, handle: shops.handle, tagline: shops.tagline, cat: shops.cat, brand: shops.brand, brandSoft: shops.brandSoft })
+        .from(shops)
+        .where(and(eq(shops.live, true), query.mode && query.mode !== 'retail' ? sql`exists (select 1 from ${products} where ${products.shopId} = ${shops.id} and ${products.commerce}->'channels' ? ${query.mode} and ${products.listingType} = 'sale')` : undefined))
+        .orderBy(desc(shops.createdAt)).limit(DISCOVER_SHOPS),
       this.db
         .select({
           id: products.id,
@@ -550,6 +545,7 @@ export class ShopsService {
           slug: products.slug,
           listingType: products.listingType,
           priceCents: products.priceCents,
+          commerce: products.commerce,
           comparePriceCents: products.comparePriceCents,
           unit: products.unit,
           stock: products.stock,
@@ -574,7 +570,7 @@ export class ShopsService {
       // Global categories stay available even when a search has no matches.
       this.db.select({ name: category, count: count() }).from(products)
         .innerJoin(shops, eq(products.shopId, shops.id))
-        .where(eq(shops.live, true)).groupBy(category)
+        .where(and(eq(shops.live, true), query.mode && query.mode !== 'retail' ? sql`${products.commerce}->'channels' ? ${query.mode}` : undefined)).groupBy(category)
         .orderBy(desc(count()), asc(category)),
     ]);
     const total = totals[0]?.total ?? 0;
@@ -584,11 +580,13 @@ export class ShopsService {
       products: productRows.map((p) => ({
         id: p.id,
         category: p.category,
+        commerceMode: query.mode ?? 'retail',
+        wholesaleMoq: p.commerce?.wholesaleMoq ?? 1,
         name: p.name,
         slug: p.slug,
         listingType: p.listingType,
-        price: centsToDollars(p.priceCents),
-        comparePrice: p.listingType === 'sale' && p.comparePriceCents && p.comparePriceCents > p.priceCents
+        price: centsToDollars(query.mode === 'wholesale' ? (p.commerce?.wholesaleTiers?.[0]?.unitPriceCents ?? p.priceCents) : p.priceCents),
+        comparePrice: (query.mode ?? 'retail') === 'retail' && p.listingType === 'sale' && p.comparePriceCents && p.comparePriceCents > p.priceCents
           ? centsToDollars(p.comparePriceCents) : undefined,
         unit: p.unit,
         stock: p.stock,
@@ -1000,6 +998,7 @@ export class ShopsService {
     hasBankAccount: boolean;
   }> {
     const shop = await this.requireById(shopId);
+    await this.assertTradeHistoryRetained(shopId);
     const [inProgress, owed, position] = await Promise.all([
       this.inProgressOrderCount(shopId),
       this.owedSettlements(shopId),
@@ -1176,10 +1175,21 @@ export class ShopsService {
    * when merely requesting the confirmation code would be premature - the
    * dialog shows the figure at that point, it doesn't have an answer yet.
    */
+  private async assertTradeHistoryRetained(shopId: string): Promise<void> {
+    const [listings, quote, tradeOrder] = await Promise.all([
+      this.db.select({ id: resellerListings.id }).from(resellerListings).innerJoin(products, eq(products.id, resellerListings.productId))
+        .where(or(eq(resellerListings.shopId, shopId), eq(products.shopId, shopId))).limit(1),
+      this.db.query.tradeQuotes.findFirst({ where: eq(tradeQuotes.shopId, shopId), columns: { id: true } }),
+      this.db.query.orders.findFirst({ where: and(or(eq(orders.shopId, shopId), eq(orders.resellerShopId, shopId)), ne(orders.commerceMode, 'retail')), columns: { id: true } }),
+    ]);
+    if (listings.length || quote || tradeOrder) throw new ConflictException('This shop has trade history that must be retained. Keep the shop offline and contact support to close its business records.');
+  }
+
   private async assertDeletable(
     shop: ShopRow,
     creditAcknowledged = false,
   ): Promise<OwedMonth[]> {
+    await this.assertTradeHistoryRetained(shop.id);
     const inProgress = await this.inProgressOrderCount(shop.id);
     if (inProgress > 0) {
       throw new ConflictException(

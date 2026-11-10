@@ -642,8 +642,8 @@ export class BuyerService {
         return {
           reference: o.reference,
           shopId: o.shopId,
-          shopName: o.shop?.name ?? 'Shop',
-          shopHandle: o.shop?.handle ?? '',
+          shopName: o.buyerShop?.name ?? o.shop?.name ?? 'Shop',
+          shopHandle: o.buyerShop?.handle ?? o.shop?.handle ?? '',
           itemSummary: summarizeItems(productLines(o.items).map((i) => i.name)),
           qty: o.qty,
           total: centsToDollars(o.totalCents),
