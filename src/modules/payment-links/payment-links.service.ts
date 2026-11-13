@@ -8,7 +8,7 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { randomBytes } from 'node:crypto';
-import { and, desc, eq, inArray, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import { centsToDollars, dollarsToCents } from '../../common/utils/money.util';
 import { DRIZZLE } from '../../database/database.constants';
 import type { DrizzleDB } from '../../database/drizzle.types';
@@ -109,6 +109,10 @@ export class PaymentLinksService {
   /* ── Seller console ────────────────────────────────────────────── */
 
   async listForShop(shopId: string): Promise<PaymentLinkListResponse> {
+    const visible = and(
+      eq(paymentLinks.shopId, shopId),
+      isNull(paymentLinks.deletedAt),
+    );
     const [shop, method, totals, rows] = await Promise.all([
       this.shops.requireById(shopId),
       this.collectingMethod(),
@@ -122,10 +126,10 @@ export class PaymentLinksService {
           awaitingCount: sql<string>`count(*) filter (where ${paymentLinks.status} = 'active' and (${paymentLinks.expiresAt} is null or ${paymentLinks.expiresAt} > now()))`,
         })
         .from(paymentLinks)
-        .where(eq(paymentLinks.shopId, shopId))
+        .where(visible)
         .groupBy(paymentLinks.currency),
       this.db.query.paymentLinks.findMany({
-        where: eq(paymentLinks.shopId, shopId),
+        where: visible,
         orderBy: desc(paymentLinks.createdAt),
         limit: LIST_LIMIT,
       }),
@@ -229,6 +233,7 @@ export class PaymentLinksService {
           eq(paymentLinks.id, id),
           eq(paymentLinks.shopId, shopId),
           eq(paymentLinks.status, 'active'),
+          isNull(paymentLinks.deletedAt),
         ),
       )
       .returning();
@@ -237,13 +242,44 @@ export class PaymentLinksService {
     const existing = await this.db.query.paymentLinks.findFirst({
       where: and(eq(paymentLinks.id, id), eq(paymentLinks.shopId, shopId)),
     });
-    if (!existing) throw new NotFoundException('Payment link not found');
+    if (!existing || existing.deletedAt)
+      throw new NotFoundException('Payment link not found');
     if (existing.status === 'paid' || existing.status === 'refunded') {
       throw new ConflictException(
         'This link has already been paid and cannot be cancelled.',
       );
     }
     return this.toResponse(existing);
+  }
+
+  /** Remove an unpaid link without losing callbacks for an in-flight charge. */
+  async remove(shopId: string, id: string): Promise<void> {
+    // The status predicate and update are atomic with settlement: if payment
+    // won the race, deletion cannot hide that paid record.
+    const [removed] = await this.db
+      .update(paymentLinks)
+      .set({ status: 'cancelled', deletedAt: new Date() })
+      .where(
+        and(
+          eq(paymentLinks.id, id),
+          eq(paymentLinks.shopId, shopId),
+          inArray(paymentLinks.status, ['active', 'cancelled']),
+          isNull(paymentLinks.deletedAt),
+        ),
+      )
+      .returning({ id: paymentLinks.id });
+    if (removed) return;
+
+    const existing = await this.db.query.paymentLinks.findFirst({
+      where: and(eq(paymentLinks.id, id), eq(paymentLinks.shopId, shopId)),
+    });
+    if (!existing) throw new NotFoundException('Payment link not found');
+    if (existing.status === 'paid' || existing.status === 'refunded') {
+      throw new ConflictException(
+        'Paid or refunded payment links cannot be deleted.',
+      );
+    }
+    // Repeated DELETE requests for an already-deleted link are harmless.
   }
 
   /**
@@ -444,6 +480,9 @@ export class PaymentLinksService {
       .update(paymentLinks)
       .set({
         status: 'paid',
+        // A buyer may already have been on the gateway when deletion won.
+        // Restore the record so the seller can see and refund the real money.
+        deletedAt: null,
         settledAmountCents: charge.amountCents,
         paidAt: new Date(),
         trxId: charge.gatewayTxnId,
@@ -525,7 +564,8 @@ export class PaymentLinksService {
           where: eq(paymentLinks.token, cleaned),
         })
       : undefined;
-    if (!link) throw new NotFoundException('Payment link not found');
+    if (!link || link.deletedAt)
+      throw new NotFoundException('Payment link not found');
     return { link, shop: await this.shops.requireById(link.shopId) };
   }
 

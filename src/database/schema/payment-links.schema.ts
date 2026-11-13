@@ -63,6 +63,8 @@ export const paymentLinks = pgTable(
       .default('active'),
     /** Optional last moment the link may be paid. Null = no deadline. */
     expiresAt: timestamp('expires_at', { withTimezone: true }),
+    /** Hidden unpaid link; retained for callbacks from existing checkouts. */
+    deletedAt: timestamp('deleted_at', { withTimezone: true }),
 
     // ── Filled in when the money lands ─────────────────────────────
     paidAt: timestamp('paid_at', { withTimezone: true }),

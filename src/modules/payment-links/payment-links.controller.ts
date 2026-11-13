@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   HttpCode,
   HttpStatus,
@@ -82,6 +83,20 @@ export class PaymentLinksController {
     @Param('id', ParseUUIDPipe) id: string,
   ) {
     return this.links.refund(shopId, id);
+  }
+
+  @Public()
+  @UseGuards(AdminJwtAuthGuard, ShopScopeGuard, RolesGuard)
+  @RequirePerm('orders.manage')
+  @ApiBearerAuth()
+  @Delete('shops/:shopId/payment-links/:id')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({ summary: 'Admin: delete an unpaid payment link' })
+  remove(
+    @Param('shopId') shopId: string,
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
+    return this.links.remove(shopId, id);
   }
 
   /* The page polls this while a payment is being confirmed, so the limit has
