@@ -2,12 +2,14 @@ import { relations } from 'drizzle-orm';
 import {
   index,
   integer,
+  jsonb,
   pgTable,
   timestamp,
   uuid,
   varchar,
 } from 'drizzle-orm/pg-core';
 import { orders } from './orders.schema';
+import { paymentLinks } from './payment-links.schema';
 import { shopDrafts } from './shop-drafts.schema';
 import { shops } from './shops.schema';
 
@@ -34,7 +36,18 @@ import { shops } from './shops.schema';
  * - held here rather than granted up front so an abandoned checkout grants
  * nothing. 'shop_opening' is the pack that opens a shop that does not exist
  * yet, and carries the draft holding its name instead of a shop.
+ * 'payment_link' is a buyer paying a shop an agreed amount with no order
+ * behind it, and carries the link, its shop, and what the payer typed.
  */
+
+/** What a payment-link payer told us before going to the gateway. */
+export interface GatewayPayerDetails {
+  name: string;
+  phone: string;
+  email?: string;
+  note?: string;
+}
+
 export const gatewayPayments = pgTable(
   'gateway_payments',
   {
@@ -52,6 +65,13 @@ export const gatewayPayments = pgTable(
     shopDraftId: uuid('shop_draft_id').references(() => shopDrafts.id, {
       onDelete: 'cascade',
     }),
+    // purpose='payment_link': the link being paid (its shop rides in shopId),
+    // and who is paying it - kept per session so the attempt that actually
+    // settles is the one that names the payer.
+    paymentLinkId: uuid('payment_link_id').references(() => paymentLinks.id, {
+      onDelete: 'cascade',
+    }),
+    payerDetails: jsonb('payer_details').$type<GatewayPayerDetails>(),
     packCode: varchar('pack_code', { length: 32 }),
     couponCode: varchar('coupon_code', { length: 40 }),
     discountCents: integer('discount_cents').notNull().default(0),
@@ -80,6 +100,7 @@ export const gatewayPayments = pgTable(
     index('gateway_payments_order_idx').on(table.orderId),
     index('gateway_payments_shop_idx').on(table.shopId),
     index('gateway_payments_draft_idx').on(table.shopDraftId),
+    index('gateway_payments_link_idx').on(table.paymentLinkId),
     index('gateway_payments_payment_idx').on(table.paymentId),
     index('gateway_payments_status_idx').on(table.status, table.createdAt),
   ],

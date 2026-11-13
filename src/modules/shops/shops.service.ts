@@ -36,6 +36,7 @@ import type { DbExecutor, DrizzleDB } from '../../database/drizzle.types';
 import {
   deletedShopSettlements,
   orders,
+  paymentLinks,
   resellerListings,
   tradeQuotes,
   products,
@@ -1247,8 +1248,17 @@ export class ShopsService {
    * SettlementsService cycle math via the shared settlement-core helpers.
    */
   private async owedSettlements(shopId: string): Promise<OwedMonth[]> {
-    const [methodRows, orderRows, paidRows] = await Promise.all([
+    const [methodRows, linkRows, orderRows, paidRows] = await Promise.all([
       this.db.query.paymentMethods.findMany(),
+      // Paid payment links are owed too - see SettlementsService.paidLinks.
+      this.db.query.paymentLinks.findMany({
+        where: and(
+          eq(paymentLinks.shopId, shopId),
+          eq(paymentLinks.status, 'paid'),
+          isNotNull(paymentLinks.paidAt),
+        ),
+        columns: { amountCents: true, paymentMethod: true, paidAt: true },
+      }),
       this.db.query.orders.findMany({
         where: and(
           eq(orders.shopId, shopId),
@@ -1288,6 +1298,13 @@ export class ShopsService {
       } else {
         addOrder(b, r.paymentMethod, r.totalCents, 1);
       }
+      byPeriod.set(period, b);
+    }
+    for (const link of linkRows) {
+      if (!link.paidAt) continue;
+      const period = periodOf(link.paidAt);
+      const b = byPeriod.get(period) ?? emptyBuckets();
+      addOrder(b, link.paymentMethod, link.amountCents, 1);
       byPeriod.set(period, b);
     }
     const alreadyPaid = new Set(paidRows.map((p) => p.period));

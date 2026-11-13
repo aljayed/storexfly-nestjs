@@ -237,6 +237,68 @@ export class RefundsService implements OnModuleInit, OnModuleDestroy {
     return this.fileWithGateway(row, label);
   }
 
+  /**
+   * Send back one recorded charge that has no order behind it - a payment
+   * link the seller is refunding, or a second payment for a link that was
+   * already paid. Same rules as everything else here: SSLCommerz charges are
+   * filed with the gateway, anything else is recorded 'manual'.
+   *
+   * Idempotent per charge: a refund already live for this transaction is
+   * reported rather than filed again.
+   */
+  async refundTransaction(
+    transactionId: string,
+    opts: { reason: string; initiatedBy?: 'seller' | 'auto' },
+  ): Promise<RefundOutcome> {
+    const live = await this.db.query.paymentRefunds.findFirst({
+      where: and(
+        eq(paymentRefunds.transactionId, transactionId),
+        inArray(paymentRefunds.status, [
+          'requested',
+          'processing',
+          'refunded',
+          'manual',
+        ]),
+      ),
+    });
+    if (live) return RefundsService.outcomeOf(live);
+
+    const charge = await this.db.query.paymentTransactions.findFirst({
+      where: eq(paymentTransactions.id, transactionId),
+    });
+    if (!charge) {
+      return {
+        filed: false,
+        manual: false,
+        status: 'failed',
+        reason: 'Payment not found',
+      };
+    }
+
+    const [row] = await this.db
+      .insert(paymentRefunds)
+      .values({
+        transactionId: charge.id,
+        provider: charge.provider,
+        refundTransId: RefundsService.mintRefundId(),
+        bankTranId: charge.gatewayTxnId,
+        amountCents: charge.amountCents,
+        reason: opts.reason.slice(0, 255),
+        initiatedBy: opts.initiatedBy ?? 'seller',
+        status: charge.provider === 'sslcommerz' ? 'requested' : 'manual',
+      })
+      .returning();
+
+    const label = `payment ${charge.gatewayTxnId}`;
+    if (row.status === 'manual') {
+      this.logger.warn(
+        `Refund of ${label}: ${formatReason(charge.provider)} - ${row.amountCents} recorded for manual payout`,
+      );
+      return { filed: false, manual: true, status: 'manual' };
+    }
+    return this.fileWithGateway(row, label);
+  }
+
   /** Refunds against these platform payments, newest first. */
   async forPlatformPayments(ids: string[]): Promise<PaymentRefundRow[]> {
     if (!ids.length) return [];

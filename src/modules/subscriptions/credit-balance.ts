@@ -1,5 +1,5 @@
 import { and, eq, gte, ne, sql } from 'drizzle-orm';
-import { orders, subscriptions } from '../../database/schema';
+import { orders, paymentLinks, subscriptions } from '../../database/schema';
 import type { DbExecutor } from '../../database/drizzle.types';
 
 /**
@@ -8,6 +8,9 @@ import type { DbExecutor } from '../../database/drizzle.types';
  * `used` is not a stored counter - it is the value of the shop's non-cancelled
  * orders since its meter started, so cancelling an order hands the allowance
  * straight back and nothing can drift out of sync with the orders table.
+ * Paid payment links count too: they are sales taken through the platform
+ * like any other, and leaving them out would make a link the way to sell
+ * without ever buying credit. A refunded link hands its share back.
  *
  * `balance` is deliberately *not* clamped at zero here. The order that takes a
  * shop past its balance still completes (see `assertCreditAvailable`), so a
@@ -55,7 +58,19 @@ export async function creditPosition(
         gte(orders.placedAt, row.meterStartAt),
       ),
     );
-  const usedCents = Number(sales?.total ?? 0);
+  const [links] = await db
+    .select({
+      total: sql<string>`coalesce(sum(${paymentLinks.amountCents}), 0)`,
+    })
+    .from(paymentLinks)
+    .where(
+      and(
+        eq(paymentLinks.shopId, shopId),
+        eq(paymentLinks.status, 'paid'),
+        gte(paymentLinks.paidAt, row.meterStartAt),
+      ),
+    );
+  const usedCents = Number(sales?.total ?? 0) + Number(links?.total ?? 0);
   return {
     grantedCents: row.grantedCents,
     usedCents,

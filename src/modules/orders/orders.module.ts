@@ -4,6 +4,7 @@ import { BillingModule } from '../billing/billing.module';
 import { ChatModule } from '../chat/chat.module';
 import { CustomersModule } from '../customers/customers.module';
 import { GatewaysModule } from '../gateways/gateways.module';
+import { PaymentLinksModule } from '../payment-links/payment-links.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { RefundsModule } from '../refunds/refunds.module';
 import { SettlementsModule } from '../settlements/settlements.module';
@@ -32,6 +33,8 @@ import { PaymentsService } from './payments.service';
     ShopsModule,
     // Names the credit a pack bought on the seller's way back from paying.
     BillingModule,
+    // ...and marks a payment link paid when its session settles.
+    PaymentLinksModule,
   ],
   controllers: [OrdersController, PaymentsController, CourierWebhookController],
   providers: [OrdersService, PaymentsService],

@@ -6,7 +6,7 @@ import {
   type OnModuleInit,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { and, eq, lt } from 'drizzle-orm';
+import { and, eq, lt, ne } from 'drizzle-orm';
 import { DRIZZLE } from '../../database/database.constants';
 import type { DrizzleDB } from '../../database/drizzle.types';
 import {
@@ -21,6 +21,8 @@ import {
   SslcommerzService,
   type SslcommerzCallbackBody,
 } from '../gateways/sslcommerz.service';
+import { RefundsService } from '../refunds/refunds.service';
+import { PaymentLinksService } from '../payment-links/payment-links.service';
 import { ShopOpeningService } from '../shops/shop-opening.service';
 import { SubscriptionsService } from '../subscriptions/subscriptions.service';
 import { OrdersService } from './orders.service';
@@ -92,6 +94,8 @@ export class PaymentsService implements OnModuleInit, OnModuleDestroy {
     private readonly sslcommerz: SslcommerzService,
     private readonly config: ConfigService,
     private readonly billing: BillingSettingsService,
+    private readonly paymentLinks: PaymentLinksService,
+    private readonly refunds: RefundsService,
   ) {}
 
   onModuleInit(): void {
@@ -322,6 +326,12 @@ export class PaymentsService implements OnModuleInit, OnModuleDestroy {
   ): Promise<void> {
     const transactionId = await this.recordTransaction(attempt, charge);
 
+    // A payment link is guarded on the link, not the session - see below.
+    if (attempt.purpose === 'payment_link') {
+      await this.settlePaymentLink(attempt, charge, transactionId);
+      return;
+    }
+
     // Claim the session. Whoever wins this update is the one that delivers;
     // everyone else has just recorded a charge and stops here.
     const [claimed] = await this.db
@@ -355,6 +365,62 @@ export class PaymentsService implements OnModuleInit, OnModuleDestroy {
       });
     } else if (attempt.orderId) {
       await this.ordersService.confirmGatewayPayment(attempt.orderId);
+    }
+  }
+
+  /**
+   * Apply a charge to the payment link it was for.
+   *
+   * Unlike an order, the once-only guard here is the *link*: a link can be
+   * attempted through several sessions, and what must happen once is the
+   * link being paid, whichever session the money came through. That has two
+   * consequences an order does not have:
+   *
+   *   - Money that lands on a session already written off (the payer sat on
+   *     the gateway's page past the sweep, or came back through "failed" and
+   *     then the bank approved it) still pays the link. Nothing was voided
+   *     when the session closed, so there is nothing to contradict - and
+   *     leaving the link open would invite a second payment for it.
+   *
+   *   - A second charge for a link that is already paid buys nothing, so it
+   *     is sent straight back rather than left for someone to notice.
+   */
+  private async settlePaymentLink(
+    attempt: GatewayPaymentRow,
+    charge: CapturedCharge,
+    transactionId: string | null,
+  ): Promise<void> {
+    await this.db
+      .update(gatewayPayments)
+      .set({ status: 'success', trxId: charge.gatewayTxnId })
+      .where(
+        and(
+          eq(gatewayPayments.id, attempt.id),
+          ne(gatewayPayments.status, 'success'),
+        ),
+      );
+
+    const result = await this.paymentLinks.settlePaid(attempt, {
+      gatewayTxnId: charge.gatewayTxnId,
+      instrument: charge.instrument,
+    });
+    if (result !== 'duplicate' || !transactionId) return;
+
+    try {
+      const refund = await this.refunds.refundTransaction(transactionId, {
+        reason: 'Duplicate payment for a payment link',
+        initiatedBy: 'auto',
+      });
+      this.logger.warn(
+        `Extra payment ${charge.gatewayTxnId} for an already-settled payment link - refund ${refund.status}`,
+      );
+    } catch (err) {
+      // The charge is in the ledger either way; the refund sweep and the
+      // logs are what is left to catch it.
+      this.logger.error(
+        `Could not refund duplicate payment ${charge.gatewayTxnId} for a payment link`,
+        err as Error,
+      );
     }
   }
 
@@ -464,7 +530,8 @@ export class PaymentsService implements OnModuleInit, OnModuleDestroy {
     if (!claimed) return;
     // A credit pack and a shop opening both hold nothing until they are paid
     // for - the draft's hour runs out on its own, and the handle goes back to
-    // the pool. An order was created up front and has to be voided.
+    // the pool. A payment link holds nothing either: it stays open to be
+    // tried again. An order was created up front and has to be voided.
     if (attempt.purpose === 'order' && attempt.orderId) {
       await this.ordersService.voidPendingOrder(attempt.orderId);
     }
@@ -519,6 +586,14 @@ export class PaymentsService implements OnModuleInit, OnModuleDestroy {
         ...(await this.packReceipt(attempt)),
         trx: trx ?? '',
       });
+    }
+    // A payment link goes back to the link's own page, which reads the
+    // link's real state from the API - the status here is only a hint for
+    // what to say while that is still being confirmed.
+    if (attempt.purpose === 'payment_link') {
+      const token = await this.paymentLinks.tokenFor(attempt.paymentLinkId);
+      if (!token) return this.resultUrl(attempt, { status });
+      return this.webUrl(`/pay/${token}`, { status, trx: trx ?? '' });
     }
     const order = attempt.orderId
       ? await this.db.query.orders.findFirst({

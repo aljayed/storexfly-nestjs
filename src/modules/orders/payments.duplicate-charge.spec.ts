@@ -25,6 +25,8 @@ describe('PaymentsService duplicate charges', () => {
     orderId: 'order-1',
     shopId: null,
   shopDraftId: null,
+    paymentLinkId: null,
+    payerDetails: null,
     packCode: null,
     couponCode: null,
     discountCents: 0,
@@ -104,6 +106,8 @@ describe('PaymentsService duplicate charges', () => {
       {} as never,
       { get: () => undefined } as never,
       { packByCode: jest.fn() } as never,
+      { settlePaid: jest.fn(), tokenFor: jest.fn() } as never,
+      { refundTransaction: jest.fn() } as never,
     );
     // `settle` is the seam these rules live behind; the public callbacks are
     // just the two ways a gateway reaches it.

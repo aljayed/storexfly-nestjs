@@ -3,7 +3,10 @@ import { ConfigService } from '@nestjs/config';
 import { DRIZZLE } from '../../database/database.constants';
 import type { DrizzleDB } from '../../database/drizzle.types';
 import { gatewayPayments } from '../../database/schema';
-import type { GatewayPaymentRow } from '../../database/schema';
+import type {
+  GatewayPayerDetails,
+  GatewayPaymentRow,
+} from '../../database/schema';
 import { BkashService } from './bkash.service';
 import { SslcommerzService } from './sslcommerz.service';
 
@@ -11,7 +14,11 @@ import { SslcommerzService } from './sslcommerz.service';
 export type CollectingGateway = 'bkash' | 'sslcommerz';
 
 /** What a session is collecting for. */
-export type PaymentPurpose = 'order' | 'credit_pack' | 'shop_opening';
+export type PaymentPurpose =
+  | 'order'
+  | 'credit_pack'
+  | 'shop_opening'
+  | 'payment_link';
 
 export interface GatewayCustomer {
   name: string;
@@ -41,6 +48,9 @@ export interface OpenSessionInput {
   shopId?: string;
   /** purpose='shop_opening': the filled-in shop this pack pays to open. */
   shopDraftId?: string;
+  /** purpose='payment_link': the link being paid, and who is paying it. */
+  paymentLinkId?: string;
+  payerDetails?: GatewayPayerDetails;
   packCode?: string;
   couponCode?: string;
   discountCents?: number;
@@ -123,6 +133,8 @@ export class GatewayCheckoutService {
       orderId: input.orderId ?? null,
       shopId: input.shopId ?? null,
       shopDraftId: input.shopDraftId ?? null,
+      paymentLinkId: input.paymentLinkId ?? null,
+      payerDetails: input.payerDetails ?? null,
       packCode: input.packCode ?? null,
       couponCode: input.couponCode ?? null,
       discountCents: input.discountCents ?? 0,

@@ -63,10 +63,19 @@ const SHOPS = [
 function serviceWith(opts: {
   orders: ReturnType<typeof order>[];
   settlements?: Record<string, unknown>[];
+  paymentLinks?: {
+    shopId: string;
+    amountCents: number;
+    paymentMethod: string | null;
+    paidAt: Date;
+  }[];
 }) {
   const db = {
     query: {
       orders: { findMany: jest.fn().mockResolvedValue(opts.orders) },
+      paymentLinks: {
+        findMany: jest.fn().mockResolvedValue(opts.paymentLinks ?? []),
+      },
       settlements: {
         findMany: jest.fn().mockResolvedValue(opts.settlements ?? []),
       },
@@ -77,6 +86,7 @@ function serviceWith(opts: {
           const inPlay = new Set([
             ...opts.orders.map((o) => o.shopId),
             ...(opts.settlements ?? []).map((s) => s.shopId as string),
+            ...(opts.paymentLinks ?? []).map((l) => l.shopId),
           ]);
           return Promise.resolve(SHOPS.filter((s) => inPlay.has(s.id)));
         }),
@@ -113,6 +123,59 @@ function serviceWith(opts: {
 
   return new SettlementsService(db, {} as ShopsService, methods);
 }
+
+/**
+ * A paid payment link is money the platform is holding for a shop, exactly as
+ * a prepaid order is - but there is no parcel, so nothing ever "delivers" it.
+ * It has to reach a payout on the strength of having been paid.
+ */
+describe('paid payment links in a payout', () => {
+  beforeAll(() => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-09-24T04:00:00.000Z'));
+  });
+  afterAll(() => jest.useRealTimers());
+
+  it('pays out a link in the cycle it was paid in, less the method fee', async () => {
+    const service = serviceWith({
+      orders: [],
+      paymentLinks: [
+        {
+          shopId: 'shop-a',
+          amountCents: 10_000,
+          paymentMethod: 'mbank',
+          paidAt: DHAKA_NOON('2026-09-20'),
+        },
+      ],
+    });
+
+    const { period, rows } = await service.forPlatform();
+
+    expect(period).toBe('2026-10');
+    expect(rows).toHaveLength(1);
+    expect(rows[0].shopId).toBe('shop-a');
+    // 3% of ৳100.
+    expect(rows[0].payout).toBe(97);
+  });
+
+  it('adds a link to the same payout as the shop’s orders', async () => {
+    const service = serviceWith({
+      orders: [order('shop-a', '2026-09-20', 5000)],
+      paymentLinks: [
+        {
+          shopId: 'shop-a',
+          amountCents: 10_000,
+          paymentMethod: 'mbank',
+          paidAt: DHAKA_NOON('2026-09-21'),
+        },
+      ],
+    });
+
+    const { rows } = await service.forPlatform('2026-10');
+
+    expect(rows[0].total).toBe(150);
+    expect(rows[0].payout).toBe(145.5);
+  });
+});
 
 describe('the cycles the settlements screen offers', () => {
   // Today is 24 Sep 2026, so the cycle now collecting is October's.

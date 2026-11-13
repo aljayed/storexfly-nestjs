@@ -16,6 +16,7 @@ import {
   ne,
   or,
   sql,
+  type SQL,
 } from 'drizzle-orm';
 import { centsToDollars } from '../../common/utils/money.util';
 import { DRIZZLE } from '../../database/database.constants';
@@ -23,6 +24,7 @@ import type { DrizzleDB } from '../../database/drizzle.types';
 import {
   deletedShopSettlements,
   orders,
+  paymentLinks,
   settlements,
   shops,
 } from '../../database/schema';
@@ -96,6 +98,26 @@ export function addOrderForSettlement(
   addOrder(bucket, order.paymentMethod, order.totalCents, 1);
 }
 
+/** A paid payment link, reduced to what a payout cycle needs of it. */
+export interface PaidLink {
+  shopId: string;
+  amountCents: number;
+  paymentMethod: string | null;
+  paidAt: Date;
+}
+
+/**
+ * Count one paid payment link into a cycle. It is a sale like any other, so
+ * it joins the count and the total, under the fee of the method that
+ * collected it.
+ */
+export function addPaidLink(
+  bucket: Buckets,
+  link: Pick<PaidLink, 'amountCents' | 'paymentMethod'>,
+): void {
+  addOrder(bucket, link.paymentMethod, link.amountCents, 1);
+}
+
 /**
  * Monthly payout accounting for prepaid (online) orders.
  *
@@ -146,10 +168,11 @@ export class SettlementsService {
   /** Shop admin: every payout cycle, newest first. */
   async forShop(shopId: string): Promise<ShopSettlementsResponse> {
     await this.shops.requireById(shopId);
-    const [catalog, methodViews, banner, rows, paidRows] = await Promise.all([
+    const [catalog, methodViews, banner, linkRows, rows, paidRows] = await Promise.all([
       this.methods.byCode(),
       this.methods.listEnabled(),
       this.methods.getBanner(),
+      this.paidLinks(eq(paymentLinks.shopId, shopId)),
       this.db.query.orders.findMany({
         where: and(
           or(eq(orders.shopId, shopId), eq(orders.resellerShopId, shopId)),
@@ -190,6 +213,12 @@ export class SettlementsService {
       addOrderForSettlement(b, r, shopId);
       byPeriod.set(period, b);
     }
+    for (const link of linkRows) {
+      const period = periodOf(link.paidAt);
+      const b = byPeriod.get(period) ?? emptyBuckets();
+      addPaidLink(b, link);
+      byPeriod.set(period, b);
+    }
     const paidByPeriod = new Map(paidRows.map((s) => [s.period, s]));
 
     // Continuous month range from the first order to today, so quiet months
@@ -220,8 +249,9 @@ export class SettlementsService {
    * it, the bucketing is what to move into SQL.
    */
   async forPlatform(period?: string): Promise<PlatformSettlementsResponse> {
-    const [catalog, rows, paidRows] = await Promise.all([
+    const [catalog, linkRows, rows, paidRows] = await Promise.all([
       this.methods.byCode(),
+      this.paidLinks(),
       this.db.query.orders.findMany({
         where: and(
           or(eq(orders.pay, 'Paid'), isNotNull(orders.advancePaidAt)),
@@ -267,6 +297,14 @@ export class SettlementsService {
         shops.set(r.resellerShopId, resellerBucket);
       }
       byPeriod.set(periodOf(arrived), shops);
+    }
+    for (const link of linkRows) {
+      const period = periodOf(link.paidAt);
+      const shops = byPeriod.get(period) ?? new Map<string, Buckets>();
+      const b = shops.get(link.shopId) ?? emptyBuckets();
+      addPaidLink(b, link);
+      shops.set(link.shopId, b);
+      byPeriod.set(period, shops);
     }
 
     const paidByPeriod = new Map<string, Map<string, SettlementRow>>();
@@ -583,7 +621,37 @@ export class SettlementsService {
     });
     const b = emptyBuckets();
     for (const r of rows) addOrderForSettlement(b, r, shopId);
+    const linkRows = await this.paidLinks(
+      and(
+        eq(paymentLinks.shopId, shopId),
+        gte(paymentLinks.paidAt, from),
+        lt(paymentLinks.paidAt, end),
+      ),
+    );
+    for (const link of linkRows) addPaidLink(b, link);
     return b;
+  }
+
+  /**
+   * Paid payment links, as the payout math wants them. They are money the
+   * platform collected for a shop exactly as a prepaid order is, but with no
+   * parcel to wait for - so a link joins the cycle it was *paid* in.
+   */
+  private async paidLinks(where?: SQL): Promise<PaidLink[]> {
+    const rows = await this.db.query.paymentLinks.findMany({
+      where: and(
+        eq(paymentLinks.status, 'paid'),
+        isNotNull(paymentLinks.paidAt),
+        where,
+      ),
+      columns: {
+        shopId: true,
+        amountCents: true,
+        paymentMethod: true,
+        paidAt: true,
+      },
+    });
+    return rows as PaidLink[];
   }
 
   /** Assembles the API shape for one month from live buckets or a snapshot. */

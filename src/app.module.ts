@@ -26,6 +26,7 @@ import { NotificationsModule } from './modules/notifications/notifications.modul
 import { StorageModule } from './modules/storage/storage.module';
 import { NoticesModule } from './modules/notices/notices.module';
 import { PlatformModule } from './modules/platform/platform.module';
+import { PaymentLinksModule } from './modules/payment-links/payment-links.module';
 import { OrdersModule } from './modules/orders/orders.module';
 import { ProductsModule } from './modules/products/products.module';
 import { ReportsModule } from './modules/reports/reports.module';
@@ -72,6 +73,7 @@ import { UsersModule } from './modules/users/users.module';
     GatewaysModule,
     NotificationsModule,
     OrdersModule,
+    PaymentLinksModule,
     CustomersModule,
     ReportsModule,
     SettlementsModule,
