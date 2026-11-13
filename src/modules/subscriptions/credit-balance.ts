@@ -60,7 +60,7 @@ export async function creditPosition(
     );
   const [links] = await db
     .select({
-      total: sql<string>`coalesce(sum(${paymentLinks.amountCents}), 0)`,
+      total: sql<string>`coalesce(sum(${paymentLinks.settledAmountCents}), 0)`,
     })
     .from(paymentLinks)
     .where(

@@ -35,6 +35,7 @@ describe('PaymentsService duplicate charges', () => {
     paymentId: '1007-6ECDD53A-MSYTTNNA',
     status: 'created',
     amountCents: 4_257_000,
+    currency: 'BDT',
     trxId: null,
     payerReference: '8801700000000',
     createdAt: new Date(),

@@ -16,6 +16,9 @@ export class PaymentLinkResponse {
   @ApiProperty() title!: string;
   @ApiPropertyOptional() description?: string;
   @ApiProperty() amount!: number;
+  @ApiProperty({ enum: ['BDT', 'USD', 'INR'] }) currency!: string;
+  @ApiPropertyOptional({ description: 'Gross amount collected in BDT' })
+  settledAmount?: number;
   @ApiProperty({ enum: ['active', 'paid', 'cancelled', 'expired', 'refunded'] })
   state!: PaymentLinkState;
   @ApiPropertyOptional() expiresAt?: string;
@@ -32,10 +35,22 @@ export class PaymentLinkResponse {
 
 /** Totals over every link the shop has made. Money in major units. */
 export class PaymentLinkSummaryResponse {
+  /** Collected money is the gross BDT settlement total. */
   @ApiProperty() collected!: number;
   @ApiProperty() collectedCount!: number;
   @ApiProperty() awaiting!: number;
   @ApiProperty() awaitingCount!: number;
+  @ApiProperty({
+    type: 'array',
+    items: {
+      type: 'object',
+      properties: {
+        currency: { type: 'string' },
+        amount: { type: 'number' },
+      },
+    },
+  })
+  awaitingByCurrency!: { currency: string; amount: number }[];
 }
 
 export class PaymentLinkListResponse {

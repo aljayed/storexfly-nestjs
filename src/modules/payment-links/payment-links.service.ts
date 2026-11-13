@@ -37,6 +37,7 @@ import type {
   CreatePaymentLinkDto,
   PayPaymentLinkDto,
 } from './dto/payment-link.dto';
+import { PAYMENT_LINK_MIN } from './dto/payment-link.dto';
 import type {
   PayPaymentLinkResponse,
   PaymentLinkListResponse,
@@ -114,13 +115,15 @@ export class PaymentLinksService {
       // Over every link the shop has made, not just the page listed below.
       this.db
         .select({
-          collectedCents: sql<string>`coalesce(sum(${paymentLinks.amountCents}) filter (where ${paymentLinks.status} = 'paid'), 0)`,
+          currency: paymentLinks.currency,
+          collectedCents: sql<string>`coalesce(sum(${paymentLinks.settledAmountCents}) filter (where ${paymentLinks.status} = 'paid'), 0)`,
           collectedCount: sql<string>`count(*) filter (where ${paymentLinks.status} = 'paid')`,
           awaitingCents: sql<string>`coalesce(sum(${paymentLinks.amountCents}) filter (where ${paymentLinks.status} = 'active' and (${paymentLinks.expiresAt} is null or ${paymentLinks.expiresAt} > now())), 0)`,
           awaitingCount: sql<string>`count(*) filter (where ${paymentLinks.status} = 'active' and (${paymentLinks.expiresAt} is null or ${paymentLinks.expiresAt} > now()))`,
         })
         .from(paymentLinks)
-        .where(eq(paymentLinks.shopId, shopId)),
+        .where(eq(paymentLinks.shopId, shopId))
+        .groupBy(paymentLinks.currency),
       this.db.query.paymentLinks.findMany({
         where: eq(paymentLinks.shopId, shopId),
         orderBy: desc(paymentLinks.createdAt),
@@ -131,10 +134,30 @@ export class PaymentLinksService {
       available: !!method && this.shopCanCollect(shop),
       feePercent: method ? method.feeBp / 100 : undefined,
       summary: {
-        collected: centsToDollars(Number(totals[0]?.collectedCents ?? 0)),
-        collectedCount: Number(totals[0]?.collectedCount ?? 0),
-        awaiting: centsToDollars(Number(totals[0]?.awaitingCents ?? 0)),
-        awaitingCount: Number(totals[0]?.awaitingCount ?? 0),
+        collected: centsToDollars(
+          totals.reduce((sum, row) => sum + Number(row.collectedCents), 0),
+        ),
+        collectedCount: totals.reduce(
+          (sum, row) => sum + Number(row.collectedCount),
+          0,
+        ),
+        // Keep the legacy total in BDT; currencies cannot be added together.
+        awaiting: centsToDollars(
+          Number(
+            totals.find((row) => row.currency === 'BDT')?.awaitingCents ?? 0,
+          ),
+        ),
+        awaitingCount: totals.reduce(
+          (sum, row) => sum + Number(row.awaitingCount),
+          0,
+        ),
+        awaitingByCurrency: totals
+          .filter((row) => Number(row.awaitingCount) > 0)
+          .sort((a, b) => a.currency.localeCompare(b.currency))
+          .map((row) => ({
+            currency: row.currency,
+            amount: centsToDollars(Number(row.awaitingCents)),
+          })),
       },
       links: rows.map((row) => this.toResponse(row)),
     };
@@ -144,6 +167,12 @@ export class PaymentLinksService {
     shopId: string,
     dto: CreatePaymentLinkDto,
   ): Promise<PaymentLinkResponse> {
+    const currency = dto.currency ?? 'BDT';
+    if (currency === 'BDT' && dto.amount < PAYMENT_LINK_MIN) {
+      throw new BadRequestException(
+        `The minimum BDT amount is ${PAYMENT_LINK_MIN}.`,
+      );
+    }
     const shop = await this.shops.requireById(shopId);
     // Refused up front rather than at the buyer's end: a link that cannot be
     // paid is worse than no link, because the seller has already sent it.
@@ -178,6 +207,7 @@ export class PaymentLinksService {
             title: dto.title,
             description: dto.description ?? null,
             amountCents: dollarsToCents(dto.amount),
+            currency,
             expiresAt,
           })
           .returning();
@@ -312,7 +342,7 @@ export class PaymentLinksService {
       title: link.title,
       description: link.description ?? undefined,
       amount: centsToDollars(link.amountCents),
-      currency: shop.currency,
+      currency: link.currency,
       state,
       payable:
         state === 'active' &&
@@ -359,6 +389,7 @@ export class PaymentLinksService {
       purpose: 'payment_link',
       gateway: 'sslcommerz',
       amountCents: link.amountCents,
+      currency: link.currency,
       reference: 'PAY',
       entityId: link.token,
       productName: link.title,
@@ -404,7 +435,7 @@ export class PaymentLinksService {
    */
   async settlePaid(
     attempt: GatewayPaymentRow,
-    charge: { gatewayTxnId: string; instrument?: string },
+    charge: { gatewayTxnId: string; amountCents: number; instrument?: string },
   ): Promise<LinkSettleResult> {
     if (!attempt.paymentLinkId) return 'already';
     const method = await this.collectingMethod({ includeDisabled: true });
@@ -413,6 +444,7 @@ export class PaymentLinksService {
       .update(paymentLinks)
       .set({
         status: 'paid',
+        settledAmountCents: charge.amountCents,
         paidAt: new Date(),
         trxId: charge.gatewayTxnId,
         paymentMethod: method?.code ?? null,
@@ -541,6 +573,11 @@ export class PaymentLinksService {
       title: row.title,
       description: row.description ?? undefined,
       amount: centsToDollars(row.amountCents),
+      currency: row.currency,
+      settledAmount:
+        row.settledAmountCents == null
+          ? undefined
+          : centsToDollars(row.settledAmountCents),
       state: paymentLinkState(row),
       expiresAt: row.expiresAt?.toISOString(),
       createdAt: row.createdAt.toISOString(),

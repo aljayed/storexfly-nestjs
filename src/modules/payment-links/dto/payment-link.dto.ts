@@ -2,6 +2,7 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform, Type } from 'class-transformer';
 import {
   IsEmail,
+  IsIn,
   IsISO8601,
   IsNumber,
   IsOptional,
@@ -12,10 +13,14 @@ import {
   Min,
   MinLength,
 } from 'class-validator';
+import {
+  PAYMENT_LINK_CURRENCIES,
+  type PaymentLinkCurrency,
+} from '../../../database/schema/payment-links.schema';
 
-/** Smallest and largest amount one link may ask for, in ৳. */
+/** BDT minimum; foreign-currency limits are enforced after gateway conversion. */
 export const PAYMENT_LINK_MIN = 10;
-// SSLCommerz refuses a single transaction above this.
+// Input ceiling in major units. SSLCommerz also enforces BDT 500,000 after FX.
 export const PAYMENT_LINK_MAX = 500_000;
 
 const trim = ({ value }: { value: unknown }) =>
@@ -28,7 +33,7 @@ const blankToUndefined = ({ value }: { value: unknown }) =>
       ? value.trim()
       : value;
 
-/** Seller: ask a buyer for an amount. Money in major units (৳). */
+/** Seller: ask a buyer for an amount in the selected currency's major units. */
 export class CreatePaymentLinkDto {
   @ApiProperty({ example: 'Custom cake - 2 kg' })
   @Transform(trim)
@@ -47,9 +52,14 @@ export class CreatePaymentLinkDto {
   @ApiProperty({ example: 1500 })
   @Type(() => Number)
   @IsNumber({ maxDecimalPlaces: 2 })
-  @Min(PAYMENT_LINK_MIN)
+  @Min(0.01)
   @Max(PAYMENT_LINK_MAX)
   amount!: number;
+
+  @ApiPropertyOptional({ enum: PAYMENT_LINK_CURRENCIES, default: 'BDT' })
+  @IsOptional()
+  @IsIn(PAYMENT_LINK_CURRENCIES)
+  currency?: PaymentLinkCurrency;
 
   @ApiPropertyOptional({
     description: 'Last moment the link may be paid. Omit for no deadline.',

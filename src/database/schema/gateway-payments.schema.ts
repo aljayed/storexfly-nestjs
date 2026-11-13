@@ -83,6 +83,7 @@ export const gatewayPayments = pgTable(
     paymentId: varchar('payment_id', { length: 80 }).notNull(),
     status: varchar('status', { length: 20 }).notNull().default('created'),
     amountCents: integer('amount_cents').notNull(),
+    currency: varchar('currency', { length: 3 }).notNull().default('BDT'),
     // Gateway transaction id on success (bKash `trxID`, SSLCommerz
     // `bank_tran_id`) - the buyer's receipt reference, the reconciliation key
     // against the merchant statement, and what a refund is filed against.

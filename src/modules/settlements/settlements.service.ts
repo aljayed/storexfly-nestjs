@@ -646,12 +646,15 @@ export class SettlementsService {
       ),
       columns: {
         shopId: true,
-        amountCents: true,
+        settledAmountCents: true,
         paymentMethod: true,
         paidAt: true,
       },
     });
-    return rows as PaidLink[];
+    return rows.map((row) => ({
+      ...row,
+      amountCents: row.settledAmountCents ?? 0,
+    })) as PaidLink[];
   }
 
   /** Assembles the API shape for one month from live buckets or a snapshot. */

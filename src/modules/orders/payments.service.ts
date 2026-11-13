@@ -262,14 +262,28 @@ export class PaymentsService implements OnModuleInit, OnModuleDestroy {
     const validation = await this.sslcommerz.validate(valId);
     if (validation.status === 'UNREACHABLE') return { status: 'pending' };
 
-    const wrongTransaction =
-      validation.tranId !== undefined &&
-      validation.tranId !== attempt.paymentId;
+    const currency = attempt.currency ?? 'BDT';
+    const foreignCurrency = currency !== 'BDT';
+    const wrongTransaction = validation.tranId !== attempt.paymentId;
+    // amount/currency describe BDT settlement. Compare the original amount
+    // for foreign-currency sessions; comparing USD cents to paisa accepts
+    // underpayments and rejects valid INR payments.
+    const requestedAmount = foreignCurrency
+      ? validation.originalAmountCents
+      : validation.amountCents;
     const shortPaid =
-      validation.amountCents !== undefined &&
-      validation.amountCents < attempt.amountCents;
+      requestedAmount === undefined ||
+      !Number.isFinite(requestedAmount) ||
+      requestedAmount < attempt.amountCents ||
+      validation.amountCents === undefined ||
+      !Number.isFinite(validation.amountCents) ||
+      validation.amountCents <= 0;
     const wrongCurrency =
-      validation.currency !== undefined && validation.currency !== 'BDT';
+      validation.currency !== 'BDT' ||
+      (foreignCurrency && validation.originalCurrency !== currency) ||
+      (!foreignCurrency &&
+        validation.originalCurrency !== undefined &&
+        validation.originalCurrency !== currency);
 
     if (!validation.ok || wrongTransaction || shortPaid || wrongCurrency) {
       this.logger.warn(
@@ -402,6 +416,7 @@ export class PaymentsService implements OnModuleInit, OnModuleDestroy {
 
     const result = await this.paymentLinks.settlePaid(attempt, {
       gatewayTxnId: charge.gatewayTxnId,
+      amountCents: charge.amountCents,
       instrument: charge.instrument,
     });
     if (result !== 'duplicate' || !transactionId) return;

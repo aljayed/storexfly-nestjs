@@ -1,5 +1,6 @@
-import { relations } from 'drizzle-orm';
+import { relations, sql } from 'drizzle-orm';
 import {
+  check,
   index,
   integer,
   pgTable,
@@ -12,6 +13,8 @@ import { shops } from './shops.schema';
 
 /** Where a link stands. 'expired' is derived from `expiresAt`, never stored. */
 export type PaymentLinkStatus = 'active' | 'paid' | 'cancelled' | 'refunded';
+export const PAYMENT_LINK_CURRENCIES = ['BDT', 'USD', 'INR'] as const;
+export type PaymentLinkCurrency = (typeof PAYMENT_LINK_CURRENCIES)[number];
 
 /**
  * A request for money a shop sends to one buyer as a URL: an amount, what it
@@ -48,6 +51,12 @@ export const paymentLinks = pgTable(
     title: varchar('title', { length: 120 }).notNull(),
     description: varchar('description', { length: 500 }),
     amountCents: integer('amount_cents').notNull(),
+    currency: varchar('currency', { length: 3 })
+      .$type<PaymentLinkCurrency>()
+      .notNull()
+      .default('BDT'),
+    /** Gross BDT collected by SSLCommerz, used for payouts and sales credit. */
+    settledAmountCents: integer('settled_amount_cents'),
     status: varchar('status', { length: 16 })
       .$type<PaymentLinkStatus>()
       .notNull()
@@ -80,6 +89,10 @@ export const paymentLinks = pgTable(
       .$onUpdate(() => new Date()),
   },
   (table) => [
+    check(
+      'payment_links_currency_check',
+      sql`${table.currency} in ('BDT', 'USD', 'INR')`,
+    ),
     uniqueIndex('payment_links_token_unique_idx').on(table.token),
     index('payment_links_shop_idx').on(table.shopId, table.createdAt),
     // What the payout math reads: one shop's paid links by when they landed.

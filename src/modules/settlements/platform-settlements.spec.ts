@@ -65,7 +65,9 @@ function serviceWith(opts: {
   settlements?: Record<string, unknown>[];
   paymentLinks?: {
     shopId: string;
-    amountCents: number;
+    amountCents?: number;
+    currency?: string;
+    settledAmountCents: number;
     paymentMethod: string | null;
     paidAt: Date;
   }[];
@@ -141,7 +143,7 @@ describe('paid payment links in a payout', () => {
       paymentLinks: [
         {
           shopId: 'shop-a',
-          amountCents: 10_000,
+          settledAmountCents: 10_000,
           paymentMethod: 'mbank',
           paidAt: DHAKA_NOON('2026-09-20'),
         },
@@ -157,13 +159,26 @@ describe('paid payment links in a payout', () => {
     expect(rows[0].payout).toBe(97);
   });
 
+  it('pays out a USD link using its captured BDT value', async () => {
+    const service = serviceWith({
+      orders: [],
+      paymentLinks: [{
+        shopId: 'shop-a', currency: 'USD', amountCents: 1000,
+        settledAmountCents: 122000, paymentMethod: 'mbank',
+        paidAt: DHAKA_NOON('2026-09-20'),
+      }],
+    });
+    const { rows } = await service.forPlatform('2026-10');
+    expect(rows[0].payout).toBe(1183.4); // BDT 1220 less 3%.
+  });
+
   it('adds a link to the same payout as the shop’s orders', async () => {
     const service = serviceWith({
       orders: [order('shop-a', '2026-09-20', 5000)],
       paymentLinks: [
         {
           shopId: 'shop-a',
-          amountCents: 10_000,
+          settledAmountCents: 10_000,
           paymentMethod: 'mbank',
           paidAt: DHAKA_NOON('2026-09-21'),
         },

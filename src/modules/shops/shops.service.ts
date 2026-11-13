@@ -1257,7 +1257,7 @@ export class ShopsService {
           eq(paymentLinks.status, 'paid'),
           isNotNull(paymentLinks.paidAt),
         ),
-        columns: { amountCents: true, paymentMethod: true, paidAt: true },
+        columns: { settledAmountCents: true, paymentMethod: true, paidAt: true },
       }),
       this.db.query.orders.findMany({
         where: and(
@@ -1304,7 +1304,7 @@ export class ShopsService {
       if (!link.paidAt) continue;
       const period = periodOf(link.paidAt);
       const b = byPeriod.get(period) ?? emptyBuckets();
-      addOrder(b, link.paymentMethod, link.amountCents, 1);
+      addOrder(b, link.paymentMethod, link.settledAmountCents ?? 0, 1);
       byPeriod.set(period, b);
     }
     const alreadyPaid = new Set(paidRows.map((p) => p.period));

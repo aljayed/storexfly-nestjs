@@ -750,6 +750,13 @@
       "when": 1795132800000,
       "tag": "0109_payment_links",
       "breakpoints": true
+    },
+    {
+      "idx": 110,
+      "version": "7",
+      "when": 1795219200000,
+      "tag": "0110_payment_link_currencies",
+      "breakpoints": true
     }
   ]
 }

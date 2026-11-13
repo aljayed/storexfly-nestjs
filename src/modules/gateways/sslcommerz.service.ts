@@ -31,8 +31,9 @@ export interface SslcommerzCustomer {
 }
 
 export interface SslcommerzSessionInput {
-  /** Amount to collect now, in BDT cents (paisa). */
+  /** Amount to collect now, in the requested currency's minor units. */
   amountCents: number;
+  currency?: 'BDT' | 'USD' | 'INR';
   /** Our own `tran_id` - what the return leg looks the attempt up by. */
   tranId: string;
   productName: string;
@@ -65,6 +66,9 @@ export interface SslcommerzValidation {
   /** Amount actually collected, in BDT cents - verified against the order. */
   amountCents?: number;
   currency?: string;
+  /** Original currency and amount, before SSLCommerz converts to BDT. */
+  originalCurrency?: string;
+  originalAmountCents?: number;
   cardType?: string;
   status?: string;
   reason?: string;
@@ -204,7 +208,7 @@ export class SslcommerzService {
       store_id: config.storeId,
       store_passwd: config.storePassword,
       total_amount: (input.amountCents / 100).toFixed(2),
-      currency: 'BDT',
+      currency: input.currency ?? 'BDT',
       tran_id: input.tranId,
       success_url: input.successUrl,
       fail_url: input.failUrl,
@@ -305,7 +309,8 @@ export class SslcommerzService {
       const risk = parseInt(data.risk_level ?? '', 10);
       // An unparseable amount is reported as absent rather than as NaN: NaN
       // loses every comparison, so a short-paid check against it would pass.
-      const amount = parseFloat(data.amount ?? '');
+      const amount = Number(data.amount);
+      const originalAmount = Number(data.currency_amount);
       return {
         ok: settled,
         tranId: data.tran_id,
@@ -314,6 +319,10 @@ export class SslcommerzService {
           ? Math.round(amount * 100)
           : undefined,
         currency: data.currency,
+        originalCurrency: data.currency_type,
+        originalAmountCents: Number.isFinite(originalAmount)
+          ? Math.round(originalAmount * 100)
+          : undefined,
         cardType: data.card_type,
         status: data.status,
         reason: data.error || data.risk_title,

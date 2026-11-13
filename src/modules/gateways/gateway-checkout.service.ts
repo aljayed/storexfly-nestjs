@@ -32,8 +32,9 @@ export interface GatewayCustomer {
 export interface OpenSessionInput {
   purpose: PaymentPurpose;
   gateway: CollectingGateway;
-  /** What to collect now, in paisa. */
+  /** What to collect now, in the currency's minor units. */
   amountCents: number;
+  currency?: 'BDT' | 'USD' | 'INR';
   /**
    * Short human handle for this payment ('1043', 'CREDIT'). Rides in the
    * invoice/`tran_id` so the merchant panel row is recognisable next to what
@@ -117,6 +118,10 @@ export class GatewayCheckoutService {
    * or is unreachable; the caller decides what to unwind.
    */
   async open(input: OpenSessionInput): Promise<OpenSessionResult> {
+    const currency = input.currency ?? 'BDT';
+    if (input.gateway === 'bkash' && currency !== 'BDT') {
+      throw new BadRequestException('bKash only supports BDT payments.');
+    }
     if (input.amountCents <= 0) {
       throw new BadRequestException('There is nothing to pay for.');
     }
@@ -140,6 +145,7 @@ export class GatewayCheckoutService {
       discountCents: input.discountCents ?? 0,
       refSlug: input.refSlug ?? null,
       amountCents: input.amountCents,
+      currency,
       payerReference: digits.slice(0, 40),
     };
 
@@ -166,6 +172,7 @@ export class GatewayCheckoutService {
       .toUpperCase();
     const session = await this.sslcommerz.createSession({
       amountCents: input.amountCents,
+      currency,
       tranId,
       productName: input.productName,
       customer: input.customer,
