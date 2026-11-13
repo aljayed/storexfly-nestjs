@@ -236,6 +236,13 @@ export class SslcommerzService {
       ship_postcode: input.customer.postcode.slice(0, 20) || 'N/A',
       ship_country: 'Bangladesh',
     });
+    // SSLCommerz controls the hosted page's default tab. For foreign-currency
+    // links, offer the documented card groups so buyers enter card checkout.
+    // Leave BDT unrestricted, including callers that omit the currency.
+    // https://developer.sslcommerz.com/doc/v4/index.html (multi_card_name)
+    if ((input.currency ?? 'BDT') !== 'BDT') {
+      body.set('multi_card_name', 'mastercard,visacard,amexcard');
+    }
 
     let data: SessionResponse;
     try {

@@ -11,8 +11,8 @@ describe('SSLCommerz currency transport', () => {
   } as never);
   afterEach(() => jest.restoreAllMocks());
 
-  it.each(['BDT', 'USD', 'INR'] as const)(
-    'sends %s without locally converting the amount',
+  it.each([undefined, 'BDT', 'USD', 'INR'] as const)(
+    'sends %s without conversion and restricts only foreign currency to cards',
     async (currency) => {
       const fetchMock = jest.spyOn(global, 'fetch').mockResolvedValue({
         ok: true,
@@ -42,8 +42,13 @@ describe('SSLCommerz currency transport', () => {
       const body = new URLSearchParams(
         fetchMock.mock.calls[0][1]?.body as string,
       );
-      expect(body.get('currency')).toBe(currency);
+      expect(body.get('currency')).toBe(currency ?? 'BDT');
       expect(body.get('total_amount')).toBe('12.34');
+      expect(body.get('multi_card_name')).toBe(
+        currency === 'USD' || currency === 'INR'
+          ? 'mastercard,visacard,amexcard'
+          : null,
+      );
     },
   );
 
