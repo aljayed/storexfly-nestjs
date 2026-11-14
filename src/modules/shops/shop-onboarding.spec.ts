@@ -15,6 +15,7 @@ const contact = {
   phone: '+8801712345678',
   emailVerified: true,
   phoneVerified: true,
+  faceVerifiedAt: new Date('2026-11-01T00:00:00Z'),
 };
 const payload: CreateShopDto = {
   name: 'Test Shop',
@@ -37,6 +38,9 @@ function harness() {
       users: {
         findFirst: jest
           .fn()
+          // The contact check, then the face check; later lookups are for
+          // somebody else holding the handle.
+          .mockResolvedValueOnce(contact)
           .mockResolvedValueOnce(contact)
           .mockResolvedValue(undefined),
       },
@@ -120,6 +124,19 @@ describe('shop onboarding persistence', () => {
       .mockResolvedValue({ ...contact, emailVerified: false, phoneVerified: false });
     await expect(createShop(h.service, contact.id, payload)).rejects.toThrow(
       ForbiddenException,
+    );
+    expect(h.db.transaction).not.toHaveBeenCalled();
+  });
+
+  // A shop is free, so the thing rationed is shops per person: the account
+  // must have passed the face check before one is written.
+  it('refuses an account whose face is not verified', async () => {
+    const h = harness();
+    h.db.query.users.findFirst
+      .mockReset()
+      .mockResolvedValue({ ...contact, faceVerifiedAt: null });
+    await expect(createShop(h.service, contact.id, payload)).rejects.toThrow(
+      'Verify your face',
     );
     expect(h.db.transaction).not.toHaveBeenCalled();
   });

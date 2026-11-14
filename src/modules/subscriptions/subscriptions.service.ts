@@ -4,6 +4,7 @@ import {
   ForbiddenException,
   Inject,
   Injectable,
+  GoneException,
   Logger,
   NotFoundException,
   type OnModuleDestroy,
@@ -16,6 +17,8 @@ import {
   FREE_ORDER_CAP,
   FREE_TIER_LIMIT_MESSAGE,
   PLATFORM_CURRENCY,
+  PLATFORM_FREE,
+  PLATFORM_FREE_MESSAGE,
 } from '../../common/constants/billing';
 import { DRIZZLE } from '../../database/database.constants';
 import type { DbExecutor, DrizzleDB } from '../../database/drizzle.types';
@@ -253,6 +256,7 @@ export class SubscriptionsService implements OnModuleInit, OnModuleDestroy {
     refSlug?: string,
     gateway?: CollectingGateway,
   ): Promise<BuyCreditsResult> {
+    this.assertBillingOpen();
     const sub = await this.settle(await this.requireByShop(shopId));
     if (sub.status === 'cancelled') {
       throw new ForbiddenException(
@@ -723,6 +727,7 @@ export class SubscriptionsService implements OnModuleInit, OnModuleDestroy {
     shopId: string,
     mode: 'credits' | 'commission',
   ): Promise<SubscriptionResponse> {
+    this.assertBillingOpen();
     const sub = await this.settle(await this.requireByShop(shopId));
     if (sub.status === 'cancelled') {
       throw new ForbiddenException(
@@ -886,6 +891,7 @@ export class SubscriptionsService implements OnModuleInit, OnModuleDestroy {
       where: eq(subscriptions.shopId, shopId),
     });
     if (
+      PLATFORM_FREE ||
       !sub ||
       sub.status === 'cancelled' ||
       sub.billingMode !== 'commission'
@@ -924,7 +930,8 @@ export class SubscriptionsService implements OnModuleInit, OnModuleDestroy {
    */
   async closingPosition(shopId: string): Promise<ClosingPosition> {
     const sub = await this.findByShop(shopId);
-    if (!sub) {
+    // Free platform: a shop owes nothing and gives nothing up by closing.
+    if (!sub || PLATFORM_FREE) {
       return {
         commissionOwedCents: 0,
         creditBalanceCents: 0,
@@ -958,6 +965,7 @@ export class SubscriptionsService implements OnModuleInit, OnModuleDestroy {
    * the window just paid for is never billed a second time.
    */
   async settleOutstanding(shopId: string): Promise<SubscriptionResponse> {
+    this.assertBillingOpen();
     const sub = await this.settle(await this.requireByShop(shopId));
     if (sub.status === 'cancelled') {
       throw new ForbiddenException(
@@ -1046,6 +1054,7 @@ export class SubscriptionsService implements OnModuleInit, OnModuleDestroy {
    * later.
    */
   async payNow(shopId: string): Promise<SubscriptionResponse> {
+    this.assertBillingOpen();
     const sub = await this.settle(await this.requireByShop(shopId));
     if (sub.status === 'cancelled') {
       throw new ForbiddenException(
@@ -1200,12 +1209,14 @@ export class SubscriptionsService implements OnModuleInit, OnModuleDestroy {
         );
       }
       const sub = await this.findByShop(shopId);
-      if (sub?.status === 'cancelled') {
+      if (!PLATFORM_FREE && sub?.status === 'cancelled') {
         throw new ForbiddenException(
           'This shop is cancelled - resume it to go live.',
         );
       }
-      if (shop.plan === 'free') {
+      if (PLATFORM_FREE) {
+        // Nothing to sell against: every shop may be live.
+      } else if (shop.plan === 'free') {
         const usage = await this.freeTierUsage(shopId);
         if (usage.ordersUsed >= FREE_ORDER_CAP) {
           throw new ForbiddenException(FREE_TIER_LIMIT_MESSAGE);
@@ -1240,9 +1251,50 @@ export class SubscriptionsService implements OnModuleInit, OnModuleDestroy {
     if (sub.status === 'cancelled') {
       return sub;
     }
+    if (PLATFORM_FREE) {
+      return this.settleFree(sub);
+    }
     return sub.billingMode === 'commission'
       ? this.settleCommission(sub)
       : this.settleCredits(sub);
+  }
+
+  /**
+   * Free platform: nothing is billed and nothing runs out. The only work left
+   * is undoing what the old billing did - a shop it paused over an empty
+   * balance or an unpaid bill is switched back on, once, and the mark that
+   * paused it is cleared so a seller's own later switch-off is left alone.
+   */
+  private async settleFree(sub: SubscriptionRow): Promise<SubscriptionRow> {
+    if (!sub.creditExhaustedAt && sub.dueCents <= 0) {
+      return sub;
+    }
+    const [cleared] = await this.db
+      .update(subscriptions)
+      .set({
+        creditExhaustedAt: null,
+        dueCents: 0,
+        dueSince: null,
+        duePeriodStart: null,
+        duePeriodEnd: null,
+        dueBillableSalesCents: null,
+        status: 'active',
+      })
+      .where(eq(subscriptions.id, sub.id))
+      .returning();
+    await this.liftPause(sub.shopId);
+    this.logger.log(`Shop ${sub.shopId} is free now - billing pause lifted`);
+    return cleared ?? sub;
+  }
+
+  /** The paying endpoints are retired while the platform is free. */
+  private assertBillingOpen(): void {
+    if (PLATFORM_FREE) {
+      throw new GoneException({
+        error: 'PlatformFree',
+        message: PLATFORM_FREE_MESSAGE,
+      });
+    }
   }
 
   /**
@@ -1614,7 +1666,9 @@ export class SubscriptionsService implements OnModuleInit, OnModuleDestroy {
         }),
         this.billing.packs(),
         this.creditState(sub),
-        this.billableSalesCents(sub, period.start, new Date()),
+        PLATFORM_FREE
+          ? Promise.resolve(0)
+          : this.billableSalesCents(sub, period.start, new Date()),
       ]);
     const tier = shop?.plan ?? 'free';
     // Only an invalid payment can have been refunded; the newest refund per

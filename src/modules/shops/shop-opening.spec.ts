@@ -1,4 +1,4 @@
-import { ConflictException } from '@nestjs/common';
+import { GoneException } from '@nestjs/common';
 import type { DrizzleDB } from '../../database/drizzle.types';
 import type { GatewayPaymentRow, ShopDraftRow } from '../../database/schema';
 import { DRAFT_HOLD_MS, ShopOpeningService } from './shop-opening.service';
@@ -159,16 +159,52 @@ function harness(
   return { service, db, shops, subscriptions, gatewayCheckout, updates, inserted };
 }
 
-describe('opening a shop is a purchase', () => {
-  it('holds the handle for an hour instead of creating a shop', async () => {
+describe('opening a shop is free', () => {
+  it('writes the shop on the spot, one per account', async () => {
     const h = harness();
-    const view = await h.service.start(OWNER, payload);
-    expect(h.shops.createPreparedShop).not.toHaveBeenCalled();
-    expect(h.inserted[0]).toMatchObject({ handle: 'test-shop', ownerId: OWNER });
-    const held = new Date(view.expiresAt).getTime() - Date.now();
-    expect(held).toBeGreaterThan(DRAFT_HOLD_MS - 5000);
-    expect(held).toBeLessThanOrEqual(DRAFT_HOLD_MS);
+    const shop = await h.service.openFree(OWNER, payload);
+    expect(shop.id).toBe('shop-1');
+    // prepareShop is where contact, face and one-shop are all asked.
+    expect(h.shops.prepareShop).toHaveBeenCalledWith(OWNER, payload);
+    expect(h.shops.createPreparedShop).toHaveBeenCalledWith(
+      OWNER,
+      expect.anything(),
+      { single: true },
+    );
+    expect(h.gatewayCheckout.open).not.toHaveBeenCalled();
+    expect(h.subscriptions.grantPurchasedCredit).not.toHaveBeenCalled();
   });
+
+  it('writes nothing when the checks refuse', async () => {
+    const h = harness();
+    h.shops.prepareShop.mockRejectedValue(new Error('Verify your face'));
+    await expect(h.service.openFree(OWNER, payload)).rejects.toThrow(
+      'Verify your face',
+    );
+    expect(h.shops.createPreparedShop).not.toHaveBeenCalled();
+  });
+
+  it('no longer holds a name to be paid for', async () => {
+    const h = harness();
+    await expect(h.service.start(OWNER, payload)).rejects.toBeInstanceOf(
+      GoneException,
+    );
+    expect(h.inserted).toHaveLength(0);
+  });
+
+  it('no longer takes money to open a shop', async () => {
+    const h = harness({ found: draft() });
+    await expect(
+      h.service.pay(OWNER, 'draft-1', { packCode: 'credit-100k' }),
+    ).rejects.toBeInstanceOf(GoneException);
+    expect(h.gatewayCheckout.open).not.toHaveBeenCalled();
+    expect(h.shops.createPreparedShop).not.toHaveBeenCalled();
+  });
+});
+
+// A payment that was already on its way when shops became free still has to
+// end in a shop.
+describe('a shop-opening payment still in flight', () => {
 
   it('writes the shop and grants the pack when the money lands', async () => {
     const h = harness();
@@ -190,27 +226,6 @@ describe('opening a shop is a purchase', () => {
     const charge = { transactionId: 'txn-1', gatewayTxnId: 'BANK-1' };
     await h.service.settlePaidDraft(session(), charge);
     await h.service.settlePaidDraft(session(), charge);
-    expect(h.shops.createPreparedShop).toHaveBeenCalledTimes(1);
-  });
-
-  it('refuses to take money for a hold that has lapsed', async () => {
-    const h = harness({
-      found: draft({ expiresAt: new Date(Date.now() - 1000) }),
-    });
-    await expect(
-      h.service.pay(OWNER, 'draft-1', { packCode: 'credit-100k' }),
-    ).rejects.toBeInstanceOf(ConflictException);
-    expect(h.gatewayCheckout.open).not.toHaveBeenCalled();
-  });
-
-  it('opens the shop on the spot when a coupon covers the whole pack', async () => {
-    const h = harness({ found: draft() });
-    const result = await h.service.pay(OWNER, 'draft-1', {
-      packCode: 'credit-100k',
-      couponCode: 'LAUNCH100',
-    });
-    expect(result.paymentUrl).toBeNull();
-    expect(h.gatewayCheckout.open).not.toHaveBeenCalled();
     expect(h.shops.createPreparedShop).toHaveBeenCalledTimes(1);
   });
 

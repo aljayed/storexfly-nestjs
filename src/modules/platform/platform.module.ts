@@ -4,6 +4,7 @@ import { BillingModule } from '../billing/billing.module';
 import { BlockedWordsModule } from '../blocked-words/blocked-words.module';
 import { BrandingModule } from '../branding/branding.module';
 import { CouponsModule } from '../coupons/coupons.module';
+import { FaceModule } from '../face/face.module';
 import { GatewaysModule } from '../gateways/gateways.module';
 import { MailModule } from '../mail/mail.module';
 import { NoticesModule } from '../notices/notices.module';
@@ -17,6 +18,7 @@ import { PlatformBlockedWordsController } from './platform-blocked-words.control
 import { PlatformBrandingController } from './platform-branding.controller';
 import { PlatformCouponsController } from './platform-coupons.controller';
 import { PlatformCouriersController } from './platform-couriers.controller';
+import { PlatformFaceController } from './platform-face.controller';
 import { PlatformGatewaysController } from './platform-gateways.controller';
 import { PlatformMailController } from './platform-mail.controller';
 import { PlatformOverviewController } from './platform-overview.controller';
@@ -37,6 +39,7 @@ import { PlatformReferralsController } from './platform-referrals.controller';
     ReferralsModule,
     BrandingModule,
     BlockedWordsModule,
+    FaceModule,
     GatewaysModule,
     MailModule,
     NoticesModule,
@@ -55,6 +58,7 @@ import { PlatformReferralsController } from './platform-referrals.controller';
     PlatformCouriersController,
     PlatformOverviewController,
     PlatformBlockedWordsController,
+    PlatformFaceController,
   ],
   providers: [PlatformAuthService, PlatformOverviewService],
 })

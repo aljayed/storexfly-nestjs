@@ -58,11 +58,12 @@ export class SubscriptionsController {
   async pricing() {
     // The launch coupon rides along so the landing page can advertise it, but
     // only while it would actually be accepted at checkout.
-    const [pricing, launchOffer] = await Promise.all([
-      this.billing.pricing(),
-      this.coupons.launchOffer(),
-    ]);
-    return { ...pricing, launchOffer };
+    const pricing = await this.billing.pricing();
+    // Free platform: there is nothing for a launch code to take money off.
+    if (pricing.free) {
+      return { ...pricing, launchOffer: null };
+    }
+    return { ...pricing, launchOffer: await this.coupons.launchOffer() };
   }
 
   @Public()

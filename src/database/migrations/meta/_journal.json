@@ -778,6 +778,13 @@
       "when": 1795478400000,
       "tag": "0113_payment_link_more_currencies",
       "breakpoints": true
+    },
+    {
+      "idx": 114,
+      "version": "7",
+      "when": 1795564800000,
+      "tag": "0114_face_verification",
+      "breakpoints": true
     }
   ]
 }

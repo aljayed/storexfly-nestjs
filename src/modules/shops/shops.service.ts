@@ -125,6 +125,11 @@ export interface ShopEligibility {
    * that would not unlock anything.
    */
   multiShopDisabled: boolean;
+  /**
+   * The account has passed the live face check. A shop cannot be opened
+   * without it; the wizard reads this to know whether to open the camera.
+   */
+  faceVerified: boolean;
   canCreate: boolean;
 }
 
@@ -239,6 +244,9 @@ export class ShopsService {
     // Both a verified email and a verified phone - an account nobody can be
     // reached on has no business opening a storefront.
     if (!opts.paid) await this.assertContactVerified(ownerId);
+    // And a face that is on no other account: a shop is free, so what is
+    // rationed is shops per person - one.
+    if (!opts.paid) await this.assertFaceVerified(ownerId);
     const owned = await this.db.query.shops.findMany({
       where: eq(shops.ownerId, ownerId),
       columns: { id: true, kycStatus: true },
@@ -295,8 +303,8 @@ export class ShopsService {
       brand: swatch.c,
       brandSoft: swatch.soft,
       ownerId,
-      // Every shop opens on a credit pack now, so there is no free tier to
-      // choose between: the seller has paid for this one before it exists.
+      // 'paid' is the uncapped tier ('free' was the old ten-order trial).
+      // Every shop is uncapped now that the platform charges nothing.
       plan: 'paid',
       // Optional KYC supplied during onboarding - skipped sellers start
       // 'unsubmitted' (the column default).
@@ -377,15 +385,31 @@ export class ShopsService {
   }
 
   /**
-   * Write the shop and open its billing. Called once the pack that pays for
-   * it has been collected (ShopOpeningService); the money, not the form, is
-   * what brings a shop into existence.
+   * Write the shop and open its (now inert) billing record.
+   *
+   * `single` holds the one-shop-per-account rule against a double submit:
+   * the owner is locked for the transaction and their shops counted again
+   * inside it, so two requests racing past {@link prepareShop} cannot both
+   * write one.
    */
   async createPreparedShop(
     ownerId: string,
     values: NewShopRow,
+    opts: { single?: boolean } = {},
   ): Promise<ShopRow> {
     return this.db.transaction(async (tx) => {
+      if (opts.single) {
+        await tx.execute(
+          sql`SELECT pg_advisory_xact_lock(hashtextextended(${`shop-open:${ownerId}`}, 0))`,
+        );
+        const [{ n }] = await tx
+          .select({ n: count() })
+          .from(shops)
+          .where(eq(shops.ownerId, ownerId));
+        if (Number(n) > 0) {
+          throw ShopsService.oneShopOnly();
+        }
+      }
       const created = await this.insertShop(values, tx);
       await this.subscriptionsService.openForNewShop(ownerId, created.id, tx);
       return created;
@@ -422,12 +446,7 @@ export class ShopsService {
       return;
     }
     if (unlock.multiShopDisabled) {
-      throw new ForbiddenException({
-        statusCode: HttpStatus.FORBIDDEN,
-        error: 'MultiShopDisabled',
-        message:
-          'One shop per account for now - running several from one account is not open yet.',
-      });
+      throw ShopsService.oneShopOnly();
     }
     throw new ForbiddenException({
       statusCode: HttpStatus.FORBIDDEN,
@@ -466,7 +485,12 @@ export class ShopsService {
     const creditPacksBought = Number(n);
     const creditPacksUsed = Math.max(0, owned.length - 1);
     const hasVerifiedBusiness = owned.some((s) => s.kycStatus === 'verified');
+    const owner = await this.db.query.users.findFirst({
+      where: eq(users.id, ownerId),
+      columns: { faceVerifiedAt: true },
+    });
     return {
+      faceVerified: !!owner?.faceVerifiedAt,
       shopCount: owned.length,
       freeTrialAvailable: false,
       hasVerifiedBusiness,
@@ -486,6 +510,27 @@ export class ShopsService {
    * machine-readable `error` so the wizard can drop the seller back onto the
    * verification step (which re-reads /auth/verify/status for the per-field
    * detail) instead of matching on the message text.
+   */
+  async assertFaceVerified(ownerId: string): Promise<void> {
+    const user = await this.db.query.users.findFirst({
+      where: eq(users.id, ownerId),
+      columns: { faceVerifiedAt: true },
+    });
+    if (!user) {
+      throw new ForbiddenException('Account no longer exists');
+    }
+    if (!user.faceVerifiedAt) {
+      throw new ForbiddenException({
+        statusCode: HttpStatus.FORBIDDEN,
+        error: 'FaceVerificationRequired',
+        message:
+          'Verify your face before opening your shop - it is how Hoomri keeps to one free shop per person.',
+      });
+    }
+  }
+
+  /**
+   * Shop creation also requires both proven ways of reaching the account.
    */
   async assertContactVerified(ownerId: string): Promise<void> {
     const user = await this.db.query.users.findFirst({
@@ -880,6 +925,15 @@ export class ShopsService {
       }
       throw err;
     }
+  }
+
+  private static oneShopOnly(): ForbiddenException {
+    return new ForbiddenException({
+      statusCode: HttpStatus.FORBIDDEN,
+      error: 'MultiShopDisabled',
+      message:
+        'Every person gets one free shop on Hoomri, and this account already has one.',
+    });
   }
 
   private static handleTaken(): ConflictException {

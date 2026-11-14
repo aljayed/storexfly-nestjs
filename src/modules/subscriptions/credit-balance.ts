@@ -1,6 +1,7 @@
 import { and, eq, gte, ne, sql } from 'drizzle-orm';
 import { orders, paymentLinks, subscriptions } from '../../database/schema';
 import type { DbExecutor } from '../../database/drizzle.types';
+import { PLATFORM_FREE } from '../../common/constants/billing';
 
 /**
  * A shop's sales-credit position.
@@ -33,6 +34,10 @@ export async function creditPosition(
   db: DbExecutor,
   shopId: string,
 ): Promise<CreditPosition | null> {
+  // Free platform: no balance to run out, so nothing here can refuse a sale.
+  if (PLATFORM_FREE) {
+    return null;
+  }
   const sub = await db
     .select({
       billingMode: subscriptions.billingMode,

@@ -90,6 +90,13 @@ export const users = pgTable(
     // code is handed back to the caller rather than texted.
     phoneVerified: boolean('phone_verified').notNull().default(false),
     /**
+     * When this account passed the live face check (modules/face) and its
+     * face was found on no other account. Required before opening a shop -
+     * it is what holds "one free shop per person" to a person. Null until
+     * then; the face itself lives in `face_templates`.
+     */
+    faceVerifiedAt: timestamp('face_verified_at', { withTimezone: true }),
+    /**
      * ISO timestamps of the recent times this account moved to a different
      * verified number, newest first. Two are allowed per fortnight, so only
      * the entries still inside that window are kept - the rest can never

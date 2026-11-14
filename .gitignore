@@ -3,6 +3,10 @@
 /node_modules
 /build
 
+# Face-check model weights: fetched by `npm run face:models`, checksummed
+# against face-models.json
+/models
+
 # Logs
 logs
 *.log

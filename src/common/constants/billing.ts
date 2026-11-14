@@ -5,6 +5,25 @@
 
 export const PLATFORM_CURRENCY = 'BDT';
 
+/**
+ * Hoomri is free. A shop costs nothing to open and nothing to run: no credit
+ * pack, no commission, no order cap. What is limited instead is how many
+ * shops a person may have - one, held to a person by the live face check
+ * (modules/face).
+ *
+ * Everything below this line describes the two-track billing that came
+ * before. It is switched off rather than deleted: the ledgers it wrote are
+ * still a seller's payment history, and the code that reads them still has
+ * to make sense. While this is true nothing is charged, nothing is metered,
+ * no shop is paused over a balance or a bill, and the endpoints that took
+ * money answer 410.
+ */
+export const PLATFORM_FREE = true;
+
+/** What the retired paying endpoints say. */
+export const PLATFORM_FREE_MESSAGE =
+  'Hoomri is free now - there is nothing to buy or pay.';
+
 // ── The two billing tracks ────────────────────────────────────────
 //
 // A shop pays for the sales it makes in exactly one of two ways. There is no

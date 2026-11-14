@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  GoneException,
   Inject,
   Injectable,
   Logger,
@@ -14,6 +15,10 @@ import type { DrizzleDB } from '../../database/drizzle.types';
 import { shopDrafts, shops, users } from '../../database/schema';
 import type { GatewayPaymentRow, ShopDraftRow } from '../../database/schema';
 import { isUniqueViolationOn } from '../../common/utils/postgres-error.util';
+import {
+  PLATFORM_FREE,
+  PLATFORM_FREE_MESSAGE,
+} from '../../common/constants/billing';
 import { handleize } from '../../common/utils/slug.util';
 import { BillingSettingsService } from '../billing/billing-settings.service';
 import { CouponsService } from '../coupons/coupons.service';
@@ -90,7 +95,34 @@ export class ShopOpeningService implements OnModuleInit, OnModuleDestroy {
     if (this.sweepTimer) clearInterval(this.sweepTimer);
   }
 
-  /* ── The wizard's submit ───────────────────────────────────────── */
+  /* ── Opening a shop, free ──────────────────────────────────────── */
+
+  /**
+   * The wizard's submit, now that a shop costs nothing: check everything and
+   * write the shop in one go. There is no draft and no hold, because there
+   * is no payment page to be away on.
+   *
+   * What stands where the payment stood is the person: a verified email and
+   * phone, a face that is on no other account (ShopsService.prepareShop asks
+   * for all three), and no shop already - one free shop each.
+   */
+  async openFree(ownerId: string, dto: CreateShopDto): Promise<ShopResponse> {
+    const values = await this.shops.prepareShop(ownerId, dto);
+    const row = await this.shops.createPreparedShop(ownerId, values, {
+      single: true,
+    });
+    // A hold left over from the paid flow would keep the name "taken".
+    await this.db
+      .update(shopDrafts)
+      .set({ status: 'cancelled' })
+      .where(
+        and(eq(shopDrafts.ownerId, ownerId), eq(shopDrafts.status, 'pending')),
+      );
+    this.logger.log(`Shop "${row.handle}" opened free by ${ownerId}`);
+    return ShopResponse.fromRowForConsole(row);
+  }
+
+  /* ── The wizard's submit (retired paid flow) ───────────────────── */
 
   /**
    * Take the finished wizard, check all of it, and hold the name.
@@ -101,6 +133,7 @@ export class ShopOpeningService implements OnModuleInit, OnModuleDestroy {
    * the answer.
    */
   async start(ownerId: string, dto: CreateShopDto): Promise<ShopDraftView> {
+    ShopOpeningService.assertPaidFlowOpen();
     const prepared = await this.shops.prepareShop(ownerId, dto);
     const handle = prepared.handle;
 
@@ -221,6 +254,7 @@ export class ShopOpeningService implements OnModuleInit, OnModuleDestroy {
       refSlug?: string;
     },
   ): Promise<{ paymentUrl: string | null; shop?: ShopResponse }> {
+    ShopOpeningService.assertPaidFlowOpen();
     const draft = await this.requireLive(ownerId, id);
     // Asked again here, not only when the name was held: a hold made before
     // both contacts were required must not reach the gateway without them.
@@ -513,6 +547,20 @@ export class ShopOpeningService implements OnModuleInit, OnModuleDestroy {
       }
     }
     return response;
+  }
+
+  /**
+   * Holding a name to go and pay for it is over while shops are free. A
+   * payment already on its way still settles (settlePaidDraft): somebody who
+   * paid must not be left without their shop.
+   */
+  private static assertPaidFlowOpen(): void {
+    if (PLATFORM_FREE) {
+      throw new GoneException({
+        error: 'PlatformFree',
+        message: `${PLATFORM_FREE_MESSAGE} Refresh the page to open your shop.`,
+      });
+    }
   }
 
   /* ── Housekeeping ──────────────────────────────────────────────── */

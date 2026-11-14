@@ -6,6 +6,7 @@ import {
   CREDIT_PACKS,
   ENTRY_PACK_CODE,
   PLATFORM_CURRENCY,
+  PLATFORM_FREE,
 } from '../../common/constants/billing';
 import { DRIZZLE } from '../../database/database.constants';
 import type { DrizzleDB } from '../../database/drizzle.types';
@@ -51,6 +52,8 @@ export interface CreditPackView {
 }
 
 export interface PricingView {
+  /** Nothing is charged: no packs to buy and no commission. */
+  free: boolean;
   currency: string;
   /** The verified track's rate as a percentage, e.g. 1.5. */
   commissionPct: number;
@@ -215,7 +218,20 @@ export class BillingSettingsService {
       this.entryPack(),
       this.commissionBps(),
     ]);
+    if (PLATFORM_FREE) {
+      return {
+        free: true,
+        currency: PLATFORM_CURRENCY,
+        commissionPct: 0,
+        commissionBps: 0,
+        creditCapCents: 0,
+        creditCap: 0,
+        packs: [],
+        entryPack: null,
+      };
+    }
     return {
+      free: false,
       currency: PLATFORM_CURRENCY,
       commissionPct: bps / 100,
       commissionBps: bps,

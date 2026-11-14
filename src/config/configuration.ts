@@ -124,6 +124,39 @@ export const smsConfig = registerAs('sms', () => ({
   },
 }));
 
+// The live face check an account passes before opening a shop (modules/face).
+// FACE_TEMPLATE_KEY rotates every stored face vector: keep it secret, stable
+// and backed up apart from the database - lose or change it and every
+// registered face stops being comparable (the check then turns itself off).
+// Without it, or without the model files, the check reports itself
+// unavailable and nobody can open a shop.
+//
+// The thresholds are cosine similarities, not percentages, and are starting
+// points rather than measured operating points (see modules/face/README.md).
+const faceNumber = (name: string, fallback: number): number => {
+  const n = Number(process.env[name]);
+  return process.env[name] && Number.isFinite(n) ? n : fallback;
+};
+export const faceConfig = registerAs('face', () => ({
+  modelsDir: process.env.FACE_MODELS_DIR ?? 'models',
+  manifest: process.env.FACE_MODELS_MANIFEST ?? 'face-models.json',
+  templateKey: /^[0-9a-f]{32,}$/i.test(process.env.FACE_TEMPLATE_KEY ?? '')
+    ? (process.env.FACE_TEMPLATE_KEY as string)
+    : '',
+  /** Passive anti-spoof: below this a frontal frame is not a live face. */
+  livenessMin: faceNumber('FACE_LIVENESS_MIN', 0.5),
+  /** Every frontal frame must stay this close to the session's first one. */
+  consistencyMin: faceNumber('FACE_CONSISTENCY_MIN', 0.45),
+  /** At or above: close to another account - held for a person to look at. */
+  reviewMin: faceNumber('FACE_REVIEW_MIN', 0.45),
+  /** At or above: the same face as another account - refused. */
+  duplicateMin: faceNumber('FACE_DUPLICATE_MIN', 0.55),
+  // A testing switch for machines without a camera. Never in production.
+  devBypass:
+    process.env.FACE_DEV_BYPASS === 'true' &&
+    process.env.NODE_ENV !== 'production',
+}));
+
 export const throttleConfig = registerAs('throttle', () => ({
   ttl: parseInt(process.env.THROTTLE_TTL ?? '60000', 10),
   limit: parseInt(process.env.THROTTLE_LIMIT ?? '120', 10),
@@ -160,4 +193,5 @@ export const configurations = [
   smsConfig,
   throttleConfig,
   storageConfig,
+  faceConfig,
 ];

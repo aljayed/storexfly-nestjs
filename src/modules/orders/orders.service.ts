@@ -46,6 +46,7 @@ import {
   CREDIT_EXHAUSTED_MESSAGE,
   FREE_ORDER_CAP,
   FREE_TIER_LIMIT_MESSAGE,
+  PLATFORM_FREE,
 } from '../../common/constants/billing';
 import { creditPosition } from '../subscriptions/credit-balance';
 import { DRIZZLE } from '../../database/database.constants';
@@ -658,7 +659,7 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
       // the last slot still goes through, then the shop is deactivated until
       // the seller subscribes.
       let priorOrders = 0;
-      if (shop.plan === 'free') {
+      if (!PLATFORM_FREE && shop.plan === 'free') {
         priorOrders = await this.lifetimeOrderCount(tx, dto.shopId);
         if (priorOrders >= FREE_ORDER_CAP) {
           throw new ForbiddenException(FREE_TIER_LIMIT_MESSAGE);
@@ -850,7 +851,11 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
 
       // Filling the free-tier order quota deactivates the shop (this order
       // stands).
-      if (shop.plan === 'free' && priorOrders + 1 >= FREE_ORDER_CAP) {
+      if (
+        !PLATFORM_FREE &&
+        shop.plan === 'free' &&
+        priorOrders + 1 >= FREE_ORDER_CAP
+      ) {
         await tx
           .update(shops)
           .set({ live: false })
@@ -1125,7 +1130,7 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
       }
 
       let priorOrders = 0;
-      if (shop.plan === 'free') {
+      if (!PLATFORM_FREE && shop.plan === 'free') {
         priorOrders = await this.lifetimeOrderCount(tx, offer.shopId);
         if (priorOrders >= FREE_ORDER_CAP) {
           throw new ForbiddenException(FREE_TIER_LIMIT_MESSAGE);
@@ -1273,7 +1278,11 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
         })),
       );
 
-      if (shop.plan === 'free' && priorOrders + 1 >= FREE_ORDER_CAP) {
+      if (
+        !PLATFORM_FREE &&
+        shop.plan === 'free' &&
+        priorOrders + 1 >= FREE_ORDER_CAP
+      ) {
         await tx
           .update(shops)
           .set({ live: false })

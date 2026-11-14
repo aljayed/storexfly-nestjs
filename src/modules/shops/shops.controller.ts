@@ -82,16 +82,27 @@ export class ShopsController {
   }
 
   /* ── Opening a shop ───────────────────────────────────────────────
-     A shop costs a credit pack, so the wizard's submit does not make one: it
-     makes a draft that holds the handle for an hour, and the shop is written
-     when the gateway says the pack was paid for. Declared above `:handle` so
-     "draft" never resolves as a storefront.
+     A shop is free, and each person gets one: `POST /shops` writes it on the
+     spot once the account has passed the face check (modules/face).
 
      Not @StorefrontSession(): opening a shop is the line between shopping and
      running a business. The service also demands a verified email *and*
      phone, and proving either of those is what upgrades the session in the
      first place - so by the time this can succeed, the scope check is
      already met. */
+  @ApiBearerAuth()
+  @Post()
+  @ApiOperation({
+    summary:
+      'Open your one free shop. Needs a verified email and phone, and a passed face check.',
+  })
+  @ApiOkResponse({ type: ShopResponse })
+  create(@CurrentUser() user: SellerPrincipal, @Body() dto: CreateShopDto) {
+    return this.opening.openFree(user.id, dto);
+  }
+
+  // The draft routes below belong to the retired paid flow: starting one or
+  // paying for one answers 410 while the platform is free.
   @ApiBearerAuth()
   @Post('draft')
   @ApiOperation({
@@ -159,7 +170,7 @@ export class ShopsController {
   @Get('eligibility')
   @ApiOperation({
     summary:
-      'Whether the seller may open (another) shop - the first is free, later ones need a credit purchase or a verified licence',
+      'Whether the account may open its one free shop, and whether its face is verified yet',
   })
   eligibility(@CurrentUser() user: SellerPrincipal) {
     return this.shops.eligibility(user.id);

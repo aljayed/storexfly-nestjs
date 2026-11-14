@@ -5,6 +5,7 @@
  */
 export * from './enums';
 export * from './users.schema';
+export * from './face.schema';
 export * from './shops.schema';
 export * from './shop-drafts.schema';
 export * from './admin-users.schema';

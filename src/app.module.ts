@@ -21,6 +21,7 @@ import { CurrencyModule } from './modules/currency/currency.module';
 import { CouponsModule } from './modules/coupons/coupons.module';
 import { ReferralsModule } from './modules/referrals/referrals.module';
 import { CustomersModule } from './modules/customers/customers.module';
+import { FaceModule } from './modules/face/face.module';
 import { GatewaysModule } from './modules/gateways/gateways.module';
 import { HealthModule } from './modules/health/health.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
@@ -61,6 +62,7 @@ import { UsersModule } from './modules/users/users.module';
     RiskModule,
     UsersModule,
     AuthModule,
+    FaceModule,
     ShopsModule,
     CouponsModule,
     ReferralsModule,
