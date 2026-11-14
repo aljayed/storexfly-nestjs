@@ -1,4 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { PAYMENT_LINK_CURRENCIES } from '../../../database/schema/payment-links.schema';
 
 /** 'expired' is a link whose deadline passed unpaid; it is never stored. */
 export type PaymentLinkState =
@@ -16,7 +17,7 @@ export class PaymentLinkResponse {
   @ApiProperty() title!: string;
   @ApiPropertyOptional() description?: string;
   @ApiProperty() amount!: number;
-  @ApiProperty({ enum: ['BDT', 'USD', 'INR'] }) currency!: string;
+  @ApiProperty({ enum: PAYMENT_LINK_CURRENCIES }) currency!: string;
   @ApiPropertyOptional({ description: 'Gross amount collected in BDT' })
   settledAmount?: number;
   @ApiProperty({ enum: ['active', 'paid', 'cancelled', 'expired', 'refunded'] })

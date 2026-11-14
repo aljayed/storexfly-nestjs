@@ -764,6 +764,20 @@
       "when": 1795305600000,
       "tag": "0111_payment_link_deletion",
       "breakpoints": true
+    },
+    {
+      "idx": 112,
+      "version": "7",
+      "when": 1795392000000,
+      "tag": "0112_display_currency",
+      "breakpoints": true
+    },
+    {
+      "idx": 113,
+      "version": "7",
+      "when": 1795478400000,
+      "tag": "0113_payment_link_more_currencies",
+      "breakpoints": true
     }
   ]
 }

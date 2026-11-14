@@ -19,18 +19,14 @@ describe('Payment link currencies', () => {
       status: 'active',
       createdAt: new Date(),
     };
-    const values = jest
-      .fn()
-      .mockImplementation((input) => ({
-        returning: async () => [{ ...link, ...input }],
-      }));
-    const set = jest
-      .fn()
-      .mockReturnValue({
-        where: () => ({
-          returning: async () => [{ id: 'link-1', shopId: 'shop-1' }],
-        }),
-      });
+    const values = jest.fn().mockImplementation((input) => ({
+      returning: async () => [{ ...link, ...input }],
+    }));
+    const set = jest.fn().mockReturnValue({
+      where: () => ({
+        returning: async () => [{ id: 'link-1', shopId: 'shop-1' }],
+      }),
+    });
     const totals = [
       {
         currency: 'USD',
@@ -103,7 +99,7 @@ describe('Payment link currencies', () => {
     return { svc, values, set, open };
   }
 
-  it.each(['BDT', 'USD', 'INR'] as const)(
+  it.each(['BDT', 'USD', 'INR', 'EUR', 'SGD', 'THB'] as const)(
     'stores and returns %s on creation',
     async (currency) => {
       const { svc, values } = harness(currency);
@@ -136,7 +132,7 @@ describe('Payment link currencies', () => {
     ).toMatchObject({ amount: 1, currency: 'USD' });
   });
 
-  it.each(['USD', 'INR'] as const)(
+  it.each(['USD', 'INR', 'GBP', 'QAR'] as const)(
     'uses the link currency %s on the buyer page and checkout',
     async (currency) => {
       const { svc, open } = harness(currency);
@@ -182,7 +178,7 @@ describe('Payment link currencies', () => {
     });
   });
 
-  it.each(['EUR', 'usd', '', 123])(
+  it.each(['CAD', 'usd', '', 123])(
     'rejects unsupported currency %j at the API boundary',
     async (currency) => {
       const errors = await validate(

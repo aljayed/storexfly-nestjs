@@ -39,3 +39,4 @@ export * from './buyer-notifications.schema';
 export * from './risk-events.schema';
 export * from './buyer-addresses.schema';
 export * from './commerce.schema';
+export * from './fx-rates.schema';

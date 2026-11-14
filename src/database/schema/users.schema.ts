@@ -104,6 +104,9 @@ export const users = pgTable(
     geo: jsonb('geo').$type<BuyerGeoValue>(),
     // Payment-method code from the account's most recent order (preselected at checkout).
     lastPayMethod: varchar('last_pay_method', { length: 64 }),
+    // The currency this account chose to read prices in (see
+    // DISPLAY_CURRENCIES). Null = follow the visitor's country.
+    preferredCurrency: varchar('preferred_currency', { length: 3 }),
     createdAt: timestamp('created_at', { withTimezone: true })
       .notNull()
       .defaultNow(),

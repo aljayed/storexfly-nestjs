@@ -17,6 +17,7 @@ import { ChatModule } from './modules/chat/chat.module';
 import { CombosModule } from './modules/combos/combos.module';
 import { ShopCouponsModule } from './modules/shop-coupons/shop-coupons.module';
 import { ChatOffersModule } from './modules/chat-offers/chat-offers.module';
+import { CurrencyModule } from './modules/currency/currency.module';
 import { CouponsModule } from './modules/coupons/coupons.module';
 import { ReferralsModule } from './modules/referrals/referrals.module';
 import { CustomersModule } from './modules/customers/customers.module';
@@ -83,6 +84,7 @@ import { UsersModule } from './modules/users/users.module';
     ChatModule,
     ReviewsModule,
     HealthModule,
+    CurrencyModule,
     StorageModule,
   ],
   providers: [

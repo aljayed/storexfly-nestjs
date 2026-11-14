@@ -280,6 +280,7 @@ export class BuyerService {
       pincode: row.addressPincode,
       geo: row.geo,
       lastPayMethod: row.lastPayMethod,
+      preferredCurrency: row.preferredCurrency,
       emailVerified: row.emailVerified,
       phoneVerified: row.phoneVerified,
       handle,
@@ -384,6 +385,9 @@ export class BuyerService {
     if (dto.geo !== undefined) patch.geo = dto.geo ?? null;
     if (dto.lastPayMethod !== undefined) {
       patch.lastPayMethod = dto.lastPayMethod || null;
+    }
+    if (dto.preferredCurrency !== undefined) {
+      patch.preferredCurrency = dto.preferredCurrency ?? null;
     }
 
     const [row] = await this.db

@@ -1,5 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
+  IsIn,
   IsNumber,
   IsOptional,
   IsString,
@@ -9,6 +10,10 @@ import {
 } from 'class-validator';
 import { Transform, Type } from 'class-transformer';
 import type { BuyerGeoValue } from '../../../database/schema';
+import {
+  DISPLAY_CURRENCIES,
+  type DisplayCurrency,
+} from '../../../common/constants/display-currencies';
 import type { ChangeAllowance } from '../../../common/utils/identity-change.util';
 
 const trim = ({ value }: { value: unknown }) =>
@@ -20,8 +25,16 @@ export class BuyerGeoDto implements BuyerGeoValue {
   @ApiProperty() @IsString() @MaxLength(200) area!: string;
   @ApiProperty() @IsString() @MaxLength(24) pin!: string;
   // Reverse-geocoder extras: raw district label + the complete address line.
-  @ApiPropertyOptional() @IsOptional() @IsString() @MaxLength(200) district?: string;
-  @ApiPropertyOptional() @IsOptional() @IsString() @MaxLength(600) full?: string;
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  district?: string;
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(600)
+  full?: string;
   // Exact coordinates from the interactive delivery map.
   @ApiPropertyOptional() @IsOptional() @IsNumber() lat?: number;
   @ApiPropertyOptional() @IsOptional() @IsNumber() lng?: number;
@@ -87,6 +100,13 @@ export class UpdateBuyerProfileDto {
   @Transform(trim)
   @MaxLength(64)
   lastPayMethod?: string;
+
+  // The currency to show prices in. A code from DISPLAY_CURRENCIES pins it;
+  // null hands the choice back to the visitor's country.
+  @ApiProperty({ example: 'USD', required: false, nullable: true })
+  @IsOptional()
+  @IsIn(DISPLAY_CURRENCIES)
+  preferredCurrency?: DisplayCurrency | null;
 }
 
 /** The buyer's account + saved checkout details (GET /buyer/auth/me, PATCH). */
@@ -107,6 +127,8 @@ export interface BuyerProfile {
   pincode: string | null;
   geo: BuyerGeoValue | null;
   lastPayMethod: string | null;
+  /** Currency the account chose to read prices in; null = by country. */
+  preferredCurrency: string | null;
   /** True once the buyer has confirmed ownership of their email via OTP. */
   emailVerified: boolean;
   /** True once the number has been proved by SMS code. From then on it is the

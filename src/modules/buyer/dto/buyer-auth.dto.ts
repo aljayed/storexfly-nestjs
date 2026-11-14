@@ -112,6 +112,7 @@ export class BuyerAuthResponse {
         pincode: row.addressPincode,
         geo: row.geo,
         lastPayMethod: row.lastPayMethod,
+        preferredCurrency: row.preferredCurrency,
         emailVerified: row.emailVerified,
         phoneVerified: row.phoneVerified,
         handle: row.handle,

@@ -8,6 +8,7 @@ import {
   GatewaySettingsService,
   type SslcommerzConfig,
 } from './gateway-settings.service';
+import type { PaymentLinkCurrency } from '../../database/schema/payment-links.schema';
 
 /** SSLCommerz hosted checkout (v4) hosts. */
 const SSL_BASE = {
@@ -33,7 +34,7 @@ export interface SslcommerzCustomer {
 export interface SslcommerzSessionInput {
   /** Amount to collect now, in the requested currency's minor units. */
   amountCents: number;
-  currency?: 'BDT' | 'USD' | 'INR';
+  currency?: PaymentLinkCurrency;
   /** Our own `tran_id` - what the return leg looks the attempt up by. */
   tranId: string;
   productName: string;
@@ -365,9 +366,7 @@ export class SslcommerzService {
    * existing refund rather than paying the buyer a second time, but only if
    * we can still produce the id after a crash.
    */
-  async refund(
-    input: SslcommerzRefundInput,
-  ): Promise<SslcommerzRefundResult> {
+  async refund(input: SslcommerzRefundInput): Promise<SslcommerzRefundResult> {
     const config = await this.requireConfig();
     const query = new URLSearchParams({
       bank_tran_id: input.bankTranId,
@@ -416,7 +415,7 @@ export class SslcommerzService {
     const status = (data.status ?? '').toLowerCase();
     if (status === 'success' || status === 'processing') {
       return {
-        status: status as 'success' | 'processing',
+        status: status,
         refundRefId: data.refund_ref_id,
         bankTranId: data.bank_tran_id,
       };

@@ -13,7 +13,28 @@ import { shops } from './shops.schema';
 
 /** Where a link stands. 'expired' is derived from `expiresAt`, never stored. */
 export type PaymentLinkStatus = 'active' | 'paid' | 'cancelled' | 'refunded';
-export const PAYMENT_LINK_CURRENCIES = ['BDT', 'USD', 'INR'] as const;
+/**
+ * Currencies a link can ask for. Everything but BDT is charged by card and
+ * converted to BDT by SSLCommerz at its own rate, so this is exactly the set
+ * its gateway converts: the ones its documentation names plus those its
+ * sandbox accepted when probed (CAD, AED, JPY, CNY and others were refused
+ * with "Invalid Amount after converted"). All use two decimal places, which
+ * is what `amountCents` assumes. Keep the check constraint below, and
+ * migration 0113, in step with this list.
+ */
+export const PAYMENT_LINK_CURRENCIES = [
+  'BDT',
+  'USD',
+  'EUR',
+  'GBP',
+  'INR',
+  'SGD',
+  'MYR',
+  'AUD',
+  'SAR',
+  'QAR',
+  'THB',
+] as const;
 export type PaymentLinkCurrency = (typeof PAYMENT_LINK_CURRENCIES)[number];
 
 /**
@@ -93,7 +114,7 @@ export const paymentLinks = pgTable(
   (table) => [
     check(
       'payment_links_currency_check',
-      sql`${table.currency} in ('BDT', 'USD', 'INR')`,
+      sql`${table.currency} in ('BDT', 'USD', 'EUR', 'GBP', 'INR', 'SGD', 'MYR', 'AUD', 'SAR', 'QAR', 'THB')`,
     ),
     uniqueIndex('payment_links_token_unique_idx').on(table.token),
     index('payment_links_shop_idx').on(table.shopId, table.createdAt),

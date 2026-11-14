@@ -11,7 +11,7 @@ describe('SSLCommerz currency transport', () => {
   } as never);
   afterEach(() => jest.restoreAllMocks());
 
-  it.each([undefined, 'BDT', 'USD', 'INR'] as const)(
+  it.each([undefined, 'BDT', 'USD', 'INR', 'EUR', 'SAR'] as const)(
     'sends %s without conversion and restricts only foreign currency to cards',
     async (currency) => {
       const fetchMock = jest.spyOn(global, 'fetch').mockResolvedValue({
@@ -45,9 +45,7 @@ describe('SSLCommerz currency transport', () => {
       expect(body.get('currency')).toBe(currency ?? 'BDT');
       expect(body.get('total_amount')).toBe('12.34');
       expect(body.get('multi_card_name')).toBe(
-        currency === 'USD' || currency === 'INR'
-          ? 'mastercard,visacard,amexcard'
-          : null,
+        currency && currency !== 'BDT' ? 'mastercard,visacard,amexcard' : null,
       );
     },
   );
@@ -87,7 +85,7 @@ describe('SSLCommerz currency transport', () => {
     });
   });
 
-  it.each(['BDT', 'USD', 'INR'] as const)(
+  it.each(['BDT', 'USD', 'INR', 'MYR', 'AUD'] as const)(
     'persists %s on the checkout attempt',
     async (currency) => {
       const values = jest.fn().mockReturnValue({ returning: async () => [{}] });

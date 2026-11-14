@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { DRIZZLE } from '../../database/database.constants';
 import type { DrizzleDB } from '../../database/drizzle.types';
 import { gatewayPayments } from '../../database/schema';
+import type { PaymentLinkCurrency } from '../../database/schema/payment-links.schema';
 import type {
   GatewayPayerDetails,
   GatewayPaymentRow,
@@ -34,7 +35,7 @@ export interface OpenSessionInput {
   gateway: CollectingGateway;
   /** What to collect now, in the currency's minor units. */
   amountCents: number;
-  currency?: 'BDT' | 'USD' | 'INR';
+  currency?: PaymentLinkCurrency;
   /**
    * Short human handle for this payment ('1043', 'CREDIT'). Rides in the
    * invoice/`tran_id` so the merchant panel row is recognisable next to what
