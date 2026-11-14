@@ -11,6 +11,7 @@ import {
   Max,
   MaxLength,
   Min,
+  MinLength,
   ValidateNested,
 } from 'class-validator';
 
@@ -68,7 +69,8 @@ export class ItemAiTurnDto {
   event!: ItemAiEventDto;
 
   @ApiPropertyOptional({
-    description: 'A small thumbnail of an attached photo, for a category guess.',
+    description:
+      'A small thumbnail of an attached photo, for a category guess.',
   })
   @IsOptional()
   @IsString()
@@ -115,6 +117,56 @@ export class ItemAiCardCopyDto {
   @ValidateNested({ each: true })
   @Type(() => ItemAiCopyFieldDto)
   fields!: ItemAiCopyFieldDto[];
+
+  @ApiPropertyOptional({ enum: ['en', 'bn'] })
+  @IsOptional()
+  @IsIn(['en', 'bn'])
+  locale?: 'en' | 'bn';
+}
+
+/** A description for the manual add-item form, from what it holds so far. */
+export class ItemAiDescribeDto {
+  @ApiProperty()
+  @IsString()
+  @MinLength(2)
+  @MaxLength(200)
+  name!: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(80)
+  category?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(60)
+  unit?: string;
+
+  @ApiPropertyOptional({
+    description: 'One line per option group, e.g. "Size: S, M, L".',
+  })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(3)
+  @IsString({ each: true })
+  @MaxLength(200, { each: true })
+  options?: string[];
+
+  @ApiPropertyOptional({
+    description: 'What the seller has written already, to improve.',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(2000)
+  existing?: string;
+
+  @ApiPropertyOptional({ description: 'A small thumbnail of the cover photo.' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(400_000)
+  imageHint?: string;
 
   @ApiPropertyOptional({ enum: ['en', 'bn'] })
   @IsOptional()

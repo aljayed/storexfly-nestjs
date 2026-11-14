@@ -14,7 +14,11 @@ import { RequirePerm } from '../../common/decorators/roles.decorator';
 import { AdminJwtAuthGuard } from '../../common/guards/admin-jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { ShopScopeGuard } from '../../common/guards/shop-scope.guard';
-import { ItemAiCardCopyDto, ItemAiTurnDto } from './dto/item-ai.dto';
+import {
+  ItemAiCardCopyDto,
+  ItemAiDescribeDto,
+  ItemAiTurnDto,
+} from './dto/item-ai.dto';
 import { ItemAiService } from './item-ai.service';
 
 /**
@@ -49,5 +53,17 @@ export class ItemAiController {
   @ApiOperation({ summary: 'Admin: words for a photo card template' })
   cardCopy(@Param('shopId') shopId: string, @Body() dto: ItemAiCardCopyDto) {
     return this.ai.cardCopy(shopId, dto);
+  }
+
+  @Public()
+  @UseGuards(AdminJwtAuthGuard, ShopScopeGuard, RolesGuard)
+  @ApiBearerAuth()
+  @RequirePerm('items.add')
+  @Throttle({ default: { limit: 20, ttl: 60_000 } })
+  @HttpCode(HttpStatus.OK)
+  @Post('shops/:shopId/items/ai/describe')
+  @ApiOperation({ summary: 'Admin: a description for the add-item form' })
+  describe(@Param('shopId') shopId: string, @Body() dto: ItemAiDescribeDto) {
+    return this.ai.describe(shopId, dto);
   }
 }

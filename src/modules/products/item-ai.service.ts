@@ -11,7 +11,11 @@ import { eq } from 'drizzle-orm';
 import { DRIZZLE } from '../../database/database.constants';
 import type { DrizzleDB } from '../../database/drizzle.types';
 import { shops } from '../../database/schema';
-import { ItemAiCardCopyDto, ItemAiTurnDto } from './dto/item-ai.dto';
+import {
+  ItemAiCardCopyDto,
+  ItemAiDescribeDto,
+  ItemAiTurnDto,
+} from './dto/item-ai.dto';
 
 interface AgentTurn {
   reply?: string;
@@ -135,6 +139,32 @@ export class ItemAiService {
       if (clipped) values[f.key] = clipped;
     }
     return { values, aiUsed: Boolean(body.ai_used) };
+  }
+
+  async describe(shopId: string, dto: ItemAiDescribeDto) {
+    const shop = await this.shopContext(shopId, dto.locale);
+    const body = await this.post<{
+      description?: unknown;
+      category?: unknown;
+      unit?: unknown;
+      ai_used?: boolean;
+    }>('/api/v1/items/draft/describe', {
+      shop,
+      name: dto.name,
+      category: dto.category,
+      unit: dto.unit,
+      options: dto.options ?? [],
+      existing: dto.existing,
+      language: dto.locale ?? 'en',
+      image_hint: dto.imageHint,
+    });
+    const text = (v: unknown) => (typeof v === 'string' ? v.trim() : '');
+    return {
+      description: clipWords(text(body.description), 2000),
+      category: text(body.category) || null,
+      unit: text(body.unit) || null,
+      aiUsed: Boolean(body.ai_used),
+    };
   }
 
   private async shopContext(shopId: string, locale?: 'en' | 'bn') {
