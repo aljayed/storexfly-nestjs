@@ -17,6 +17,7 @@ import {
 } from 'class-validator';
 import { Public } from '../../common/decorators/public.decorator';
 import { PlatformJwtAuthGuard } from '../../common/guards/platform-jwt-auth.guard';
+import { PlatformArea } from '../../common/decorators/platform-area.decorator';
 import {
   BillingSettingsService,
   MAX_COMMISSION_BPS,
@@ -100,11 +101,13 @@ export class UpdateCommissionDto {
 @ApiTags('platform-admin')
 @Public()
 @UseGuards(PlatformJwtAuthGuard)
+@PlatformArea('finance')
 @ApiBearerAuth()
 @Controller('platform/billing')
 export class PlatformBillingController {
   constructor(private readonly billing: BillingSettingsService) {}
 
+  @PlatformArea(['finance', 'growth'])
   @Get()
   @ApiOperation({
     summary:
@@ -124,6 +127,7 @@ export class PlatformBillingController {
     return this.billing.updatePack(id, dto);
   }
 
+  @PlatformArea('finance', 'approve')
   @Patch('commission')
   @ApiOperation({
     summary:

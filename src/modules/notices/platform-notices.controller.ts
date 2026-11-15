@@ -18,6 +18,7 @@ import {
 } from '@nestjs/swagger';
 import { Public } from '../../common/decorators/public.decorator';
 import { PlatformJwtAuthGuard } from '../../common/guards/platform-jwt-auth.guard';
+import { PlatformArea } from '../../common/decorators/platform-area.decorator';
 import {
   CreateNoticeDto,
   NoticeListResponse,
@@ -30,6 +31,7 @@ import { NoticesService } from './notices.service';
 @ApiTags('platform-admin')
 @Public()
 @UseGuards(PlatformJwtAuthGuard)
+@PlatformArea('growth')
 @ApiBearerAuth()
 @Controller('platform/notices')
 export class PlatformNoticesController {

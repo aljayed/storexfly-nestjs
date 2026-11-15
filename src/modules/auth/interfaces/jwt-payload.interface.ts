@@ -28,14 +28,27 @@ export interface AdminJwtPayload {
 }
 
 /**
- * Claims carried by the platform-admin JWT (the hoomri.com/platform-admin
- * console). The operator is a single env-configured identity, so the subject
- * is a fixed sentinel rather than a database id.
+ * Claims carried by a platform-console session JWT. `sub` is the
+ * platform_staff id; `sv` must equal the row's session_version, so bumping
+ * it signs the person out everywhere.
  */
 export interface PlatformJwtPayload {
-  sub: 'platform-admin';
+  sub: string;
   email: string;
   typ: 'platform';
+  sv: number;
+}
+
+/**
+ * Short-lived ticket between the platform sign-in stages: password checked,
+ * now waiting for the authenticator code (`2fa`), a first authenticator
+ * set-up (`enroll`), or a replacement for an assigned password (`password`).
+ */
+export interface PlatformTicketPayload {
+  sub: string;
+  typ: 'platform-ticket';
+  stage: '2fa' | 'enroll' | 'password';
+  sv: number;
 }
 
 /** Short-lived ticket bridging the credentials and 2FA stages of admin login. */

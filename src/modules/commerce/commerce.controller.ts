@@ -10,6 +10,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { PlatformJwtAuthGuard } from '../../common/guards/platform-jwt-auth.guard';
+import { PlatformArea } from '../../common/decorators/platform-area.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { Public } from '../../common/decorators/public.decorator';
 import { StorefrontSession } from '../../common/decorators/storefront-session.decorator';
@@ -186,6 +187,7 @@ export class CommerceAdminController {
 
 @Public()
 @UseGuards(PlatformJwtAuthGuard)
+@PlatformArea('support')
 @Controller('platform/trade')
 export class CommercePlatformController {
   constructor(private readonly service: CommerceService) {}

@@ -18,6 +18,7 @@ import {
 } from '@nestjs/swagger';
 import { Public } from '../../common/decorators/public.decorator';
 import { PlatformJwtAuthGuard } from '../../common/guards/platform-jwt-auth.guard';
+import { PlatformArea } from '../../common/decorators/platform-area.decorator';
 import { PlatformListQueryDto } from './dto/platform-list-query.dto';
 import { PlatformCustomerListResponse } from './dto/platform-customer.response';
 import {
@@ -43,6 +44,7 @@ import { PlatformOverviewService } from './platform-overview.service';
 @ApiTags('platform-admin')
 @Public()
 @UseGuards(PlatformJwtAuthGuard)
+@PlatformArea('sellers')
 @ApiBearerAuth()
 @Controller('platform')
 export class PlatformOverviewController {
@@ -74,12 +76,14 @@ export class PlatformOverviewController {
     return this.overview.updateShop(shopId, dto);
   }
 
+  @PlatformArea(['sellers', 'catalog'])
   @Get('shops/:shopId/products')
   @ApiOperation({ summary: "Platform admin: one shop's catalogue" })
   shopProducts(@Param('shopId', ParseUUIDPipe) shopId: string) {
     return this.overview.listShopProducts(shopId);
   }
 
+  @PlatformArea('catalog')
   @Delete('shops/:shopId/products/:productId')
   @ApiOperation({ summary: 'Platform admin: remove one product from a shop' })
   deleteShopProduct(
@@ -89,6 +93,7 @@ export class PlatformOverviewController {
     return this.overview.deleteShopProduct(shopId, productId);
   }
 
+  @PlatformArea('sellers', 'approve')
   @Delete('shops/:shopId')
   @ApiOperation({
     summary:
@@ -116,6 +121,7 @@ export class PlatformOverviewController {
     return this.overview.messageShop(shopId, dto.message, dto.tone);
   }
 
+  @PlatformArea('support')
   @Get('customers')
   @ApiOperation({ summary: 'Platform admin: paginated list of all buyers' })
   @ApiOkResponse({ type: PlatformCustomerListResponse })

@@ -17,6 +17,7 @@ import {
 import { IsBoolean, IsOptional, IsString, MaxLength } from 'class-validator';
 import { Public } from '../../common/decorators/public.decorator';
 import { PlatformJwtAuthGuard } from '../../common/guards/platform-jwt-auth.guard';
+import { PlatformArea } from '../../common/decorators/platform-area.decorator';
 import { CarrybeeService } from '../gateways/carrybee.service';
 import { CourierSettingsService } from '../gateways/courier-settings.service';
 
@@ -73,6 +74,7 @@ export class SetCourierRequiredDto {
 @ApiTags('platform-admin')
 @Public()
 @UseGuards(PlatformJwtAuthGuard)
+@PlatformArea('orders')
 @ApiBearerAuth()
 @Controller('platform/couriers')
 export class PlatformCouriersController {

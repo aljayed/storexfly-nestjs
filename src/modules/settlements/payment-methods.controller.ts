@@ -30,6 +30,7 @@ import {
 } from 'class-validator';
 import { Public } from '../../common/decorators/public.decorator';
 import { PlatformJwtAuthGuard } from '../../common/guards/platform-jwt-auth.guard';
+import { PlatformArea } from '../../common/decorators/platform-area.decorator';
 import {
   PaymentMethodsService,
   type OnlineMethodKind,
@@ -190,6 +191,7 @@ export class UpdateSettlementBannerDto {
  * catalog (and the seller settlements-page banner) is platform-operator only.
  */
 @ApiTags('platform-admin')
+@PlatformArea('system')
 @Controller('platform/payment-methods')
 export class PaymentMethodsController {
   constructor(private readonly methods: PaymentMethodsService) {}

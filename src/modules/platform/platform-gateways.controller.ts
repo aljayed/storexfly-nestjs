@@ -8,6 +8,7 @@ import {
 import { IsBoolean, IsString, MaxLength, ValidateIf } from 'class-validator';
 import { Public } from '../../common/decorators/public.decorator';
 import { PlatformJwtAuthGuard } from '../../common/guards/platform-jwt-auth.guard';
+import { PlatformArea } from '../../common/decorators/platform-area.decorator';
 import { GatewaySettingsService } from '../gateways/gateway-settings.service';
 
 export class UpdateBkashSettingsDto {
@@ -76,6 +77,7 @@ export class UpdateSslcommerzSettingsDto {
 @ApiTags('platform-admin')
 @Public()
 @UseGuards(PlatformJwtAuthGuard)
+@PlatformArea('system')
 @ApiBearerAuth()
 @Controller('platform/gateways')
 export class PlatformGatewaysController {

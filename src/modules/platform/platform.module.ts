@@ -11,7 +11,11 @@ import { NoticesModule } from '../notices/notices.module';
 import { ProductsModule } from '../products/products.module';
 import { ShopsModule } from '../shops/shops.module';
 import { ReferralsModule } from '../referrals/referrals.module';
+import { PlatformAccessController } from './platform-access.controller';
+import { PlatformAccessService } from './platform-access.service';
 import { PlatformAuthController } from './platform-auth.controller';
+import { PlatformCommandController } from './platform-command.controller';
+import { PlatformCommandService } from './platform-command.service';
 import { PlatformAuthService } from './platform-auth.service';
 import { PlatformBillingController } from './platform-billing.controller';
 import { PlatformBlockedWordsController } from './platform-blocked-words.controller';
@@ -26,8 +30,9 @@ import { PlatformOverviewService } from './platform-overview.service';
 import { PlatformReferralsController } from './platform-referrals.controller';
 
 /**
- * The platform-admin console API (hoomri.com/platform-admin): operator
- * login against env-configured credentials, coupon management, branding,
+ * The platform console API (platform.hoomri.com): staff sign-in with an
+ * authenticator app, team and access (staff, roles, audit log), the command
+ * center and global search, coupon management, branding,
  * cross-shop shop/customer listings, blocked-words moderation, and the staff
  * mailboxes on the platform's own mail domain.
  */
@@ -49,6 +54,8 @@ import { PlatformReferralsController } from './platform-referrals.controller';
   ],
   controllers: [
     PlatformAuthController,
+    PlatformAccessController,
+    PlatformCommandController,
     PlatformBillingController,
     PlatformCouponsController,
     PlatformReferralsController,
@@ -60,6 +67,11 @@ import { PlatformReferralsController } from './platform-referrals.controller';
     PlatformBlockedWordsController,
     PlatformFaceController,
   ],
-  providers: [PlatformAuthService, PlatformOverviewService],
+  providers: [
+    PlatformAuthService,
+    PlatformAccessService,
+    PlatformCommandService,
+    PlatformOverviewService,
+  ],
 })
 export class PlatformModule {}

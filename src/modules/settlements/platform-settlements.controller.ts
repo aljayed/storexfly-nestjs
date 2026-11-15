@@ -19,6 +19,7 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { Public } from '../../common/decorators/public.decorator';
 import type { PlatformPrincipal } from '../../common/types/principal';
 import { PlatformJwtAuthGuard } from '../../common/guards/platform-jwt-auth.guard';
+import { PlatformArea } from '../../common/decorators/platform-area.decorator';
 import {
   PERIOD_PATTERN,
   PlatformSettlementsQueryDto,
@@ -36,6 +37,7 @@ import { SettlementsService } from './settlements.service';
 @ApiTags('platform-admin')
 @Public()
 @UseGuards(PlatformJwtAuthGuard)
+@PlatformArea('finance')
 @ApiBearerAuth()
 @Controller('platform')
 export class PlatformSettlementsController {

@@ -17,6 +17,7 @@ import {
 } from '@nestjs/swagger';
 import { Public } from '../../common/decorators/public.decorator';
 import { PlatformJwtAuthGuard } from '../../common/guards/platform-jwt-auth.guard';
+import { PlatformArea } from '../../common/decorators/platform-area.decorator';
 import { ReferralsService } from '../referrals/referrals.service';
 import {
   CreateReferralLinkDto,
@@ -28,6 +29,7 @@ import { ReferralLinkResponse } from '../referrals/dto/referral-link.response';
 @ApiTags('platform-admin')
 @Public()
 @UseGuards(PlatformJwtAuthGuard)
+@PlatformArea('growth')
 @ApiBearerAuth()
 @Controller('platform/referrals')
 export class PlatformReferralsController {

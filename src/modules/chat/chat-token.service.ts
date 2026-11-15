@@ -1,4 +1,4 @@
-import { Injectable, UnauthorizedException } from '@nestjs/common';
+import { Inject, Injectable, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import type {
@@ -7,6 +7,10 @@ import type {
   SellerJwtPayload,
 } from '../auth/interfaces/jwt-payload.interface';
 import { roleHasPermission } from '../../common/auth/admin-permissions';
+import { hasGrant } from '../../common/auth/platform-access';
+import { DRIZZLE } from '../../database/database.constants';
+import type { DrizzleDB } from '../../database/drizzle.types';
+import { loadPlatformPrincipal } from '../auth/platform-principal.loader';
 import type { ChatActor } from './chat-actor';
 import { SUPPORT_EMAIL, SUPPORT_NAME } from './support.constants';
 
@@ -24,6 +28,7 @@ export class ChatTokenService {
   constructor(
     private readonly jwt: JwtService,
     private readonly config: ConfigService,
+    @Inject(DRIZZLE) private readonly db: DrizzleDB,
   ) {}
 
   /** Verify a raw bearer token into a chat participant, or throw 401. */
@@ -74,21 +79,20 @@ export class ChatTokenService {
       /* fall through to the rejection below */
     }
 
-    // Platform console session -> Hoomri Support. Last, because it is the
-    // rarest and the other two are cheap to rule out.
+    // Platform console session -> Hoomri Support, for staff whose role may
+    // work the support workspace. Last, because it is the rarest and the
+    // other two are cheap to rule out.
     try {
       const payload = await this.jwt.verifyAsync<PlatformJwtPayload>(token, {
         secret: this.config.getOrThrow<string>('platformAdmin.jwtSecret'),
       });
-      if (
-        payload.typ === 'platform' &&
-        payload.email === this.config.getOrThrow<string>('platformAdmin.email')
-      ) {
+      const staff = await loadPlatformPrincipal(this.db, payload);
+      if (staff && hasGrant(staff.grants, 'support', 'act')) {
         return {
           role: 'support',
-          id: payload.sub,
+          id: staff.id,
           name: SUPPORT_NAME,
-          email: payload.email ?? SUPPORT_EMAIL,
+          email: SUPPORT_EMAIL,
         };
       }
     } catch {

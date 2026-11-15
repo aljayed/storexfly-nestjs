@@ -11,6 +11,7 @@ import {
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Public } from '../../common/decorators/public.decorator';
 import { PlatformJwtAuthGuard } from '../../common/guards/platform-jwt-auth.guard';
+import { PlatformArea } from '../../common/decorators/platform-area.decorator';
 import { BlockedWordsService } from '../blocked-words/blocked-words.service';
 import { CreateBlockedWordDto } from '../blocked-words/dto/blocked-word.dto';
 
@@ -21,6 +22,7 @@ import { CreateBlockedWordDto } from '../blocked-words/dto/blocked-word.dto';
 @ApiTags('platform-admin')
 @Public()
 @UseGuards(PlatformJwtAuthGuard)
+@PlatformArea('catalog')
 @ApiBearerAuth()
 @Controller('platform/blocked-words')
 export class PlatformBlockedWordsController {

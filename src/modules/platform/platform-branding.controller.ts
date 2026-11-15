@@ -17,6 +17,7 @@ import {
 } from '@nestjs/swagger';
 import { Public } from '../../common/decorators/public.decorator';
 import { PlatformJwtAuthGuard } from '../../common/guards/platform-jwt-auth.guard';
+import { PlatformArea } from '../../common/decorators/platform-area.decorator';
 import { BrandingService } from '../branding/branding.service';
 import {
   AddLogoDto,
@@ -46,6 +47,7 @@ export class PlatformBrandingController {
   @Patch()
   @Public()
   @UseGuards(PlatformJwtAuthGuard)
+  @PlatformArea('system')
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Platform admin: update the brand' })
   @ApiOkResponse({ type: BrandingResponse })

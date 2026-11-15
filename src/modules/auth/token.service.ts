@@ -10,6 +10,7 @@ import type {
   AdminJwtPayload,
   GoogleSignupTicketPayload,
   PlatformJwtPayload,
+  PlatformTicketPayload,
   SellerJwtPayload,
   TwoFactorTicketPayload,
 } from './interfaces/jwt-payload.interface';
@@ -58,18 +59,54 @@ export class TokenService {
     );
   }
 
-  async signPlatformToken(email: string): Promise<string> {
+  async signPlatformToken(staff: {
+    id: string;
+    email: string;
+    sessionVersion: number;
+  }): Promise<string> {
     return this.jwt.signAsync(
       {
-        sub: 'platform-admin',
-        email,
+        sub: staff.id,
+        email: staff.email,
         typ: 'platform',
+        sv: staff.sessionVersion,
       } satisfies PlatformJwtPayload,
       {
         secret: this.config.getOrThrow<string>('platformAdmin.jwtSecret'),
         expiresIn: this.config.getOrThrow<string>('platformAdmin.jwtExpiresIn'),
       } as JwtSignOptions,
     );
+  }
+
+  /** Signed with a key derived from the session secret, so it is never a session. */
+  private platformTicketSecret(): string {
+    return `${this.config.getOrThrow<string>('platformAdmin.jwtSecret')}:ticket`;
+  }
+
+  async signPlatformTicket(
+    payload: Omit<PlatformTicketPayload, 'typ'>,
+  ): Promise<string> {
+    return this.jwt.signAsync(
+      { ...payload, typ: 'platform-ticket' } satisfies PlatformTicketPayload,
+      {
+        secret: this.platformTicketSecret(),
+        expiresIn: '10m',
+      } as JwtSignOptions,
+    );
+  }
+
+  async verifyPlatformTicket(token: string): Promise<PlatformTicketPayload> {
+    try {
+      const payload = await this.jwt.verifyAsync<PlatformTicketPayload>(token, {
+        secret: this.platformTicketSecret(),
+      });
+      if (payload.typ !== 'platform-ticket') throw new Error('wrong type');
+      return payload;
+    } catch {
+      throw new UnauthorizedException(
+        'Your sign-in step expired. Start again with your email and password.',
+      );
+    }
   }
 
   async signTwoFactorTicket(

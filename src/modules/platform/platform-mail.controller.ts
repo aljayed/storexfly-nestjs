@@ -25,6 +25,7 @@ import {
 import { Throttle } from '@nestjs/throttler';
 import { Public } from '../../common/decorators/public.decorator';
 import { PlatformJwtAuthGuard } from '../../common/guards/platform-jwt-auth.guard';
+import { PlatformArea } from '../../common/decorators/platform-area.decorator';
 import { MailAccountsService } from '../mail/mail-accounts.service';
 
 export class CreateMailAccountDto {
@@ -91,6 +92,7 @@ export class SetMailLabelDto {
 @ApiTags('platform-admin')
 @Public()
 @UseGuards(PlatformJwtAuthGuard)
+@PlatformArea('system')
 @ApiBearerAuth()
 @Controller('platform/mail')
 export class PlatformMailController {

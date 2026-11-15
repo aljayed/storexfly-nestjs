@@ -12,6 +12,7 @@ import { IsString, MaxLength, MinLength } from 'class-validator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { Public } from '../../common/decorators/public.decorator';
 import { PlatformJwtAuthGuard } from '../../common/guards/platform-jwt-auth.guard';
+import { PlatformArea } from '../../common/decorators/platform-area.decorator';
 import type { PlatformPrincipal } from '../../common/types/principal';
 import { FaceReviewService } from '../face/face-review.service';
 
@@ -26,6 +27,7 @@ class FaceReviewDto {
 @ApiTags('platform-admin')
 @Public()
 @UseGuards(PlatformJwtAuthGuard)
+@PlatformArea('risk')
 @ApiBearerAuth()
 @Controller('platform/face-checks')
 export class PlatformFaceController {

@@ -19,6 +19,7 @@ import { Public } from '../../common/decorators/public.decorator';
 import { RequirePerm } from '../../common/decorators/roles.decorator';
 import { AdminJwtAuthGuard } from '../../common/guards/admin-jwt-auth.guard';
 import { PlatformJwtAuthGuard } from '../../common/guards/platform-jwt-auth.guard';
+import { PlatformArea } from '../../common/decorators/platform-area.decorator';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { ShopScopeGuard } from '../../common/guards/shop-scope.guard';
 import type { PlatformPrincipal } from '../../common/types/principal';
@@ -74,6 +75,7 @@ export class ServiceFeesController {
 @ApiTags('platform-admin')
 @Public()
 @UseGuards(PlatformJwtAuthGuard)
+@PlatformArea('finance')
 @ApiBearerAuth()
 @Controller('platform/service-fees')
 export class PlatformServiceFeesController {

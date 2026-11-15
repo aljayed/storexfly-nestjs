@@ -28,6 +28,7 @@ import { NotificationsModule } from './modules/notifications/notifications.modul
 import { StorageModule } from './modules/storage/storage.module';
 import { NoticesModule } from './modules/notices/notices.module';
 import { PlatformModule } from './modules/platform/platform.module';
+import { PlatformAuditModule } from './modules/platform-audit/platform-audit.module';
 import { PaymentLinksModule } from './modules/payment-links/payment-links.module';
 import { OrdersModule } from './modules/orders/orders.module';
 import { ProductsModule } from './modules/products/products.module';
@@ -60,6 +61,7 @@ import { UsersModule } from './modules/users/users.module';
       }),
     }),
     DatabaseModule,
+    PlatformAuditModule,
     RiskModule,
     UsersModule,
     AuthModule,

@@ -17,6 +17,7 @@ import {
 } from '@nestjs/swagger';
 import { Public } from '../../common/decorators/public.decorator';
 import { PlatformJwtAuthGuard } from '../../common/guards/platform-jwt-auth.guard';
+import { PlatformArea } from '../../common/decorators/platform-area.decorator';
 import { CouponsService } from '../coupons/coupons.service';
 import { CouponResponse } from '../coupons/dto/coupon.response';
 import {
@@ -28,6 +29,7 @@ import {
 @ApiTags('platform-admin')
 @Public()
 @UseGuards(PlatformJwtAuthGuard)
+@PlatformArea('growth')
 @ApiBearerAuth()
 @Controller('platform/coupons')
 export class PlatformCouponsController {

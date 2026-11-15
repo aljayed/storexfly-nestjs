@@ -1,5 +1,6 @@
 import type { Request } from 'express';
 import type { AdminRole } from '../../database/schema/enums';
+import type { PlatformGrants } from '../auth/platform-access';
 
 /**
  * How much of the platform a session may act on. One `users` row backs both
@@ -51,12 +52,17 @@ export interface AdminPrincipal {
 }
 
 /**
- * The platform operator (hoomri.com/platform-admin) - a single
- * env-configured identity, attached by the platform JWT strategy.
+ * A platform-console staff member (platform.hoomri.com), attached by the
+ * platform JWT strategy after it re-reads their account and role.
  */
 export interface PlatformPrincipal {
   kind: 'platform';
+  id: string;
   email: string;
+  name: string;
+  roleKey: string;
+  roleName: string;
+  grants: PlatformGrants;
 }
 
 export type Principal = SellerPrincipal | AdminPrincipal | PlatformPrincipal;
