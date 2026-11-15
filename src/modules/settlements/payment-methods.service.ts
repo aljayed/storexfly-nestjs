@@ -14,6 +14,7 @@ import {
   platformSettings,
 } from '../../database/schema';
 import type { PaymentMethodRow } from '../../database/schema';
+import { SERVICE_FEE_BP } from '../../common/constants/billing';
 import { CARD_FEE_BP, MBANK_FEE_BP } from './settlement.constants';
 
 /** Online (fee-carrying) method kinds an operator can add. */
@@ -81,7 +82,12 @@ export class PaymentMethodsService {
   /** Every method (disabled included), keyed by code - for settlement math. */
   async byCode(): Promise<Map<string, PaymentMethodRow>> {
     const rows = await this.ensureSeeded();
-    return new Map(rows.map((m) => [m.code, m]));
+    return new Map(
+      rows.map((m) => [
+        m.code,
+        { ...m, feeBp: m.gateway === 'none' ? 0 : SERVICE_FEE_BP },
+      ]),
+    );
   }
 
   async findEnabledByCode(code: string): Promise<PaymentMethodRow | undefined> {
@@ -165,6 +171,22 @@ export class PaymentMethodsService {
         );
       }
       set.gateway = patch.gateway;
+    }
+    // Gateway processing is fixed at 4.5%; direct collection is not charged
+    // here. Retail sales fees are accounted for separately, exactly once.
+    const gateway = set.gateway ?? row.gateway;
+    if (gateway !== 'none') {
+      if (
+        patch.feePercent !== undefined &&
+        toBp(patch.feePercent) !== SERVICE_FEE_BP
+      ) {
+        throw new BadRequestException(
+          `Online payment processing is fixed at ${SERVICE_FEE_BP / 100}%.`,
+        );
+      }
+      set.feeBp = SERVICE_FEE_BP;
+    } else {
+      set.feeBp = 0;
     }
     const [updated] = await this.db
       .update(paymentMethods)
@@ -314,7 +336,7 @@ function view(m: PaymentMethodRow): PaymentMethodView {
     title: m.title,
     subtitle: m.subtitle,
     subtitleIcons: m.subtitleIcons,
-    feePercent: m.feeBp / 100,
+    feePercent: m.gateway === 'none' ? 0 : SERVICE_FEE_BP / 100,
     locked: m.locked,
     gateway: m.gateway,
     enabled: m.enabled,

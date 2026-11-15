@@ -62,6 +62,7 @@ import {
   type Buckets,
   type MonthCore,
 } from '../settlements/settlement-core';
+import { serviceFeeBalanceCents } from '../service-fees/service-fee-balance';
 import { isUniqueViolationOn } from '../../common/utils/postgres-error.util';
 import { EmailOtpService } from '../auth/email-otp.service';
 import { BlockedWordsService } from '../blocked-words/blocked-words.service';
@@ -1263,6 +1264,15 @@ export class ShopsService {
     if (position.commissionOwedCents > 0) {
       throw new ConflictException(
         `You still owe ${taka(position.commissionOwedCents)} in commission on the sales this shop has already made. Settle it from Billing, then delete the shop.`,
+      );
+    }
+    // The same goes for the service fee on money the seller collected
+    // themself - and on a reseller order that balance includes a reseller's
+    // margin, which is somebody else's money entirely.
+    const feeCents = await serviceFeeBalanceCents(this.db, shop.id);
+    if (feeCents > 0) {
+      throw new ConflictException(
+        `This shop has an outstanding balance of ${taka(feeCents)}. Pay it from Payouts, then delete the shop.`,
       );
     }
     const owed = await this.owedSettlements(shop.id);

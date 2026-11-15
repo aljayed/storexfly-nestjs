@@ -24,7 +24,7 @@ describe('PaymentsService duplicate charges', () => {
     purpose: 'order',
     orderId: 'order-1',
     shopId: null,
-  shopDraftId: null,
+    shopDraftId: null,
     paymentLinkId: null,
     payerDetails: null,
     packCode: null,
@@ -51,6 +51,7 @@ describe('PaymentsService duplicate charges', () => {
     settle: Settle;
     inserted: { provider: string; gatewayTxnId: string }[];
     confirmGatewayPayment: jest.Mock;
+    recordGatewayPayment: jest.Mock;
   }
 
   /**
@@ -98,6 +99,7 @@ describe('PaymentsService duplicate charges', () => {
     };
 
     const confirmGatewayPayment = jest.fn().mockResolvedValue(null);
+    const recordGatewayPayment = jest.fn().mockResolvedValue(undefined);
     const service = new PaymentsService(
       db as never,
       { confirmGatewayPayment } as never,
@@ -109,13 +111,14 @@ describe('PaymentsService duplicate charges', () => {
       { packByCode: jest.fn() } as never,
       { settlePaid: jest.fn(), tokenFor: jest.fn() } as never,
       { refundTransaction: jest.fn() } as never,
+      { recordGatewayPayment } as never,
     );
     // `settle` is the seam these rules live behind; the public callbacks are
     // just the two ways a gateway reaches it.
     const settle = (service as unknown as { settle: Settle }).settle.bind(
       service,
     ) as Settle;
-    return { settle, inserted, confirmGatewayPayment };
+    return { settle, inserted, confirmGatewayPayment, recordGatewayPayment };
   }
 
   it('records a second charge on an already-paid session', async () => {
@@ -154,5 +157,24 @@ describe('PaymentsService duplicate charges', () => {
     );
     expect(inserted).toHaveLength(1);
     expect(confirmGatewayPayment).toHaveBeenCalledTimes(1);
+  });
+
+  // A seller paying their service fee is the opposite of an order: nothing
+  // is delivered, so nothing needs guarding against happening twice - and
+  // every charge that really landed has to come off what they owe.
+  it('passes every service-fee charge on, including one on a paid session', async () => {
+    const { settle, recordGatewayPayment, confirmGatewayPayment } = harness();
+    const fee = { ...SESSION, purpose: 'service_fee', orderId: null };
+    await settle(fee, { gatewayTxnId: 'FEE-1', amountCents: 657_500 });
+    await settle(
+      { ...fee, status: 'success' },
+      { gatewayTxnId: 'FEE-2', amountCents: 657_500 },
+    );
+    expect(recordGatewayPayment).toHaveBeenCalledTimes(2);
+    expect(recordGatewayPayment).toHaveBeenLastCalledWith(
+      expect.objectContaining({ purpose: 'service_fee' }),
+      expect.objectContaining({ gatewayTxnId: 'FEE-2', amountCents: 657_500 }),
+    );
+    expect(confirmGatewayPayment).not.toHaveBeenCalled();
   });
 });

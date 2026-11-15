@@ -146,6 +146,18 @@ export const orders = pgTable(
     // exchanged, pointing back at the one it replaces. The original moves to
     // 'Exchanged' and keeps its money; this one is born already paid for.
     exchangedFromOrderId: uuid('exchanged_from_order_id'),
+    // ── Service fee ────────────────────────────────────────────────
+    // The platform's service-fee rate this order was placed under, in basis
+    // points. Snapshotted so a later rate change never re-prices a sale that
+    // has already happened. Zero on every order placed before the fee
+    // existed - those owe nothing.
+    platformFeeBp: integer('platform_fee_bp').notNull().default(0),
+    // Only meaningful on an order whose money the seller collected themself
+    // (cash on delivery, a direct transfer): when a payment from the seller
+    // covered the service fee - and, on a reseller order, the reseller's
+    // margin - this order left them owing. Null while it is still owed. See
+    // ServiceFeesService.
+    duesPaidAt: timestamp('dues_paid_at', { withTimezone: true }),
     placedAt: timestamp('placed_at', { withTimezone: true })
       .notNull()
       .defaultNow(),

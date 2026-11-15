@@ -265,16 +265,25 @@ export class PlatformOverviewService {
       live?: boolean;
       suspendedAt?: Date | null;
       suspendedReason?: string | null;
+      suspendedFor?: 'dues' | null;
+      duesOverSince?: Date | null;
     } = {};
 
     if (dto.suspended !== undefined && dto.suspended !== !!shop.suspendedAt) {
       if (dto.suspended) {
         patch.suspendedAt = new Date();
         patch.suspendedReason = dto.reason?.trim() || null;
+        // The operator's own lock - not one a payment lifts.
+        patch.suspendedFor = null;
         patch.live = false;
       } else {
         patch.suspendedAt = null;
         patch.suspendedReason = null;
+        patch.suspendedFor = null;
+        // Lifting a suspension raised over an unpaid service fee is the
+        // operator giving the seller more time: the pay-by clock restarts
+        // from now rather than re-suspending them on the next sweep.
+        patch.duesOverSince = null;
         patch.live = true;
       }
     }

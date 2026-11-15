@@ -63,6 +63,7 @@ const SHOPS = [
 function serviceWith(opts: {
   orders: ReturnType<typeof order>[];
   settlements?: Record<string, unknown>[];
+  dues?: Record<string, number>;
   paymentLinks?: {
     shopId: string;
     amountCents?: number;
@@ -96,6 +97,23 @@ function serviceWith(opts: {
     },
   } as unknown as DrizzleDB;
 
+  // Payout decisions now read under the same row lock as reconciliation.
+  Object.assign(db, {
+    transaction: (work: (tx: DrizzleDB) => unknown) => work(db),
+    select: (fields: Record<string, unknown>) => ({
+      from: () => {
+        if ('id' in fields)
+          return { where: () => ({ for: async () => [{ id: 'shop-a' }] }) };
+        if ('code' in fields)
+          return Promise.resolve([
+            { code: 'mbank', gateway: 'sslcommerz' },
+            { code: 'cod', gateway: 'none' },
+          ]);
+        return { where: async () => [{ cents: 0 }] };
+      },
+    }),
+  });
+
   const methods = {
     byCode: jest.fn().mockResolvedValue(
       new Map([
@@ -123,7 +141,19 @@ function serviceWith(opts: {
     ),
   } as unknown as PaymentMethodsService;
 
-  return new SettlementsService(db, {} as ShopsService, methods);
+  // What each shop owes back on money it collected itself, in paisa.
+  const serviceFees = {
+    balancesFor: jest
+      .fn()
+      .mockResolvedValue(new Map(Object.entries(opts.dues ?? {}))),
+  };
+
+  return new SettlementsService(
+    db,
+    {} as ShopsService,
+    methods,
+    serviceFees as never,
+  );
 }
 
 /**
@@ -162,11 +192,16 @@ describe('paid payment links in a payout', () => {
   it('pays out a USD link using its captured BDT value', async () => {
     const service = serviceWith({
       orders: [],
-      paymentLinks: [{
-        shopId: 'shop-a', currency: 'USD', amountCents: 1000,
-        settledAmountCents: 122000, paymentMethod: 'mbank',
-        paidAt: DHAKA_NOON('2026-09-20'),
-      }],
+      paymentLinks: [
+        {
+          shopId: 'shop-a',
+          currency: 'USD',
+          amountCents: 1000,
+          settledAmountCents: 122000,
+          paymentMethod: 'mbank',
+          paidAt: DHAKA_NOON('2026-09-20'),
+        },
+      ],
     });
     const { rows } = await service.forPlatform('2026-10');
     expect(rows[0].payout).toBe(1183.4); // BDT 1220 less 3%.
@@ -349,12 +384,21 @@ describe('the cycles the settlements screen offers', () => {
  * of the database.
  */
 describe('recording a payout', () => {
-  const service = () =>
-    new SettlementsService(
-      { query: {} } as never,
-      { requireById: jest.fn().mockResolvedValue(SHOPS[0]) } as never,
-      {} as never,
-    );
+  beforeAll(() => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-09-24T04:00:00.000Z'));
+  });
+  afterAll(() => jest.useRealTimers());
+
+  // A shop with ৳9,700 waiting in a closed cycle.
+  const service = () => {
+    const svc = serviceWith({
+      orders: [order('shop-a', '2026-08-20', 1_000_000)],
+    });
+    (svc as unknown as { shops: unknown }).shops = {
+      requireById: jest.fn().mockResolvedValue(SHOPS[0]),
+    };
+    return svc;
+  };
 
   it('refuses without a receipt for the transfer', async () => {
     await expect(
@@ -370,21 +414,171 @@ describe('recording a payout', () => {
 
   it('asks for nothing extra to undo one', async () => {
     // Undoing deletes the row - there is no transfer to evidence.
-    const db = {
-      query: {},
+    const db: Record<string, any> = {
+      query: { settlements: { findFirst: async () => undefined } },
+      select: () => ({
+        from: () => ({
+          where: () => ({ for: async () => [{ id: 'shop-a' }] }),
+        }),
+      }),
       delete: () => ({
         where: () => ({ returning: () => Promise.resolve([]) }),
       }),
     };
+    db.transaction = (work: (tx: unknown) => unknown) => work(db);
     const undo = new SettlementsService(
       db as never,
       { requireById: jest.fn().mockResolvedValue(SHOPS[0]) } as never,
-      {} as never,
+      { byCode: async () => new Map() } as never,
     );
 
     // Reaches the "nothing to undo" case, so it got past any proof check.
     await expect(undo.decide('shop-a', '2026-09', false)).rejects.toThrow(
       /has not been marked paid/i,
     );
+  });
+});
+
+/**
+ * A transfer of a few taka costs more to make than it is worth, so a shop
+ * is paid once what it is owed reaches the minimum. Nothing is lost in the
+ * meantime: small cycles are held and ride along with the payout that takes
+ * the total over.
+ */
+describe('the minimum payout', () => {
+  beforeAll(() => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-09-24T04:00:00.000Z'));
+  });
+  afterAll(() => jest.useRealTimers());
+
+  it('holds a closed cycle that is under the minimum on its own', async () => {
+    const service = serviceWith({
+      orders: [order('shop-a', '2026-08-02', 150_000)], // ৳1,500 → 2026-08
+    });
+
+    const { rows, minPayout } = await service.forPlatform('2026-08');
+
+    expect(minPayout).toBe(2000);
+    expect(rows[0].status).toBe('held');
+    expect(rows[0].payout).toBe(1455);
+  });
+
+  it('releases held cycles the month they reach the minimum together', async () => {
+    const service = serviceWith({
+      orders: [
+        order('shop-a', '2026-07-20', 150_000), // → 2026-08
+        order('shop-a', '2026-08-20', 100_000), // → 2026-09
+      ],
+    });
+
+    const { rows } = await service.forPlatform('2026-09');
+
+    // ৳1,455 + ৳970 is over the minimum, so neither is held any more...
+    expect(rows[0].status).not.toBe('held');
+    // ...and paying September carries August with it.
+    expect(rows[0].payout).toBe(970);
+    expect(rows[0].carried).toBe(1455);
+    expect(rows[0].transfer).toBe(2425);
+  });
+
+  it('never counts a cycle that is still collecting towards it', async () => {
+    const service = serviceWith({
+      orders: [
+        order('shop-a', '2026-08-02', 150_000), // closed, ৳1,455
+        order('shop-a', '2026-09-20', 900_000), // → 2026-10, still open
+      ],
+    });
+
+    const { rows } = await service.forPlatform('2026-08');
+
+    expect(rows[0].status).toBe('held');
+  });
+
+  it('refuses to record a payout that is under it', async () => {
+    const service = serviceWith({
+      orders: [order('shop-a', '2026-08-02', 150_000)],
+    });
+    (service as unknown as { shops: unknown }).shops = {
+      requireById: jest.fn().mockResolvedValue(SHOPS[0]),
+    };
+
+    await expect(
+      service.decide('shop-a', '2026-08', true, undefined, {
+        data: 'data:application/pdf;base64,AAAA',
+      }),
+    ).rejects.toMatchObject({
+      response: expect.objectContaining({ error: 'BelowMinimumPayout' }),
+    });
+  });
+});
+
+/**
+ * A shop that collected cash owes the platform its service fee - and, on a
+ * reseller's order, the margin it is holding. When the platform also owes
+ * that shop a payout, the one is taken from the other rather than sending
+ * money out and asking for some of it back.
+ */
+describe('what a shop owes, against its payout', () => {
+  beforeAll(() => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-09-24T04:00:00.000Z'));
+  });
+  afterAll(() => jest.useRealTimers());
+
+  it('shows the transfer net of the balance before anything is recorded', async () => {
+    const service = serviceWith({
+      orders: [order('shop-a', '2026-08-02', 1_000_000)], // payout ৳9,700
+      dues: { 'shop-a': 250_000 },
+    });
+
+    const { rows } = await service.forPlatform('2026-08');
+
+    expect(rows[0].payout).toBe(9700);
+    expect(rows[0].duesOutstanding).toBe(2500);
+    expect(rows[0].transfer).toBe(7200);
+  });
+
+  it('never keeps back more than the payout holds', async () => {
+    const service = serviceWith({
+      orders: [order('shop-a', '2026-08-02', 1_000_000)],
+      dues: { 'shop-a': 5_000_000 },
+    });
+
+    const { rows } = await service.forPlatform('2026-08');
+
+    expect(rows[0].duesOutstanding).toBe(9700);
+    expect(rows[0].transfer).toBe(0);
+  });
+
+  it('ignores a shop that is in credit', async () => {
+    const service = serviceWith({
+      orders: [order('shop-a', '2026-08-02', 1_000_000)],
+      dues: { 'shop-a': -40_000 },
+    });
+
+    const { rows } = await service.forPlatform('2026-08');
+
+    expect(rows[0].duesOutstanding).toBeUndefined();
+    expect(rows[0].transfer).toBe(9700);
+  });
+
+  it('reads a paid cycle from what was actually kept back', async () => {
+    const service = serviceWith({
+      orders: [],
+      settlements: [
+        {
+          ...PAID_SNAPSHOT,
+          period: '2026-08',
+          payoutCents: 970_000,
+          duesDeductedCents: 250_000,
+        },
+      ],
+      dues: { 'shop-a': 999_999 },
+    });
+
+    const { rows } = await service.forPlatform('2026-08');
+
+    expect(rows[0].duesDeducted).toBe(2500);
+    expect(rows[0].transfer).toBe(7200);
+    expect(rows[0].duesOutstanding).toBeUndefined();
   });
 });

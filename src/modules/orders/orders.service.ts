@@ -47,6 +47,7 @@ import {
   FREE_ORDER_CAP,
   FREE_TIER_LIMIT_MESSAGE,
   PLATFORM_FREE,
+  salesFeeBp,
 } from '../../common/constants/billing';
 import { creditPosition } from '../subscriptions/credit-balance';
 import { DRIZZLE } from '../../database/database.constants';
@@ -485,7 +486,10 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
       );
     }
     await this.assertGatewayAvailable(method);
-    if (reseller && (method.gateway === 'none' || dto.paymentPlan)) throw new BadRequestException('Reseller orders use full online payment so both businesses receive their earnings.');
+    // Suppliers may collect reseller orders in cash, then remit the full
+    // reseller margin without a wholesale sales fee. Split advances remain
+    // unavailable so the margin cannot be stranded across two collectors.
+    if (reseller && dto.paymentPlan) throw new BadRequestException('Reseller orders are paid in full - online, or in cash on delivery.');
     const usesCodProtection = dto.paymentPlan !== undefined;
     const wantsCodAdvance = dto.paymentPlan === 'cod_advance';
     const checkoutKind = usesCodProtection ? 'cod' : method.kind;
@@ -620,6 +624,7 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
       const [shop] = await tx
         .select({
           live: shops.live,
+          businessType: shops.businessType,
           deliveryMode: shops.deliveryMode,
           plan: shops.plan,
           ownerId: shops.ownerId,
@@ -804,6 +809,7 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
           status: 'New',
           pay: payStatus,
           paymentMethod: dto.paymentMethod,
+          platformFeeBp: salesFeeBp(shop.businessType),
           mobileBankApp: dto.mobileBankApp,
           advanceCents,
           channel: 'Store',
@@ -1107,6 +1113,7 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
       const [shop] = await tx
         .select({
           live: shops.live,
+          businessType: shops.businessType,
           deliveryMode: shops.deliveryMode,
           plan: shops.plan,
           ownerId: shops.ownerId,
@@ -1254,6 +1261,7 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
           status: 'New',
           pay: payStatus,
           paymentMethod: args.paymentMethod,
+          platformFeeBp: salesFeeBp(shop.businessType),
           channel: 'Store',
           address: {
             line: args.address.line,
@@ -4236,8 +4244,7 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
           ...(nextStatus && { status: nextStatus }),
           ...(nextStatus === 'Shipped' &&
             !order.handedOverAt && { handedOverAt: observed.at }),
-          // The moment the payout clock starts: a delivery before the 15th
-          // is settled that month, and one after it waits for the next.
+          // A delivery joins the first-week payout of the following month.
           // Stamped with the courier's own time, not ours, so a webhook that
           // arrives late still lands in the cycle the parcel arrived in.
           ...(nextStatus === 'Delivered' &&

@@ -8,6 +8,7 @@ import { PaymentLinksModule } from '../payment-links/payment-links.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { RefundsModule } from '../refunds/refunds.module';
 import { SettlementsModule } from '../settlements/settlements.module';
+import { ServiceFeesModule } from '../service-fees/service-fees.module';
 import { ShopCouponsModule } from '../shop-coupons/shop-coupons.module';
 import { ShopsModule } from '../shops/shops.module';
 import { SubscriptionsModule } from '../subscriptions/subscriptions.module';
@@ -35,6 +36,8 @@ import { PaymentsService } from './payments.service';
     BillingModule,
     // ...and marks a payment link paid when its session settles.
     PaymentLinksModule,
+    // ...and takes a seller's service-fee payment off their balance.
+    ServiceFeesModule,
   ],
   controllers: [OrdersController, PaymentsController, CourierWebhookController],
   providers: [OrdersService, PaymentsService],

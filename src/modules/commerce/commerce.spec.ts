@@ -1,8 +1,16 @@
 import { CommerceService } from './commerce.service';
 import { OrdersService } from '../orders/orders.service';
 import { ProductResponse } from '../products/dto/product.response';
-import { addOrderForSettlement } from '../settlements/settlements.service';
-import { emptyBuckets } from '../settlements/settlement-core';
+import {
+  addOrderForSettlement,
+  resellerMarginPayout,
+  shareOf,
+} from '../settlements/settlements.service';
+import {
+  classify,
+  emptyBuckets,
+  payoutCents,
+} from '../settlements/settlement-core';
 import type { CheckoutDto } from '../orders/dto/checkout.dto';
 import type { ProductRow } from '../../database/schema';
 const source = {
@@ -231,11 +239,27 @@ describe('Reseller settlement allocation', () => {
         paymentMethod: 'bkash',
         pay: 'Paid',
       };
-      addOrderForSettlement(supplier, order, 'supplier');
+      const catalog = new Map([
+        [
+          'bkash',
+          {
+            code: 'bkash',
+            title: 'bKash',
+            gateway: 'bkash',
+            kind: 'mbank',
+            feeBp: 450,
+          },
+        ],
+      ]) as never;
+      addOrderForSettlement(supplier, order, 'supplier', catalog);
       addOrderForSettlement(reseller, order, 'reseller');
-      expect(supplier.totalCents).toBe(50000 - margin);
+      expect(supplier.totalCents).toBe(50000);
+      expect(supplier.resellerMarginCents).toBe(margin);
       expect(reseller.totalCents).toBe(margin);
-      expect(supplier.totalCents + reseller.totalCents).toBe(order.totalCents);
+      expect(
+        payoutCents(classify(supplier, catalog)) +
+          payoutCents(classify(reseller, catalog)),
+      ).toBe(47750);
     },
   );
 });
@@ -253,5 +277,83 @@ describe('Quote lifecycle isolation', () => {
     await expect(
       service.decideQuote('buyer', 'quote', 'accept'),
     ).rejects.toThrow('expired');
+  });
+});
+describe('Reseller margin on an order the supplier collected', () => {
+  const catalog = new Map([
+    [
+      'cod',
+      {
+        code: 'cod',
+        kind: 'cod',
+        gateway: 'none',
+        feeBp: 0,
+        title: 'Cash on Delivery',
+      },
+    ],
+    [
+      'bkash',
+      {
+        code: 'bkash',
+        kind: 'mbank',
+        gateway: 'bkash',
+        feeBp: 450,
+        title: 'bKash',
+      },
+    ],
+  ]) as never;
+  const delivered = new Date('2026-11-02T06:00:00Z');
+  const order = {
+    shopId: 'supplier',
+    resellerShopId: 'reseller',
+    resellerMarginCents: 15000,
+    totalCents: 50000,
+    advanceCents: 0,
+    paymentMethod: 'cod',
+    pay: 'Paid',
+    deliveredAt: delivered,
+    handedOverAt: null,
+    deliveryMode: 'carrybee' as const,
+    duesPaidAt: null as Date | null,
+  };
+
+  it('is not payable until the supplier has handed it in', () => {
+    expect(resellerMarginPayout(order, catalog)).toBeNull();
+    expect(shareOf(order, 'reseller', catalog)).toEqual([]);
+  });
+
+  it('is paid out in full without a service fee in the cycle it was handed in', () => {
+    const handedIn = new Date('2026-11-20T06:00:00Z');
+    const [entry] = shareOf(
+      { ...order, duesPaidAt: handedIn },
+      'reseller',
+      catalog,
+    );
+    expect(entry.at).toBe(handedIn);
+    const bucket = emptyBuckets();
+    entry.add(bucket);
+    const core = classify(bucket, catalog);
+    expect(core.online).toEqual([
+      expect.objectContaining({ cents: 15000, feeBp: 0, feeCents: 0 }),
+    ]);
+    expect(payoutCents(core)).toBe(15000);
+  });
+
+  it('leaves the supplier nothing to be paid out - they hold the cash', () => {
+    const [entry] = shareOf(order, 'supplier', catalog);
+    const bucket = emptyBuckets();
+    entry.add(bucket);
+    const core = classify(bucket, catalog);
+    expect(core.codCents).toBe(50000);
+    expect(payoutCents(core)).toBe(0);
+  });
+
+  it('still pays an online order from the cycle it was delivered in', () => {
+    const online = { ...order, paymentMethod: 'bkash' };
+    expect(resellerMarginPayout(online, catalog)).toEqual({
+      method: 'reseller-online-margin',
+      cents: 15000,
+      at: delivered,
+    });
   });
 });

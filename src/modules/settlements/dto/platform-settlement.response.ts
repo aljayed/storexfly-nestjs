@@ -87,4 +87,6 @@ export class PlatformSettlementsResponse {
   rows!: PlatformSettlementRowResponse[];
   @ApiProperty({ type: [PlatformSettlementTotalResponse] })
   totals!: PlatformSettlementTotalResponse[];
+  @ApiProperty({ example: 2000, description: 'The least sent in one payout' })
+  minPayout!: number;
 }

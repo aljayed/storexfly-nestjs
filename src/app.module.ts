@@ -34,6 +34,7 @@ import { ProductsModule } from './modules/products/products.module';
 import { ReportsModule } from './modules/reports/reports.module';
 import { ReviewsModule } from './modules/reviews/reviews.module';
 import { SettlementsModule } from './modules/settlements/settlements.module';
+import { ServiceFeesModule } from './modules/service-fees/service-fees.module';
 import { ShopsModule } from './modules/shops/shops.module';
 import { StaffModule } from './modules/staff/staff.module';
 import { SubscriptionsModule } from './modules/subscriptions/subscriptions.module';
@@ -80,6 +81,7 @@ import { UsersModule } from './modules/users/users.module';
     CustomersModule,
     ReportsModule,
     SettlementsModule,
+    ServiceFeesModule,
     StaffModule,
     NoticesModule,
     BuyerModule,

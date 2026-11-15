@@ -785,6 +785,27 @@
       "when": 1795564800000,
       "tag": "0114_face_verification",
       "breakpoints": true
+    },
+    {
+      "idx": 115,
+      "version": "7",
+      "when": 1795651200000,
+      "tag": "0115_service_fee",
+      "breakpoints": true
+    },
+    {
+      "idx": 116,
+      "version": "7",
+      "when": 1795737600000,
+      "tag": "0116_settlement_dues_deduction",
+      "breakpoints": true
+    },
+    {
+      "idx": 117,
+      "version": "7",
+      "when": 1795824000000,
+      "tag": "0117_trade_fee_policy",
+      "breakpoints": true
     }
   ]
 }

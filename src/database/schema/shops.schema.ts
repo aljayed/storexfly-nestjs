@@ -159,6 +159,13 @@ export const shops = pgTable(
     suspendedAt: timestamp('suspended_at', { withTimezone: true }),
     // Shown to the seller so a suspension is never silent.
     suspendedReason: varchar('suspended_reason', { length: 300 }),
+    // What raised the suspension. 'dues' is the one the platform lifts on its
+    // own, the moment the shop's service-fee balance is paid in full; null is
+    // an operator's decision, which only an operator undoes.
+    suspendedFor: varchar('suspended_for', { length: 20 }).$type<'dues'>(),
+    // When the shop's unpaid service-fee balance last went over the limit -
+    // the start of the days it has to pay in. Null while it is under.
+    duesOverSince: timestamp('dues_over_since', { withTimezone: true }),
     // Pricing tier. Free shops list as much as they like but are capped at 10
     // lifetime orders, and are deactivated at that cap until they buy credit
     // or verify. Existing shops predate the free tier and stay 'paid'.

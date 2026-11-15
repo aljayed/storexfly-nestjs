@@ -15,7 +15,9 @@ import {
   ApiOperation,
   ApiTags,
 } from '@nestjs/swagger';
+import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { Public } from '../../common/decorators/public.decorator';
+import type { PlatformPrincipal } from '../../common/types/principal';
 import { PlatformJwtAuthGuard } from '../../common/guards/platform-jwt-auth.guard';
 import {
   PERIOD_PATTERN,
@@ -107,6 +109,7 @@ export class PlatformSettlementsController {
   })
   @ApiOkResponse({ type: PlatformSettlementRowResponse })
   decide(
+    @CurrentUser() actor: PlatformPrincipal,
     @Param('shopId', ParseUUIDPipe) shopId: string,
     @Param('period') period: string,
     @Body() dto: SettlementDecisionDto,
@@ -120,6 +123,7 @@ export class PlatformSettlementsController {
       dto.paid,
       dto.note,
       dto.proof ? { data: dto.proof, name: dto.proofName } : undefined,
+      actor.email,
     );
   }
 }

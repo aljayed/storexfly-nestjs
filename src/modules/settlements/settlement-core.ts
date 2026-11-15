@@ -5,8 +5,13 @@ import type {
 } from '../../database/schema';
 import {
   CARD_FEE_BP,
+  FIRST_MONTHLY_PERIOD,
+  LEGACY_CUTOFF_DAY,
+  LEGACY_WINDOW_END_DAY,
   MBANK_FEE_BP,
-  SETTLEMENT_CUTOFF_DAY,
+  MONTHLY_CYCLES_FROM,
+  RESELLER_CASH_MARGIN,
+  RESELLER_ONLINE_MARGIN,
   SETTLEMENT_WINDOW_END_DAY,
   SETTLEMENT_WINDOW_START_DAY,
   feeCents,
@@ -23,6 +28,8 @@ import { zonedParts, zonedTime } from '../../common/utils/report-window.util';
 
 /** Raw money buckets for one shop-month: per method code, all integer cents. */
 export interface Buckets {
+  processingShortfallCents: number;
+  resellerMarginCents: number;
   ordersCount: number;
   totalCents: number;
   /** Orders recorded manually from the console - no payment method. */
@@ -32,6 +39,8 @@ export interface Buckets {
 
 /** A month classified against the payment-method catalog. */
 export interface MonthCore {
+  processingShortfallCents: number;
+  resellerMarginCents: number;
   ordersCount: number;
   totalCents: number;
   codCents: number;
@@ -43,7 +52,14 @@ export interface MonthCore {
 export type MethodCatalog = Map<string, PaymentMethodRow>;
 
 export function emptyBuckets(): Buckets {
-  return { ordersCount: 0, totalCents: 0, manualCents: 0, byCode: new Map() };
+  return {
+    ordersCount: 0,
+    totalCents: 0,
+    manualCents: 0,
+    resellerMarginCents: 0,
+    processingShortfallCents: 0,
+    byCode: new Map(),
+  };
 }
 
 export function addOrder(
@@ -73,6 +89,23 @@ export function classify(b: Buckets, catalog: MethodCatalog): MonthCore {
   let otherCents = b.manualCents;
   const online: SettlementMethodSnapshot[] = [];
   for (const [code, cents] of b.byCode) {
+    if (
+      code === RESELLER_CASH_MARGIN.code ||
+      code === RESELLER_ONLINE_MARGIN.code
+    ) {
+      const earnings =
+        code === RESELLER_CASH_MARGIN.code
+          ? RESELLER_CASH_MARGIN
+          : RESELLER_ONLINE_MARGIN;
+      online.push({
+        code,
+        title: earnings.title,
+        cents,
+        feeBp: 0,
+        feeCents: 0,
+      });
+      continue;
+    }
     const method = catalog.get(code);
     if (!method) otherCents += cents;
     else if (method.kind === 'cod') codCents += cents;
@@ -89,6 +122,8 @@ export function classify(b: Buckets, catalog: MethodCatalog): MonthCore {
   }
   online.sort((a, b2) => b2.cents - a.cents);
   return {
+    processingShortfallCents: b.processingShortfallCents ?? 0,
+    resellerMarginCents: b.resellerMarginCents ?? 0,
     ordersCount: b.ordersCount,
     totalCents: b.totalCents,
     codCents,
@@ -120,6 +155,8 @@ export function snapshotCore(paid: SettlementRow): MonthCore {
       },
     ].filter((m) => m.cents > 0);
   return {
+    processingShortfallCents: paid.processingShortfallCents ?? 0,
+    resellerMarginCents: paid.resellerMarginCents ?? 0,
     ordersCount: paid.ordersCount,
     totalCents: paid.totalCents,
     codCents: paid.codCents,
@@ -133,7 +170,12 @@ export function totalFeeCents(core: MonthCore): number {
 }
 
 export function payoutCents(core: MonthCore): number {
-  return core.online.reduce((sum, m) => sum + m.cents - m.feeCents, 0);
+  return Math.max(
+    0,
+    core.online.reduce((sum, m) => sum + m.cents - m.feeCents, 0) -
+      (core.resellerMarginCents ?? 0) +
+      (core.processingShortfallCents ?? 0),
+  );
 }
 
 /**
@@ -154,25 +196,41 @@ export function settledOnOf(order: {
 }
 
 /* ── The payout cycle ──────────────────────────────────────────────
-   A cycle is named for the month it is paid out in, and runs from the 15th
-   of the month before to the 15th of that month. So "2026-09" means
-   everything delivered between 15 August and 14 September, paid between the
-   15th and the 21st of September. Dates are read on the seller's calendar,
-   not the server's: a delivery at 1am on the 15th in Dhaka is the 15th. */
+   A cycle is named for the month it is paid out in, and covers the calendar
+   month before it. So "2027-02" means everything delivered in January, paid
+   in the first seven days of February. Dates are read on the seller's
+   calendar, not the server's: a delivery at 1am on the 1st in Dhaka is the
+   1st.
+
+   Cycles that closed under the older mid-month rule keep it - see
+   MONTHLY_CYCLES_FROM in the constants for why, and for the one short cycle
+   that bridges the two. */
+
+const pad = (n: number) => String(n).padStart(2, '0');
+const MONTHLY_FROM_DAY = `${MONTHLY_CYCLES_FROM.year}-${pad(MONTHLY_CYCLES_FROM.month)}-${pad(MONTHLY_CYCLES_FROM.day)}`;
+
+/** Whether a cycle is one of the old mid-month ones. */
+function isLegacyPeriod(period: string): boolean {
+  return period < FIRST_MONTHLY_PERIOD;
+}
 
 /** Which cycle a delivery is paid out in. */
 export function periodOf(d: Date): string {
   const p = zonedParts(d);
-  const month = `${p.year}-${String(p.month).padStart(2, '0')}`;
-  // On or after the cut-off it has missed this month's payout and waits.
-  return p.day < SETTLEMENT_CUTOFF_DAY ? month : shiftPeriod(month, 1);
+  const month = `${p.year}-${pad(p.month)}`;
+  if (`${month}-${pad(p.day)}` >= MONTHLY_FROM_DAY) {
+    // Delivered this month, paid at the start of the next.
+    return shiftPeriod(month, 1);
+  }
+  // The old rule: on or after the 15th it had missed that month's payout.
+  return p.day < LEGACY_CUTOFF_DAY ? month : shiftPeriod(month, 1);
 }
 
 /** "YYYY-MM" plus a number of months, as plain calendar arithmetic. */
 function shiftPeriod(period: string, months: number): string {
   const [y, m] = period.split('-').map(Number);
   const zero = y * 12 + (m - 1) + months;
-  return `${Math.floor(zero / 12)}-${String((zero % 12) + 1).padStart(2, '0')}`;
+  return `${Math.floor(zero / 12)}-${pad((zero % 12) + 1)}`;
 }
 
 /** The cycle now collecting deliveries. */
@@ -185,30 +243,45 @@ export function previousPeriod(period: string): string {
 }
 
 /**
- * [start, end) instants of one cycle: the 15th of the month before, to the
- * 15th of the cycle's own month, both at midnight on the seller's calendar.
+ * [start, end) instants of one cycle, both at midnight on the seller's
+ * calendar: the calendar month before the one it is named for.
  */
 export function monthRange(period: string): [Date, Date] {
   const [y, m] = period.split('-').map(Number);
-  return [
-    zonedTime(y, m - 1, SETTLEMENT_CUTOFF_DAY),
-    zonedTime(y, m, SETTLEMENT_CUTOFF_DAY),
-  ];
+  if (isLegacyPeriod(period)) {
+    return [
+      zonedTime(y, m - 1, LEGACY_CUTOFF_DAY),
+      zonedTime(y, m, LEGACY_CUTOFF_DAY),
+    ];
+  }
+  const from =
+    period === FIRST_MONTHLY_PERIOD
+      ? zonedTime(
+          MONTHLY_CYCLES_FROM.year,
+          MONTHLY_CYCLES_FROM.month,
+          MONTHLY_CYCLES_FROM.day,
+        )
+      : zonedTime(y, m - 1, 1);
+  return [from, zonedTime(y, m, 1)];
 }
 
-/** The 15th-21st payout window, in the cycle's own month. */
+/** The days a cycle is paid out in, in its own month. */
 export function windowOf(period: string): { from: string; to: string } {
-  const iso = (day: number) => `${period}-${String(day).padStart(2, '0')}`;
-  return {
-    from: iso(SETTLEMENT_WINDOW_START_DAY),
-    to: iso(SETTLEMENT_WINDOW_END_DAY),
-  };
+  const iso = (day: number) => `${period}-${pad(day)}`;
+  return isLegacyPeriod(period)
+    ? { from: iso(LEGACY_CUTOFF_DAY), to: iso(LEGACY_WINDOW_END_DAY) }
+    : {
+        from: iso(SETTLEMENT_WINDOW_START_DAY),
+        to: iso(SETTLEMENT_WINDOW_END_DAY),
+      };
 }
 
 export function statusOf(
   period: string,
   paid: boolean,
   payout: number,
+  /** Everything the shop is owed is still under the minimum payout. */
+  held = false,
 ): SettlementStatus {
   if (paid) return 'paid';
   // Nothing online arrived, so there is no transfer to make - true whether
@@ -217,6 +290,9 @@ export function statusOf(
   // The cycle is still taking deliveries. It can be paid out all the same;
   // this only says that more may yet join it.
   if (period >= currentPeriod()) return 'accruing';
+  // Closed, but too small to send on its own: it waits for the next cycle
+  // to join it, however long ago its own window was.
+  if (held) return 'held';
   const { from, to } = windowOf(period);
   // Today on the seller's calendar. Not derived from periodOf: that answers
   // "which payout is this delivery in", which after the 15th is next month.

@@ -1,4 +1,5 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
+import { ServiceFeesModule } from '../service-fees/service-fees.module';
 import { ShopsModule } from '../shops/shops.module';
 import { PaymentMethodsController } from './payment-methods.controller';
 import { PaymentMethodsService } from './payment-methods.service';
@@ -14,7 +15,9 @@ import { SettlementsService } from './settlements.service';
  * validate the method a buyer picked.
  */
 @Module({
-  imports: [ShopsModule],
+  // Payouts are sent net of a shop's service-fee balance, and the fee engine
+  // reads the payment-method catalogue from here - each needs the other.
+  imports: [ShopsModule, forwardRef(() => ServiceFeesModule)],
   controllers: [
     SettlementsController,
     PlatformSettlementsController,

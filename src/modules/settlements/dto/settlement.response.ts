@@ -47,8 +47,7 @@ export class SettlementMonthResponse {
     example: '2026-06',
     description:
       'The payout cycle, named for the month it is paid in ("YYYY-MM"). ' +
-      'It covers everything delivered from the 15th of the month before to ' +
-      'the 14th of this one.',
+      'It covers everything delivered in the calendar month before.',
   })
   period!: string;
   @ApiProperty() ordersCount!: number;
@@ -68,9 +67,45 @@ export class SettlementMonthResponse {
   @ApiProperty({ description: 'Total fees deducted from the online volume' })
   fees!: number;
   @ApiProperty({
+    description: 'Reseller margin withheld in full from supplier receipts',
+  })
+  resellerMargin!: number;
+  @ApiProperty({
+    description:
+      'Online processing not covered by supplier proceeds; carried as supplier debt',
+  })
+  processingShortfall!: number;
+  @ApiProperty({
     description: 'Online revenue minus fees - what gets paid out',
   })
   payout!: number;
+  @ApiPropertyOptional({
+    description:
+      'Earlier closed cycles, held under the minimum, that this payout ' +
+      'would carry - present on an unpaid cycle only',
+  })
+  carried?: number;
+  @ApiPropertyOptional({
+    description:
+      'What the shop owes on its service-fee balance today, which would be ' +
+      'kept back from this payout - present on an unpaid cycle only',
+  })
+  duesOutstanding?: number;
+  @ApiPropertyOptional({
+    description: 'Service-fee balance kept back when this payout was sent',
+  })
+  duesDeducted?: number;
+  @ApiProperty({
+    description:
+      'What is (or was) actually transferred: the payout, plus anything ' +
+      'carried, less the service-fee balance kept back',
+  })
+  transfer!: number;
+  @ApiPropertyOptional({
+    description:
+      'Net additional transfer when new earnings join an already-paid cycle',
+  })
+  additionalTransfer?: number;
   @ApiPropertyOptional({
     example: 420,
     description:
@@ -84,14 +119,26 @@ export class SettlementMonthResponse {
   })
   receipts?: SettlementReceiptResponse[];
   @ApiProperty({
-    enum: ['accruing', 'scheduled', 'due', 'overdue', 'paid', 'none'],
+    enum: ['accruing', 'scheduled', 'held', 'due', 'overdue', 'paid', 'none'],
   })
   status!: SettlementStatus;
-  @ApiProperty({ example: '2026-07-15', description: 'Payout window opens' })
+  @ApiProperty({ example: '2026-07-01', description: 'Payout window opens' })
   windowFrom!: string;
-  @ApiProperty({ example: '2026-07-21', description: 'Payout window closes' })
+  @ApiProperty({ example: '2026-07-07', description: 'Payout window closes' })
   windowTo!: string;
+  @ApiProperty({
+    description: 'Start of the covered delivery period, ISO instant',
+  })
+  coveredFrom!: string;
+  @ApiProperty({
+    description: 'End of the covered delivery period, ISO instant (exclusive)',
+  })
+  coveredTo!: string;
   @ApiPropertyOptional() paidAt?: string;
+  @ApiPropertyOptional({
+    description: 'Cycle of the combined transfer that paid this month',
+  })
+  paidWithPeriod?: string;
   @ApiPropertyOptional({ description: 'Operator payment reference' })
   note?: string;
 }
@@ -110,4 +157,12 @@ export class ShopSettlementsResponse {
   banner!: string | null;
   @ApiProperty({ type: [SettlementMonthResponse] })
   months!: SettlementMonthResponse[];
+  @ApiProperty({ example: 2000, description: 'The least sent in one payout' })
+  minPayout!: number;
+  @ApiPropertyOptional({
+    description:
+      'What the shop is owed from closed cycles while that is still under ' +
+      'the minimum - held, and carried into the next payout',
+  })
+  heldAmount?: number;
 }

@@ -33,6 +33,7 @@ describe('SSLCommerz currency validation', () => {
       {} as never,
       {} as never,
       {} as never,
+      {} as never,
     );
     const settle = jest
       .spyOn(svc as any, 'settle')
@@ -113,6 +114,7 @@ describe('SSLCommerz currency validation', () => {
       {} as never,
       {} as never,
       { settlePaid } as never,
+      {} as never,
       {} as never,
     );
     await svc['settlePaymentLink'](

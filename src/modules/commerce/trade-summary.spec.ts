@@ -53,6 +53,8 @@ describe('Trade console summaries', () => {
     const { service, calls } = harness([
       [{ order: { id: 'order-1', reference: 'R-1', totalCents: 10000, resellerMarginCents: 2000, address: { area: 'Dhaka' } }, supplierName: 'Supplier', supplierHandle: 'supplier' }],
       [{ orderId: 'order-1', name: 'Shirt', qty: 2, variant: null }],
+      // Methods no gateway collects - what decides `marginWithSupplier`.
+      [{ code: 'cod' }],
     ]);
     const orders = await service.resellerOrders('reseller-1');
     expect(sqlText(calls[0].where).params).toContain('Pending');

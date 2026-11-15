@@ -59,6 +59,10 @@ export const settlements = pgTable(
     cardCents: integer('card_cents').notNull(),
     otherCents: integer('other_cents').notNull(),
     feeCents: integer('fee_cents').notNull(),
+    resellerMarginCents: integer('reseller_margin_cents').notNull().default(0),
+    processingShortfallCents: integer('processing_shortfall_cents')
+      .notNull()
+      .default(0),
     payoutCents: integer('payout_cents').notNull(),
     // Fee rates (basis points) in force when the payout was recorded, so the
     // paid record renders its true historical breakdown even after the
@@ -70,6 +74,13 @@ export const settlements = pgTable(
     // payment methods became dynamic have null here; their breakdown is
     // reconstructed from the mbank/card columns above.
     breakdown: jsonb('breakdown').$type<SettlementMethodSnapshot[]>(),
+    // What the shop owed the platform on money it collected itself (service
+    // fee on cash orders, reseller margins it was holding) that was taken
+    // out of this payout instead of being transferred. `payoutCents` stays
+    // the full amount earned; what was actually sent is the two apart.
+    duesDeductedCents: integer('dues_deducted_cents').notNull().default(0),
+    /** Closed cycles paid together are undone as one transfer. */
+    paidWithPeriod: varchar('paid_with_period', { length: 7 }),
     // Free-form payment reference (bank transfer id, bKash trx id, …).
     note: varchar('note', { length: 200 }),
     // Every receipt recorded against this cycle, oldest first. A cycle still

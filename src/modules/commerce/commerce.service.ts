@@ -109,10 +109,7 @@ export class CommerceService {
         .from(shops)
         .where(and(eq(shops.live, true), eq(shops.currency, target.currency))),
       this.db.query.paymentMethods.findMany({
-        where: and(
-          eq(paymentMethods.enabled, true),
-          ne(paymentMethods.gateway, 'none'),
-        ),
+        where: eq(paymentMethods.enabled, true),
       }),
     ]);
     return candidates.filter(
@@ -370,10 +367,7 @@ export class CommerceService {
     )
       throw new ConflictException('This supplier has not enabled reselling.');
     const collectionMethods = await this.db.query.paymentMethods.findMany({
-      where: and(
-        eq(paymentMethods.enabled, true),
-        ne(paymentMethods.gateway, 'none'),
-      ),
+      where: eq(paymentMethods.enabled, true),
     });
     if (
       !collectionMethods.some((method) =>
@@ -381,7 +375,7 @@ export class CommerceService {
       )
     )
       throw new ConflictException(
-        'The supplier must enable an online payment method before this product can be resold.',
+        'The supplier must enable a payment method before this product can be resold.',
       );
     const sellingPriceCents = dollarsToCents(dto.sellingPrice);
     if (sellingPriceCents < product.commerce.resellerPriceCents)
@@ -414,10 +408,7 @@ export class CommerceService {
       .where(eq(resellerListings.shopId, shopId))
       .orderBy(desc(resellerListings.createdAt));
     const enabledCollection = await this.db.query.paymentMethods.findMany({
-      where: and(
-        eq(paymentMethods.enabled, true),
-        ne(paymentMethods.gateway, 'none'),
-      ),
+      where: eq(paymentMethods.enabled, true),
     });
     return rows.map(({ listing, product, supplier }) => ({
       id: listing.id,
@@ -531,10 +522,7 @@ export class CommerceService {
     )
       throw new NotFoundException('Listing is temporarily unavailable');
     const collectionMethods = await this.db.query.paymentMethods.findMany({
-      where: and(
-        eq(paymentMethods.enabled, true),
-        ne(paymentMethods.gateway, 'none'),
-      ),
+      where: eq(paymentMethods.enabled, true),
     });
     if (
       !collectionMethods.some((method) =>
@@ -579,7 +567,10 @@ export class CommerceService {
         deliveryInsideFee: supplier.deliveryInsideCents / 100,
         deliveryOutsideFee: supplier.deliveryOutsideCents / 100,
         codAdvanceEnabled: false,
-        paymentMethods: supplier.paymentMethods.filter((m) => m !== 'cod'),
+        // Whatever the supplier takes, cash on delivery included: they
+        // deliver and collect, and settle the reseller's margin afterwards.
+        // The part-advance stays off (above) - a reseller order is paid whole.
+        paymentMethods: supplier.paymentMethods,
       },
     };
   }
@@ -606,10 +597,7 @@ export class CommerceService {
         )
         .limit(200),
       this.db.query.paymentMethods.findMany({
-        where: and(
-          eq(paymentMethods.enabled, true),
-          ne(paymentMethods.gateway, 'none'),
-        ),
+        where: eq(paymentMethods.enabled, true),
       }),
     ]);
     return {
@@ -657,10 +645,28 @@ export class CommerceService {
           .from(orderItems)
           .where(and(inArray(orderItems.orderId, rows.map((r) => r.order.id)), isNotNull(orderItems.productId)))
       : [];
+    // Methods no gateway collects: on those the supplier is holding the
+    // reseller's margin until they settle it with the platform.
+    const sellerCollected = new Set(
+      (
+        await this.db
+          .select({ code: paymentMethods.code })
+          .from(paymentMethods)
+          .where(eq(paymentMethods.gateway, 'none'))
+      ).map((m) => m.code),
+    );
     return rows.map(({ order: o, supplierName, supplierHandle }) => ({
       id: o.id,
       reference: o.reference,
       customer: o.customerName,
+      // Delivered and paid for, but the margin has not reached the platform
+      // yet - so it is not in a payout until the supplier hands it in.
+      marginWithSupplier:
+        o.status === 'Delivered' &&
+        o.pay === 'Paid' &&
+        !o.duesPaidAt &&
+        !!o.paymentMethod &&
+        sellerCollected.has(o.paymentMethod),
       phone: o.phone,
       area: o.address?.area ?? null,
       status: o.status,

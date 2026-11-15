@@ -19,7 +19,9 @@ export type PaymentPurpose =
   | 'order'
   | 'credit_pack'
   | 'shop_opening'
-  | 'payment_link';
+  | 'payment_link'
+  /** A seller paying the platform the service fee on money they collected. */
+  | 'service_fee';
 
 export interface GatewayCustomer {
   name: string;

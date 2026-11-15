@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Inject,
   Injectable,
   Logger,
@@ -178,6 +179,9 @@ export class PaymentLinksService {
       );
     }
     const shop = await this.shops.requireById(shopId);
+    if (shop.businessType === 'reseller') {
+      throw new ForbiddenException('Payment links are available to retail and wholesale shops only.');
+    }
     // Refused up front rather than at the buyer's end: a link that cannot be
     // paid is worse than no link, because the seller has already sent it.
     if (!this.shopCanCollect(shop)) {
@@ -593,7 +597,7 @@ export class PaymentLinksService {
 
   /** Open for business: not switched off, not paused for billing, not locked. */
   private shopCanCollect(shop: ShopRow): boolean {
-    return shop.live && !shop.suspendedAt;
+    return shop.businessType !== 'reseller' && shop.live && !shop.suspendedAt;
   }
 
   private async fallbackEmail(shop: ShopRow): Promise<string> {

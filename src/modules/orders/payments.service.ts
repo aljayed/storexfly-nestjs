@@ -22,6 +22,7 @@ import {
   type SslcommerzCallbackBody,
 } from '../gateways/sslcommerz.service';
 import { RefundsService } from '../refunds/refunds.service';
+import { ServiceFeesService } from '../service-fees/service-fees.service';
 import { PaymentLinksService } from '../payment-links/payment-links.service';
 import { ShopOpeningService } from '../shops/shop-opening.service';
 import { SubscriptionsService } from '../subscriptions/subscriptions.service';
@@ -96,6 +97,7 @@ export class PaymentsService implements OnModuleInit, OnModuleDestroy {
     private readonly billing: BillingSettingsService,
     private readonly paymentLinks: PaymentLinksService,
     private readonly refunds: RefundsService,
+    private readonly serviceFees: ServiceFeesService,
   ) {}
 
   onModuleInit(): void {
@@ -346,6 +348,27 @@ export class PaymentsService implements OnModuleInit, OnModuleDestroy {
       return;
     }
 
+    // A service-fee payment is guarded on the charge, not the session: there
+    // is nothing to deliver twice, and every taka a seller really sent comes
+    // off what they owe - a second charge simply leaves them in credit.
+    if (attempt.purpose === 'service_fee') {
+      await this.db
+        .update(gatewayPayments)
+        .set({ status: 'success', trxId: charge.gatewayTxnId })
+        .where(
+          and(
+            eq(gatewayPayments.id, attempt.id),
+            ne(gatewayPayments.status, 'success'),
+          ),
+        );
+      await this.serviceFees.recordGatewayPayment(attempt, {
+        transactionId,
+        gatewayTxnId: charge.gatewayTxnId,
+        amountCents: charge.amountCents,
+      });
+      return;
+    }
+
     // Claim the session. Whoever wins this update is the one that delivers;
     // everyone else has just recorded a charge and stops here.
     const [claimed] = await this.db
@@ -452,7 +475,9 @@ export class PaymentsService implements OnModuleInit, OnModuleDestroy {
     // same rule the Orders tab uses, so nothing is stamped here. A credit
     // pack has a known owner, and no order to reach them through.
     const userId =
-      attempt.purpose === 'credit_pack' && attempt.shopId
+      (attempt.purpose === 'credit_pack' ||
+        attempt.purpose === 'service_fee') &&
+      attempt.shopId
         ? await this.subscriptions.ownerIdForShop(attempt.shopId)
         : null;
 
@@ -589,6 +614,14 @@ export class PaymentsService implements OnModuleInit, OnModuleDestroy {
       return this.billingUrl({
         credit: status,
         ...(await this.packReceipt(attempt)),
+        trx: trx ?? '',
+      });
+    }
+    // A service-fee payment goes back to the statement it was paid from.
+    if (attempt.purpose === 'service_fee') {
+      return this.webUrl('/admin/settlements', {
+        fee: status,
+        amount: String(attempt.amountCents / 100),
         trx: trx ?? '',
       });
     }

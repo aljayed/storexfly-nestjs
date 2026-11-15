@@ -205,3 +205,13 @@ Migration `0107_commerce_channels.sql` adds product selling policies, reseller o
 Commerce APIs live under `/api/commerce`, `/api/shops/:shopId/trade`, `/api/buyer/trade`, and `/api/platform/trade`. Supplier costs are excluded from anonymous product and discovery responses. Stock deductions, cancellation restocks, gateway callbacks, delivery deadlines, and refunds reuse the existing order pipeline.
 
 Validate with `pnpm test --runInBand` and `pnpm build`; run the AI service tests and frontend production build as well. This does not configure live payment/courier credentials or apply a migration to a production database.
+
+## Fees and monthly payouts
+
+Apply migrations `0115`–`0117` before starting this API version. Retail sales carry a 4.5% service fee including processing. Wholesale and reseller sales have no platform commission; wholesale online receipts carry 4.5% processing, while reseller margins are paid in full. Reseller payment links are disabled.
+
+Payouts cover the previous calendar month's eligible receipts and are sent on the 1st–7th, with a ৳2,000 net minimum. Smaller balances carry forward. The November 2026 transition preserves earlier paid cycles and covers November 15–30 in December. Combined transfers keep their per-cycle snapshots and balance deductions; reversing the primary transfer reverses the group atomically.
+
+`node scripts/test-fee-postgres.cjs` runs the migrations and payout/undo/concurrency checks against a temporary local PostgreSQL cluster. Set `PG_BIN` to the folder containing `initdb` and `pg_ctl`. It never reads application database credentials.
+
+The production entrypoint is versioned at `scripts/deploy.sh` and installed on the server as `/opt/storexfly/deploy.sh`. It serializes backend/frontend deployments, backs up PostgreSQL, and runs migrations in a one-off container **before** restarting the API. GitHub deployments continue to call the server entrypoint.

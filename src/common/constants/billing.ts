@@ -6,23 +6,43 @@
 export const PLATFORM_CURRENCY = 'BDT';
 
 /**
- * Hoomri is free. A shop costs nothing to open and nothing to run: no credit
- * pack, no commission, no order cap. What is limited instead is how many
- * shops a person may have - one, held to a person by the live face check
- * (modules/face).
- *
- * Everything below this line describes the two-track billing that came
- * before. It is switched off rather than deleted: the ledgers it wrote are
- * still a seller's payment history, and the code that reads them still has
- * to make sense. While this is true nothing is charged, nothing is metered,
- * no shop is paused over a balance or a bill, and the endpoints that took
- * money answer 410.
+ * Retail sales carry 4.5%, including processing. Online receipts have it
+ * deducted once at settlement; cash/direct retail collections leave a fee
+ * balance. Wholesalers and resellers have no platform sales commission.
+ * Wholesale online receipts carry 4.5% processing on the gross collection,
+ * before reseller margin; reseller margins are paid in full, fee-free.
+ * Suppliers remit reseller margins they collect in cash. Retail fees and
+ * supplier balances over the due limit have the grace period below.
+ */
+export const SERVICE_FEE_BP = 450;
+
+/** Trade shops pay no platform sales commission. Gateway processing is
+ * deducted separately from online settlements; reseller earnings are free. */
+export function salesFeeBp(businessType: string | null | undefined): number {
+  return businessType === 'wholesale' || businessType === 'reseller'
+    ? 0
+    : SERVICE_FEE_BP;
+}
+
+/** Unpaid balance above which the pay-by clock starts, in paisa (৳2,000). */
+export const SERVICE_FEE_DUE_LIMIT_CENTS = 200_000;
+
+/** How long a shop over the limit has to pay before it is suspended. */
+export const SERVICE_FEE_GRACE_MS = 3 * 24 * 60 * 60 * 1000;
+
+/**
+ * Everything below this line describes the two-track billing (credit packs
+ * and a monthly commission bill) that came before the service fee. It is
+ * switched off rather than deleted: the ledgers it wrote are still a
+ * seller's payment history, and the code that reads them still has to make
+ * sense. While this is true none of it charges, meters or pauses anything,
+ * and the endpoints that took money for it answer 410.
  */
 export const PLATFORM_FREE = true;
 
 /** What the retired paying endpoints say. */
 export const PLATFORM_FREE_MESSAGE =
-  'Hoomri is free now - there is nothing to buy or pay.';
+  'Credit packs and monthly bills are retired - there is nothing to buy here.';
 
 // ── The two billing tracks ────────────────────────────────────────
 //
