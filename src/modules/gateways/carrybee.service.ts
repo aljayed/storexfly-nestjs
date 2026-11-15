@@ -504,7 +504,7 @@ function padStoreAddress(raw: string): string {
 }
 
 /** Statuses arrive as labels; store them lowercase-underscored so the UI
- *  badges match the shape Steadfast and Pathao already use. */
+ *  badges use consistent codes. */
 function normalizeStatus(raw?: string | null): string | null {
   if (!raw) return null;
   return raw

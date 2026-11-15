@@ -74,7 +74,25 @@ describe('CarryBee handover', () => {
     expect(h.row.status).toBe('HandedOver'); expect(h.courier.createOrder).not.toHaveBeenCalled();
   });
   it('refuses to silently replace CarryBee with another platform courier', async () => {
-    const h = harness(); h.settings.activeCourier.mockResolvedValue({ provider: 'pathao', config: {} });
+    const h = harness(); h.settings.activeCourier.mockResolvedValue({ provider: 'unsupported', config: {} });
     await expect(h.service.updateStatus('shop-1', 'order-1', 'HandedOver')).rejects.toThrow('unavailable'); expect(h.row.status).toBe('Packed');
+  });
+  it.each(['retired-courier', null])('never sends an archived consignment to CarryBee (%s)', async (provider) => {
+    const h = harness();
+    Object.assign(h.row, { courierProvider: provider, courierConsignmentId: 'old-parcel' });
+    await expect(h.service.refreshCourier('shop-1', 'order-1')).rejects.toThrow('archived courier');
+    expect(h.writes).toHaveLength(0);
+    expect(h.courier.createOrder).not.toHaveBeenCalled();
+  });
+  it('ignores archived consignments on callbacks and applies CarryBee delivery events', async () => {
+    const h = harness();
+    const apply = jest.spyOn(h.service as any, 'applyCourierEffect').mockResolvedValue(null);
+    Object.assign(h.row, { courierProvider: 'retired-courier', courierConsignmentId: 'parcel-123' });
+    const event = { event: 'order.delivered', consignment_id: 'parcel-123' };
+    expect(await h.service.applyCourierEvent(event)).toBeNull();
+    expect(apply).not.toHaveBeenCalled();
+    h.row.courierProvider = 'carrybee';
+    expect(await h.service.applyCourierEvent(event)).toBe('order-1');
+    expect(apply).toHaveBeenCalledWith('order-1', expect.objectContaining({ status: 'delivered', effect: 'delivered' }));
   });
 });

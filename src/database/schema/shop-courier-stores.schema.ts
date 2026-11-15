@@ -18,9 +18,7 @@ import { shops } from './shops.schema';
  * the courier hands back is cached here.
  *
  * Credentials stay platform-held - this is only the pickup point, not an
- * account a seller could book around. One row per (shop, provider): a shop
- * that has shipped on Pathao and later moves to CarryBee keeps both, so
- * switching back does not re-register a store that already exists.
+ * account a seller could book around. One CarryBee pickup store per shop.
  */
 export const shopCourierStores = pgTable(
   'shop_courier_stores',

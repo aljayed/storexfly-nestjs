@@ -806,6 +806,20 @@
       "when": 1795824000000,
       "tag": "0117_trade_fee_policy",
       "breakpoints": true
+    },
+    {
+      "idx": 118,
+      "version": "7",
+      "when": 1795910400000,
+      "tag": "0118_carrybee_only",
+      "breakpoints": true
+    },
+    {
+      "idx": 119,
+      "version": "7",
+      "when": 1795996800000,
+      "tag": "0119_archive_payment_methods",
+      "breakpoints": true
     }
   ]
 }

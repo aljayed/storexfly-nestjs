@@ -23,6 +23,7 @@ import {
   IsNumber,
   IsOptional,
   IsString,
+  ValidateIf,
   Max,
   MaxLength,
   Min,
@@ -54,7 +55,7 @@ export class PaymentMethodResponse {
       'Mastercard, Amex, bKash, Nagad...) instead of the subtitle wording',
   })
   subtitleIcons!: boolean;
-  @ApiProperty({ example: 3, description: 'Processing fee %' })
+  @ApiProperty({ example: 4.5, description: 'Processing fee %' })
   feePercent!: number;
   @ApiProperty({ description: 'true only for the built-in COD method' })
   locked!: boolean;
@@ -106,16 +107,31 @@ export class CreatePaymentMethodDto {
   @IsBoolean()
   subtitleIcons?: boolean;
 
-  @ApiProperty({ example: 3, description: 'Processing fee %' })
+  @ApiPropertyOptional({
+    example: 4.5,
+    description:
+      'Fixed by collection route: 4.5 for gateways, 0 for direct collection',
+  })
+  @ValidateIf((_, value) => value !== undefined)
   @IsNumber({ maxDecimalPlaces: 2 })
   @Min(0)
   @Max(25)
-  feePercent!: number;
+  feePercent?: number;
+
+  @ApiPropertyOptional({ enum: ['none', 'bkash', 'sslcommerz'] })
+  @ValidateIf((_, value) => value !== undefined)
+  @IsIn(['none', 'bkash', 'sslcommerz'])
+  gateway?: PaymentGatewayChoice;
+
+  @ApiPropertyOptional()
+  @ValidateIf((_, value) => value !== undefined)
+  @IsBoolean()
+  enabled?: boolean;
 }
 
 export class UpdatePaymentMethodDto {
   @ApiPropertyOptional()
-  @IsOptional()
+  @ValidateIf((_, value) => value !== undefined)
   @IsString()
   @MaxLength(80)
   title?: string;
@@ -124,26 +140,26 @@ export class UpdatePaymentMethodDto {
   @IsOptional()
   @IsString()
   @MaxLength(140)
-  subtitle?: string;
+  subtitle?: string | null;
 
   @ApiPropertyOptional({
     description:
       'Draw the accepted brand marks in place of the subtitle wording. ' +
       'Defaults to true; methods with no artwork fall back to the wording.',
   })
-  @IsOptional()
+  @ValidateIf((_, value) => value !== undefined)
   @IsBoolean()
   subtitleIcons?: boolean;
 
-  @ApiPropertyOptional({ example: 3 })
-  @IsOptional()
+  @ApiPropertyOptional({ example: 4.5 })
+  @ValidateIf((_, value) => value !== undefined)
   @IsNumber({ maxDecimalPlaces: 2 })
   @Min(0)
   @Max(25)
   feePercent?: number;
 
   @ApiPropertyOptional({ enum: ['none', 'bkash', 'sslcommerz'] })
-  @IsOptional()
+  @ValidateIf((_, value) => value !== undefined)
   @IsIn(['none', 'bkash', 'sslcommerz'])
   gateway?: PaymentGatewayChoice;
 
@@ -152,7 +168,7 @@ export class UpdatePaymentMethodDto {
       'Switch the method on or off everywhere at once. Refused for Cash on ' +
       'Delivery, which every shop falls back on.',
   })
-  @IsOptional()
+  @ValidateIf((_, value) => value !== undefined)
   @IsBoolean()
   enabled?: boolean;
 }

@@ -184,9 +184,14 @@ describe('trade fee policy', () => {
         enabled: true,
       },
     ];
-    const service = new PaymentMethodsService({
-      query: { paymentMethods: { findMany: () => Promise.resolve(rows) } },
-    } as never);
+    const service = new PaymentMethodsService(
+      {
+        query: { paymentMethods: { findMany: () => Promise.resolve(rows) } },
+      } as never,
+      {
+        view: async () => ({ sslcommerz: { enabled: true, configured: true } }),
+      } as never,
+    );
     expect((await service.byCode()).get('card')?.feeBp).toBe(450);
     expect(
       (await service.listEnabled()).find((m) => m.code === 'card')?.feePercent,

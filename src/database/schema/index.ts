@@ -34,7 +34,6 @@ export * from './gateway-payments.schema';
 export * from './payment-refunds.schema';
 export * from './payment-transactions.schema';
 export * from './mail-accounts.schema';
-export * from './shop-couriers.schema';
 export * from './shop-courier-stores.schema';
 export * from './courier-webhook-events.schema';
 export * from './buyer-notifications.schema';

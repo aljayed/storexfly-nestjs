@@ -182,8 +182,10 @@ export class SslcommerzService {
     return !!(await this.settings.sslcommerzConfig());
   }
 
-  private async requireConfig(): Promise<SslcommerzConfig> {
-    const config = await this.settings.sslcommerzConfig();
+  private async requireConfig(
+    includeDisabled = false,
+  ): Promise<SslcommerzConfig> {
+    const config = await this.settings.sslcommerzConfig(includeDisabled);
     if (!config) {
       throw new ServiceUnavailableException(
         'Card payments are not available right now - please pick another method.',
@@ -291,7 +293,7 @@ export class SslcommerzService {
    * a transaction that was already validated once, so both count as paid.
    */
   async validate(valId: string): Promise<SslcommerzValidation> {
-    const config = await this.requireConfig();
+    const config = await this.requireConfig(true);
     const query = new URLSearchParams({
       val_id: valId,
       store_id: config.storeId,
@@ -367,7 +369,7 @@ export class SslcommerzService {
    * we can still produce the id after a crash.
    */
   async refund(input: SslcommerzRefundInput): Promise<SslcommerzRefundResult> {
-    const config = await this.requireConfig();
+    const config = await this.requireConfig(true);
     const query = new URLSearchParams({
       bank_tran_id: input.bankTranId,
       refund_trans_id: input.refundTransId.slice(0, 30),
@@ -428,7 +430,7 @@ export class SslcommerzService {
 
   /** Ask what became of a filed refund. */
   async refundStatus(refundRefId: string): Promise<SslcommerzRefundStatus> {
-    const config = await this.requireConfig();
+    const config = await this.requireConfig(true);
     const query = new URLSearchParams({
       refund_ref_id: refundRefId,
       store_id: config.storeId,
@@ -484,7 +486,7 @@ export class SslcommerzService {
     const sign = body.verify_sign;
     const keys = body.verify_key;
     if (!sign || !keys) return 'unsigned';
-    const config = await this.requireConfig();
+    const config = await this.requireConfig(true);
     const fields: Record<string, string> = {};
     for (const name of keys.split(',')) {
       const key = name.trim();

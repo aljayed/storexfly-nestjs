@@ -8,16 +8,11 @@ import {
   type PlatformSettingsRow,
 } from '../../database/schema';
 import type { CarrybeeConfig } from './carrybee.service';
-import type { PathaoConfig } from './pathao.service';
-import type { SteadfastConfig } from './steadfast.service';
 
 /** How long the CarryBee registration window stays open once opened. */
 const CARRYBEE_REGISTRATION_WINDOW_MS = 15 * 60 * 1000;
 
-export type ActiveCourier =
-  | { provider: 'carrybee'; config: CarrybeeConfig }
-  | { provider: 'steadfast'; config: SteadfastConfig }
-  | { provider: 'pathao'; config: PathaoConfig };
+export type ActiveCourier = { provider: 'carrybee'; config: CarrybeeConfig };
 
 /** What the operator console sees: everything except the secret values. */
 export interface CourierSettingsView {
@@ -38,21 +33,6 @@ export interface CourierSettingsView {
     registrationOpenUntil: string | null;
     configured: boolean;
   };
-  steadfast: {
-    enabled: boolean;
-    apiKey: string | null;
-    hasSecret: boolean;
-    configured: boolean;
-  };
-  pathao: {
-    enabled: boolean;
-    production: boolean;
-    clientId: string | null;
-    username: string | null;
-    hasSecret: boolean;
-    hasPassword: boolean;
-    configured: boolean;
-  };
 }
 
 export interface UpdateCarrybeePatch {
@@ -64,25 +44,9 @@ export interface UpdateCarrybeePatch {
   webhookSecret?: string;
 }
 
-export interface UpdateSteadfastPatch {
-  enabled?: boolean;
-  apiKey?: string;
-  secretKey?: string;
-}
-
-export interface UpdatePathaoPatch {
-  enabled?: boolean;
-  production?: boolean;
-  clientId?: string;
-  clientSecret?: string;
-  username?: string;
-  password?: string;
-}
-
 /**
- * The platform's own courier merchant credentials (CarryBee / Steadfast /
- * Pathao), stored on the platform-settings singleton and managed from the
- * operator console. Secrets are write-only through the API: reads expose only
+ * The platform's CarryBee merchant credentials, stored on the platform-settings
+ * singleton and managed from the operator console. Secrets are write-only through the API: reads expose only
  * whether one is set.
  *
  * Couriers used to be per-shop. They are not any more, and that is the point:
@@ -90,9 +54,6 @@ export interface UpdatePathaoPatch {
  * so it could cancel every order in the console - which is what the sales
  * meter reads - and still deliver and get paid. Booking on the platform's
  * account makes the consignment, not the seller, the source of truth.
- *
- * At most one provider is enabled at a time; enabling one disables the others,
- * so a booking never has to choose.
  */
 @Injectable()
 export class CourierSettingsService {
@@ -119,22 +80,9 @@ export class CourierSettingsService {
 
   private carrybeeComplete(row?: PlatformSettingsRow): boolean {
     return !!(
-      row?.carrybeeClientId &&
-      row.carrybeeClientSecret &&
-      row.carrybeeClientContext
-    );
-  }
-
-  private steadfastComplete(row?: PlatformSettingsRow): boolean {
-    return !!(row?.steadfastApiKey && row.steadfastSecretKey);
-  }
-
-  private pathaoComplete(row?: PlatformSettingsRow): boolean {
-    return !!(
-      row?.pathaoClientId &&
-      row.pathaoClientSecret &&
-      row.pathaoUsername &&
-      row.pathaoPassword
+      row?.carrybeeClientId?.trim() &&
+      row.carrybeeClientSecret?.trim() &&
+      row.carrybeeClientContext?.trim()
     );
   }
 
@@ -147,43 +95,13 @@ export class CourierSettingsService {
     if (row.carrybeeEnabled && this.carrybeeComplete(row)) {
       return { provider: 'carrybee', config: this.toCarrybeeConfig(row) };
     }
-    if (row.steadfastEnabled && this.steadfastComplete(row)) {
-      return {
-        provider: 'steadfast',
-        config: {
-          apiKey: row.steadfastApiKey!,
-          secretKey: row.steadfastSecretKey!,
-        },
-      };
-    }
-    if (row.pathaoEnabled && this.pathaoComplete(row)) {
-      return { provider: 'pathao', config: this.toPathaoConfig(row) };
-    }
     return null;
   }
 
-  /**
-   * Credentials for one provider even when it is disabled - a parcel already
-   * booked on Steadfast still needs tracking after the operator switches the
-   * platform over to CarryBee, and the console's store pickers need the
-   * credentials before the provider can be enabled at all.
-   *
-   */
+  /** Keep tracking existing CarryBee parcels even when new bookings are disabled. */
   async carrybeeConfig(): Promise<CarrybeeConfig | null> {
     const row = await this.row();
     return this.carrybeeComplete(row) ? this.toCarrybeeConfig(row!) : null;
-  }
-
-  async steadfastConfig(): Promise<SteadfastConfig | null> {
-    const row = await this.row();
-    return this.steadfastComplete(row)
-      ? { apiKey: row!.steadfastApiKey!, secretKey: row!.steadfastSecretKey! }
-      : null;
-  }
-
-  async pathaoConfig(): Promise<PathaoConfig | null> {
-    const row = await this.row();
-    return this.pathaoComplete(row) ? this.toPathaoConfig(row!) : null;
   }
 
   /** The secret CarryBee must echo on its webhook, or null if unset - in
@@ -241,16 +159,6 @@ export class CourierSettingsService {
     };
   }
 
-  private toPathaoConfig(row: PlatformSettingsRow): PathaoConfig {
-    return {
-      clientId: row.pathaoClientId!,
-      clientSecret: row.pathaoClientSecret!,
-      username: row.pathaoUsername!,
-      password: row.pathaoPassword!,
-      sandbox: !row.pathaoProduction,
-    };
-  }
-
   async view(): Promise<CourierSettingsView> {
     const row = await this.row();
     const active = await this.activeCourier();
@@ -273,21 +181,6 @@ export class CourierSettingsService {
             : null,
         configured: this.carrybeeComplete(row),
       },
-      steadfast: {
-        enabled: row?.steadfastEnabled ?? false,
-        apiKey: row?.steadfastApiKey ?? null,
-        hasSecret: !!row?.steadfastSecretKey,
-        configured: this.steadfastComplete(row),
-      },
-      pathao: {
-        enabled: row?.pathaoEnabled ?? false,
-        production: row?.pathaoProduction ?? false,
-        clientId: row?.pathaoClientId ?? null,
-        username: row?.pathaoUsername ?? null,
-        hasSecret: !!row?.pathaoClientSecret,
-        hasPassword: !!row?.pathaoPassword,
-        configured: this.pathaoComplete(row),
-      },
     };
   }
 
@@ -297,7 +190,8 @@ export class CourierSettingsService {
   async updateCarrybee(
     patch: UpdateCarrybeePatch,
   ): Promise<CourierSettingsView> {
-    const merged = await this.patch({
+    const current = await this.requireRow();
+    const changes: Partial<PlatformSettingsRow> = {
       ...(patch.production !== undefined && {
         carrybeeProduction: patch.production,
       }),
@@ -313,64 +207,21 @@ export class CourierSettingsService {
       ...(patch.webhookSecret !== undefined && {
         carrybeeWebhookSecret: trimOrNull(patch.webhookSecret),
       }),
-    });
-    // No pickup store to check for: each shop registers its own on first
-    // booking, from its own address.
-    await this.setEnabled(
-      'carrybee',
-      patch.enabled,
-      this.carrybeeComplete(merged),
-      'Add the CarryBee client ID, secret and context before enabling it.',
-    );
-    return this.view();
-  }
-
-  /** Patch Steadfast; an omitted secret keeps its stored value. */
-  async updateSteadfast(
-    patch: UpdateSteadfastPatch,
-  ): Promise<CourierSettingsView> {
-    const merged = await this.patch({
-      ...(patch.apiKey !== undefined && {
-        steadfastApiKey: trimOrNull(patch.apiKey),
-      }),
-      ...(patch.secretKey !== undefined && {
-        steadfastSecretKey: trimOrNull(patch.secretKey),
-      }),
-    });
-    await this.setEnabled(
-      'steadfast',
-      patch.enabled,
-      this.steadfastComplete(merged),
-      'Add the Steadfast API key and secret key before enabling it.',
-    );
-    return this.view();
-  }
-
-  /** Patch Pathao; omitted secret fields keep their stored values. */
-  async updatePathao(patch: UpdatePathaoPatch): Promise<CourierSettingsView> {
-    const merged = await this.patch({
-      ...(patch.production !== undefined && {
-        pathaoProduction: patch.production,
-      }),
-      ...(patch.clientId !== undefined && {
-        pathaoClientId: trimOrNull(patch.clientId),
-      }),
-      ...(patch.clientSecret !== undefined && {
-        pathaoClientSecret: trimOrNull(patch.clientSecret),
-      }),
-      ...(patch.username !== undefined && {
-        pathaoUsername: trimOrNull(patch.username),
-      }),
-      ...(patch.password !== undefined && {
-        pathaoPassword: trimOrNull(patch.password),
-      }),
-    });
-    await this.setEnabled(
-      'pathao',
-      patch.enabled,
-      this.pathaoComplete(merged),
-      'Add the Pathao credentials before enabling it.',
-    );
+    };
+    const merged = { ...current, ...changes };
+    const configured = this.carrybeeComplete(merged);
+    const enabled = patch.enabled ?? (current.carrybeeEnabled && configured);
+    if (enabled && !configured) {
+      throw new BadRequestException(
+        'Add the CarryBee client ID, secret and context before enabling it.',
+      );
+    }
+    if (current.courierRequired && !enabled) {
+      throw new BadRequestException(
+        'Turn off the platform courier requirement before disabling CarryBee or removing its credentials.',
+      );
+    }
+    await this.patch({ ...changes, carrybeeEnabled: enabled });
     return this.view();
   }
 
@@ -382,7 +233,7 @@ export class CourierSettingsService {
   async setCourierRequired(required: boolean): Promise<CourierSettingsView> {
     if (required && !(await this.activeCourier())) {
       throw new BadRequestException(
-        'Enable and configure a courier before requiring shops to ship through it.',
+        'Enable and configure CarryBee before requiring shops to ship through it.',
       );
     }
     await this.patch({ courierRequired: required });
@@ -402,56 +253,6 @@ export class CourierSettingsService {
       .returning();
     return updated;
   }
-
-  /**
-   * Apply an enable/disable request. Enabling one provider turns the other two
-   * off in the same write, so `activeCourier` never has to break a tie.
-   */
-  private async setEnabled(
-    provider: CourierProvider,
-    enabled: boolean | undefined,
-    configured: boolean,
-    incompleteMessage: string,
-  ): Promise<void> {
-    if (enabled === undefined) {
-      // Wiping a credential of the currently-enabled provider disables it, so
-      // bookings never run against half a config.
-      if (!configured) {
-        await this.patch({ [enabledColumn(provider)]: false });
-      }
-      return;
-    }
-    if (enabled && !configured) {
-      throw new BadRequestException(incompleteMessage);
-    }
-    if (!enabled) {
-      // Dropping the only courier while shops are confined to it would strand
-      // every one of them mid-fulfilment.
-      const active = await this.activeCourier();
-      if (active?.provider === provider && (await this.courierRequired())) {
-        throw new BadRequestException(
-          'Shops are currently required to ship through the platform courier - turn that off before disabling the only courier.',
-        );
-      }
-      await this.patch({ [enabledColumn(provider)]: false });
-      return;
-    }
-    await this.patch({
-      carrybeeEnabled: provider === 'carrybee',
-      steadfastEnabled: provider === 'steadfast',
-      pathaoEnabled: provider === 'pathao',
-    });
-  }
-}
-
-function enabledColumn(
-  provider: CourierProvider,
-): 'carrybeeEnabled' | 'steadfastEnabled' | 'pathaoEnabled' {
-  return provider === 'carrybee'
-    ? 'carrybeeEnabled'
-    : provider === 'steadfast'
-      ? 'steadfastEnabled'
-      : 'pathaoEnabled';
 }
 
 function trimOrNull(raw: string): string | null {

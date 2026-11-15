@@ -91,8 +91,6 @@ import {
 } from '../gateways/carrybee-events';
 import { CourierSettingsService } from '../gateways/courier-settings.service';
 import { ShopCourierStoresService } from '../gateways/shop-courier-stores.service';
-import { PathaoService } from '../gateways/pathao.service';
-import { SteadfastService } from '../gateways/steadfast.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { MessagesService } from '../chat/messages.service';
 import { PaymentMethodsService } from '../settlements/payment-methods.service';
@@ -326,8 +324,6 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
     private readonly notifications: NotificationsService,
     private readonly gatewayCheckout: GatewayCheckoutService,
     private readonly carrybee: CarrybeeService,
-    private readonly steadfast: SteadfastService,
-    private readonly pathao: PathaoService,
     private readonly courierSettings: CourierSettingsService,
     private readonly courierStores: ShopCourierStoresService,
     private readonly config: ConfigService,
@@ -3408,9 +3404,7 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
       couponCode: order.couponCode ?? undefined,
       total: centsToDollars(order.totalCents),
       address: order.address ?? undefined,
-      courierProvider:
-        order.courierProvider ??
-        (order.courierConsignmentId ? 'steadfast' : undefined),
+      courierProvider: order.courierProvider ?? undefined,
       courierTrackingCode: order.courierTrackingCode ?? undefined,
       courierStatus: order.courierStatus ?? undefined,
       courierStatusAt: order.courierStatusAt?.toISOString(),
@@ -3737,7 +3731,7 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
     return row ?? null;
   }
 
-  // ── Courier (platform account: CarryBee / Steadfast / Pathao) ──
+  // ── Courier (platform account: CarryBee) ──
   //
   // Every parcel is booked on the operator's own courier credentials. That is
   // deliberate: the courier is the one party in the chain a shop cannot edit,
@@ -3746,13 +3740,7 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
 
   /** Display name for a provider code, for messages the seller reads. */
   private courierLabel(provider: string | null): string {
-    return provider === 'carrybee'
-      ? 'CarryBee'
-      : provider === 'pathao'
-        ? 'Pathao'
-        : provider === 'steadfast'
-          ? 'Steadfast'
-          : 'the courier';
+    return provider === 'carrybee' ? 'CarryBee' : 'the courier';
   }
 
   /**
@@ -3794,9 +3782,8 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
    * account. The courier collects the order total in cash when the money is
    * still due (COD), nothing when it was prepaid.
    *
-   * CarryBee and Pathao need the recipient's city/zone as their own numeric
-   * ids; CarryBee can usually derive them from the written address, and the
-   * booking modal supplies them when it can't.
+   * CarryBee usually derives its numeric city/zone ids from the written
+   * address; the booking modal supplies them when it cannot.
    */
   async bookCourier(shopId: string, id: string, opts?: { cityId?: number; zoneId?: number; areaId?: number }): Promise<OrderResponse> {
     const order = await this.requireOwned(shopId, id);
@@ -3878,87 +3865,38 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
         order.pay === 'Due' ? order.totalCents - order.advanceCents : 0,
       note: `Order ${order.reference}`,
     };
-    let booked: {
-      consignmentId: string;
-      trackingCode: string | null;
-      status: string;
-      deliveryFeeCents: number | null;
-      codFeeCents: number | null;
-    };
-    if (active.provider === 'carrybee') {
-      // The seller's picks win; otherwise let CarryBee read the address it
-      // was given, and only ask when it can't make sense of it.
-      const place =
-        opts?.cityId && opts.zoneId
-          ? { cityId: opts.cityId, zoneId: opts.zoneId }
-          : await this.carrybee.resolveAddress(active.config, address);
-      if (!place) {
-        throw new BadRequestException(
-          'Pick the delivery city and zone to book with CarryBee.',
-        );
-      }
-      // Collected from this shop's own address, not a platform-wide one -
-      // registered with the courier on the first booking a shop makes.
-      const storeId = await this.courierStores.resolve(
-        shopId,
-        'carrybee',
-        active.config,
+    // The seller's picks win; otherwise let CarryBee read the address it
+    // was given, and only ask when it can't make sense of it.
+    const place =
+      opts?.cityId && opts.zoneId
+        ? { cityId: opts.cityId, zoneId: opts.zoneId }
+        : await this.carrybee.resolveAddress(active.config, address);
+    if (!place) {
+      throw new BadRequestException(
+        'Pick the delivery city and zone to book with CarryBee.',
       );
-      const c = await this.carrybee.createOrder(active.config, {
-        ...shipment,
-        storeId,
-        merchantOrderId: shipment.invoice,
-        cityId: place.cityId,
-        zoneId: place.zoneId,
-        areaId: opts?.areaId,
-        itemQuantity: order.qty,
-        description: `Order ${order.reference}`,
-      });
-      // CarryBee has no separate tracking code - the consignment ID is it.
-      booked = {
-        consignmentId: c.consignmentId,
-        trackingCode: c.consignmentId,
-        status: 'created',
-        deliveryFeeCents: c.deliveryFeeCents,
-        codFeeCents: c.codFeeCents,
-      };
-    } else if (active.provider === 'steadfast') {
-      const c = await this.steadfast.createConsignment(active.config, shipment);
-      booked = {
-        consignmentId: c.consignmentId,
-        trackingCode: c.trackingCode,
-        status: c.status,
-        deliveryFeeCents: null,
-        codFeeCents: null,
-      };
-    } else {
-      if (!opts?.cityId || !opts.zoneId) {
-        throw new BadRequestException(
-          'Pick the delivery city and zone to book with Pathao.',
-        );
-      }
-      const storeId = await this.courierStores.resolve(
-        shopId,
-        'pathao',
-        active.config,
-      );
-      const c = await this.pathao.createOrder(active.config, {
-        ...shipment,
-        storeId,
-        cityId: opts.cityId,
-        zoneId: opts.zoneId,
-        areaId: opts.areaId,
-        itemQuantity: order.qty,
-      });
-      // Pathao has no separate tracking code either.
-      booked = {
-        consignmentId: c.consignmentId,
-        trackingCode: c.consignmentId,
-        status: c.status,
-        deliveryFeeCents: c.deliveryFeeCents,
-        codFeeCents: null,
-      };
     }
+    // Collected from this shop's own address, not a platform-wide one -
+    // registered with the courier on the first booking a shop makes.
+    const storeId = await this.courierStores.resolve(shopId, active.config);
+    const c = await this.carrybee.createOrder(active.config, {
+      ...shipment,
+      storeId,
+      merchantOrderId: shipment.invoice,
+      cityId: place.cityId,
+      zoneId: place.zoneId,
+      areaId: opts?.areaId,
+      itemQuantity: order.qty,
+      description: `Order ${order.reference}`,
+    });
+    // CarryBee has no separate tracking code - the consignment ID is it.
+    const booked = {
+      consignmentId: c.consignmentId,
+      trackingCode: c.consignmentId,
+      status: 'created',
+      deliveryFeeCents: c.deliveryFeeCents,
+      codFeeCents: c.codFeeCents,
+    };
     const [saved] = await this.db
       .update(orders)
       .set({
@@ -4118,7 +4056,10 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
     const rule = CARRYBEE_EVENTS[body.event];
     if (!rule) return null;
     let order = await this.db.query.orders.findFirst({
-      where: eq(orders.courierConsignmentId, consignmentId),
+      where: and(
+        eq(orders.courierProvider, 'carrybee'),
+        eq(orders.courierConsignmentId, consignmentId),
+      ),
     });
     if (!order && body.merchant_order_id) {
       const candidate = await this.db.query.orders.findFirst({ where: and(
@@ -4134,7 +4075,7 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
         }).where(and(eq(orders.id, candidate.id), isNull(orders.courierConsignmentId))).returning();
       }
     }
-    if (!order) return null;
+    if (!order || order.courierProvider !== 'carrybee') return null;
     const at = body.timestamptz ? new Date(body.timestamptz) : new Date();
     await this.applyCourierEffect(order.id, {
       status: rule.status,
@@ -4268,11 +4209,7 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
     });
   }
 
-  /**
-   * Ask the provider that booked this consignment where it is now, in the
-   * shape `applyCourierEffect` consumes. Legacy rows booked before the
-   * provider was recorded were all Steadfast.
-   */
+  /** Reconcile CarryBee consignments; archived providers keep their recorded state. */
   private async readCourierState(order: OrderRow): Promise<{
     status: string;
     effect: CourierEffect;
@@ -4302,28 +4239,9 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
         reason: details.reason,
       };
     }
-    if (order.courierProvider === 'pathao') {
-      const config = await this.courierSettings.pathaoConfig();
-      if (!config) {
-        throw new BadRequestException(
-          'Pathao credentials are missing - the operator needs to restore them in the platform console to track this parcel.',
-        );
-      }
-      const status = await this.pathao.status(config, consignmentId);
-      return status
-        ? { status, effect: legacyEffect(status), at: new Date() }
-        : null;
-    }
-    const config = await this.courierSettings.steadfastConfig();
-    if (!config) {
-      throw new BadRequestException(
-        'Steadfast credentials are missing - the operator needs to restore them in the platform console to track this parcel.',
-      );
-    }
-    const status = await this.steadfast.status(config, consignmentId);
-    return status
-      ? { status, effect: legacyEffect(status), at: new Date() }
-      : null;
+    throw new BadRequestException(
+      'Tracking is unavailable for this archived courier. Only CarryBee is supported.',
+    );
   }
 
   private async isCodOrder(order: OrderRow): Promise<boolean> {
@@ -4371,17 +4289,4 @@ function takaFieldToCents(
   if (raw === undefined || raw === null || raw === '') return null;
   const value = typeof raw === 'number' ? raw : Number(raw);
   return Number.isFinite(value) ? Math.round(value * 100) : null;
-}
-
-/**
- * Effect of a raw Steadfast/Pathao status string. Both report a flat status
- * rather than a lifecycle, so only the terminal ones mean anything - which is
- * all the pre-CarryBee code ever acted on.
- */
-function legacyEffect(status: string): CourierEffect {
-  if (status === 'delivered' || status === 'partial_delivered') {
-    return 'delivered';
-  }
-  if (status === 'cancelled' || status === 'returned') return 'returned';
-  return 'none';
 }

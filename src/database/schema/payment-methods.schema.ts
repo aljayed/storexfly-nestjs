@@ -16,10 +16,8 @@ import { paymentGatewayEnum, paymentMethodEnum } from './enums';
  * run the wallet checkout flow, 'card' the card form, 'cod' skips payment -
  * and is what per-product payment toggles are matched against.
  *
- * Deleting a method that historical orders reference only disables it
- * (`enabled = false`) so settlement math keeps its fee rate and title; a
- * never-used method is removed outright. The COD row is `locked`: always
- * present, always enabled, always fee-free.
+ * Removed methods are archived, never deleted: orders and in-flight checkouts
+ * keep a stable code and collector. COD is always enabled and fee-free.
  */
 export const paymentMethods = pgTable(
   'payment_methods',
@@ -44,6 +42,8 @@ export const paymentMethods = pgTable(
     // checkout through the bKash hosted flow using the platform credentials.
     gateway: paymentGatewayEnum('gateway').notNull().default('none'),
     enabled: boolean('enabled').notNull().default(true),
+    // Removed from configuration and checkout; still available to accounting.
+    archivedAt: timestamp('archived_at', { withTimezone: true }),
     locked: boolean('locked').notNull().default(false),
     sortOrder: integer('sort_order').notNull().default(0),
     createdAt: timestamp('created_at', { withTimezone: true })

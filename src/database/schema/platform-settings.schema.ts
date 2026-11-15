@@ -8,12 +8,8 @@ import {
   varchar,
 } from 'drizzle-orm/pg-core';
 
-/**
- * Couriers the platform can book parcels with. Stored on orders as
- * `courier_provider`, so the strings are part of the data - append, don't
- * rename.
- */
-export const COURIER_PROVIDERS = ['carrybee', 'steadfast', 'pathao'] as const;
+/** Providers available for new bookings. Historical orders retain their provider. */
+export const COURIER_PROVIDERS = ['carrybee'] as const;
 export type CourierProvider = (typeof COURIER_PROVIDERS)[number];
 
 /**
@@ -89,11 +85,10 @@ export const platformSettings = pgTable('platform_settings', {
   // shop cannot edit, so its consignment - not the seller's word - is what
   // moves an order to Shipped/Delivered and what the sales meter trusts.
   //
-  // At most one provider is `enabled` at a time (enabling one clears the
-  // others); `courierRequired` then decides whether a shop may still ship a
-  // parcel outside it. Secrets never leave the API in readable form.
+  // `courierRequired` decides whether a shop may still ship a parcel
+  // outside CarryBee. Secrets never leave the API in readable form.
   //
-  // CarryBee (developers.carrybee.com) - the primary integration.
+  // CarryBee (developers.carrybee.com) - the platform courier.
   //
   // One credential set, and `carrybeeProduction` says which environment it is
   // for: the operator holds a single working account at a time, and carrying
@@ -126,19 +121,6 @@ export const platformSettings = pgTable('platform_settings', {
     'carrybee_webhook_registration_until',
     { withTimezone: true },
   ),
-  // Steadfast (portal.packzy.com), kept as a fallback carrier. Routes on the
-  // written address, so it needs no pickup store at all.
-  steadfastEnabled: boolean('steadfast_enabled').notNull().default(false),
-  steadfastApiKey: text('steadfast_api_key'),
-  steadfastSecretKey: text('steadfast_secret_key'),
-  // Pathao (api-hermes.pathao.com), kept as a fallback carrier. Its pickup
-  // store is per shop for the same reason CarryBee's is.
-  pathaoEnabled: boolean('pathao_enabled').notNull().default(false),
-  pathaoProduction: boolean('pathao_production').notNull().default(false),
-  pathaoClientId: text('pathao_client_id'),
-  pathaoClientSecret: text('pathao_client_secret'),
-  pathaoUsername: text('pathao_username'),
-  pathaoPassword: text('pathao_password'),
   // When on, a shop may only ship through the platform courier: the manual
   // Shipped/Delivered steps disappear and an order can't leave 'HandedOver'
   // without a consignment behind it. Off by default so enabling the feature

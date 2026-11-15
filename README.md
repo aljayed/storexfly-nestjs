@@ -215,3 +215,17 @@ Payouts cover the previous calendar month's eligible receipts and are sent on th
 `node scripts/test-fee-postgres.cjs` runs the migrations and payout/undo/concurrency checks against a temporary local PostgreSQL cluster. Set `PG_BIN` to the folder containing `initdb` and `pg_ctl`. It never reads application database credentials.
 
 The production entrypoint is versioned at `scripts/deploy.sh` and installed on the server as `/opt/storexfly/deploy.sh`. It serializes backend/frontend deployments, backs up PostgreSQL, and runs migrations in a one-off container **before** restarting the API. GitHub deployments continue to call the server entrypoint.
+
+## CarryBee courier
+
+CarryBee is the only supported courier for booking, pickup stores, location lookups and tracking. Apply migration `0118_carrybee_only.sql` with this release: it removes retired courier credentials and pickup stores, and the unused per-shop credential table. Historical order consignments and settlement records remain intact; archived providers cannot be refreshed through CarryBee. If CarryBee is disabled or incomplete, the migration releases the platform courier requirement without enabling an account automatically.
+
+Run `node scripts/test-carrybee-migration.cjs` to verify the upgrade against temporary PostgreSQL, including preservation of historical records. It accepts `PG_BIN` and never uses application database credentials.
+
+## Platform payment settings
+
+Apply `0119_archive_payment_methods.sql` with this release. Creating a method saves its collection route and availability together. Collection routes cannot change after creation: add a new method for a different collector. Removal archives a method and retains its code for existing orders and settlement accounting; archived codes are never reused. COD remains enabled and cannot be removed. Gateway processing stays fixed at 4.5%; direct collection has no processing deduction.
+
+Checkout lists gateway methods only when the gateway is enabled and its credentials are complete. Disabling a gateway stops new payments while existing callbacks and SSLCommerz refunds can use its saved credentials. Omitted secret fields preserve stored values. Credential changes invalidate cached bKash tokens.
+
+After building, run `node scripts/test-payment-settings.cjs` for real HTTP validation and temporary PostgreSQL checks covering access control, gateway readiness, secret preservation, catalog changes, archiving, concurrent updates and banner settings. It accepts `PG_BIN` and never uses application database credentials or calls live gateways.

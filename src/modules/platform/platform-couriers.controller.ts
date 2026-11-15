@@ -54,48 +54,6 @@ export class UpdateCarrybeeSettingsDto {
   webhookSecret?: string;
 }
 
-export class UpdatePlatformSteadfastDto {
-  @ApiPropertyOptional() @IsOptional() @IsBoolean() enabled?: boolean;
-  @ApiPropertyOptional()
-  @IsOptional()
-  @IsString()
-  @MaxLength(200)
-  apiKey?: string;
-  @ApiPropertyOptional({ description: WRITE_ONLY })
-  @IsOptional()
-  @IsString()
-  @MaxLength(200)
-  secretKey?: string;
-}
-
-export class UpdatePlatformPathaoDto {
-  @ApiPropertyOptional() @IsOptional() @IsBoolean() enabled?: boolean;
-  @ApiPropertyOptional({ description: 'true = the live Pathao host' })
-  @IsOptional()
-  @IsBoolean()
-  production?: boolean;
-  @ApiPropertyOptional()
-  @IsOptional()
-  @IsString()
-  @MaxLength(200)
-  clientId?: string;
-  @ApiPropertyOptional({ description: WRITE_ONLY })
-  @IsOptional()
-  @IsString()
-  @MaxLength(200)
-  clientSecret?: string;
-  @ApiPropertyOptional({ description: 'Pathao merchant account email' })
-  @IsOptional()
-  @IsString()
-  @MaxLength(254)
-  username?: string;
-  @ApiPropertyOptional({ description: WRITE_ONLY })
-  @IsOptional()
-  @IsString()
-  @MaxLength(200)
-  password?: string;
-}
-
 export class SetCourierRequiredDto {
   @ApiProperty({
     description: 'true = shops may only ship through the platform courier',
@@ -133,18 +91,6 @@ export class PlatformCouriersController {
   @ApiOperation({ summary: 'Platform: update CarryBee credentials' })
   updateCarrybee(@Body() dto: UpdateCarrybeeSettingsDto) {
     return this.settings.updateCarrybee(dto);
-  }
-
-  @Patch('steadfast')
-  @ApiOperation({ summary: 'Platform: update Steadfast credentials' })
-  updateSteadfast(@Body() dto: UpdatePlatformSteadfastDto) {
-    return this.settings.updateSteadfast(dto);
-  }
-
-  @Patch('pathao')
-  @ApiOperation({ summary: 'Platform: update Pathao credentials' })
-  updatePathao(@Body() dto: UpdatePlatformPathaoDto) {
-    return this.settings.updatePathao(dto);
   }
 
   @Patch('required')

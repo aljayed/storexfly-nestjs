@@ -10,11 +10,9 @@ import type { DrizzleDB } from '../../database/drizzle.types';
 import {
   shopCourierStores,
   shops,
-  type CourierProvider,
   type ShopRow,
 } from '../../database/schema';
 import { CarrybeeService, type CarrybeeConfig } from './carrybee.service';
-import { PathaoService, type PathaoConfig } from './pathao.service';
 
 /**
  * The courier pickup store each shop's parcels are collected from.
@@ -36,20 +34,11 @@ export class ShopCourierStoresService {
   constructor(
     @Inject(DRIZZLE) private readonly db: DrizzleDB,
     private readonly carrybee: CarrybeeService,
-    private readonly pathao: PathaoService,
   ) {}
 
-  /**
-   * The shop's store id for this provider, registering one if it has none.
-   *
-   * Steadfast never reaches here - it routes on the written address and has
-   * no concept of a pickup store.
-   */
-  async resolve(
-    shopId: string,
-    provider: Extract<CourierProvider, 'carrybee' | 'pathao'>,
-    config: CarrybeeConfig | PathaoConfig,
-  ): Promise<string> {
+  /** Register the shop's CarryBee pickup store on its first booking. */
+  async resolve(shopId: string, config: CarrybeeConfig): Promise<string> {
+    const provider = 'carrybee';
     const existing = await this.db.query.shopCourierStores.findFirst({
       where: and(
         eq(shopCourierStores.shopId, shopId),
@@ -64,26 +53,15 @@ export class ShopCourierStoresService {
     if (!shop) throw new BadRequestException('Shop not found');
     const pickup = this.requirePickup(shop);
 
-    const storeId =
-      provider === 'carrybee'
-        ? await this.carrybee.createStore(config as CarrybeeConfig, {
-            name: storeName(shop),
-            contactPersonName: pickup.contactName,
-            contactPersonNumber: pickup.phone,
-            address: pickup.address,
-            cityId: pickup.cityId,
-            zoneId: pickup.zoneId,
-            areaId: pickup.areaId,
-          })
-        : await this.pathao.createStore(config as PathaoConfig, {
-            name: storeName(shop),
-            contactName: pickup.contactName,
-            contactNumber: pickup.phone,
-            address: pickup.address,
-            cityId: pickup.cityId,
-            zoneId: pickup.zoneId,
-            areaId: pickup.areaId,
-          });
+    const storeId = await this.carrybee.createStore(config, {
+      name: storeName(shop),
+      contactPersonName: pickup.contactName,
+      contactPersonNumber: pickup.phone,
+      address: pickup.address,
+      cityId: pickup.cityId,
+      zoneId: pickup.zoneId,
+      areaId: pickup.areaId,
+    });
 
     // A duplicate insert means two bookings raced; the courier now holds two
     // identical stores, which is untidy but harmless, and both bookings must

@@ -363,7 +363,7 @@ export class OrdersController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary:
-      'Admin: book a parcel on the platform courier (COD amount auto-set; Pathao needs cityId/zoneId)',
+      'Admin: book a CarryBee parcel (COD amount auto-set; optional cityId/zoneId)',
   })
   bookCourier(
     @Param('shopId') shopId: string,

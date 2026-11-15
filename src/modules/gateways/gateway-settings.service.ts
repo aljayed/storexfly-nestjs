@@ -1,4 +1,4 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { BadRequestException, Inject, Injectable } from '@nestjs/common';
 import { asc, eq } from 'drizzle-orm';
 import { DRIZZLE } from '../../database/database.constants';
 import type { DrizzleDB } from '../../database/drizzle.types';
@@ -70,24 +70,22 @@ export class GatewaySettingsService {
     return created;
   }
 
-  async bkashConfig(): Promise<BkashConfig | null> {
+  async bkashConfig(includeDisabled = false): Promise<BkashConfig | null> {
     const row = await this.row();
     if (
-      !row?.bkashEnabled ||
-      !row.bkashAppKey ||
-      !row.bkashAppSecret ||
-      !row.bkashUsername ||
-      !row.bkashPassword
+      !row ||
+      (!includeDisabled && !row.bkashEnabled) ||
+      !this.bkashComplete(row)
     ) {
       return null;
     }
     return {
-      enabled: true,
+      enabled: row.bkashEnabled,
       sandbox: row.bkashSandbox,
-      appKey: row.bkashAppKey,
-      appSecret: row.bkashAppSecret,
-      username: row.bkashUsername,
-      password: row.bkashPassword,
+      appKey: row.bkashAppKey!,
+      appSecret: row.bkashAppSecret!,
+      username: row.bkashUsername!,
+      password: row.bkashPassword!,
     };
   }
 
@@ -96,20 +94,22 @@ export class GatewaySettingsService {
    * Store id + store password are the entire credential set - the same pair
    * signs the session request and the validation call on the way back.
    */
-  async sslcommerzConfig(): Promise<SslcommerzConfig | null> {
+  async sslcommerzConfig(
+    includeDisabled = false,
+  ): Promise<SslcommerzConfig | null> {
     const row = await this.row();
     if (
-      !row?.sslcommerzEnabled ||
-      !row.sslcommerzStoreId ||
-      !row.sslcommerzStorePassword
+      !row ||
+      (!includeDisabled && !row.sslcommerzEnabled) ||
+      !this.sslcommerzComplete(row)
     ) {
       return null;
     }
     return {
-      enabled: true,
+      enabled: row.sslcommerzEnabled,
       sandbox: row.sslcommerzSandbox,
-      storeId: row.sslcommerzStoreId,
-      storePassword: row.sslcommerzStorePassword,
+      storeId: row.sslcommerzStoreId!,
+      storePassword: row.sslcommerzStorePassword!,
     };
   }
 
@@ -123,19 +123,14 @@ export class GatewaySettingsService {
         username: row?.bkashUsername ?? null,
         hasSecret: !!row?.bkashAppSecret,
         hasPassword: !!row?.bkashPassword,
-        configured: !!(
-          row?.bkashAppKey &&
-          row.bkashAppSecret &&
-          row.bkashUsername &&
-          row.bkashPassword
-        ),
+        configured: this.bkashComplete(row),
       },
       sslcommerz: {
         enabled: row?.sslcommerzEnabled ?? false,
         sandbox: row?.sslcommerzSandbox ?? true,
         storeId: row?.sslcommerzStoreId ?? null,
         hasPassword: !!row?.sslcommerzStorePassword,
-        configured: !!(row?.sslcommerzStoreId && row.sslcommerzStorePassword),
+        configured: this.sslcommerzComplete(row),
       },
     };
   }
@@ -150,24 +145,32 @@ export class GatewaySettingsService {
     password?: string;
   }): Promise<GatewaySettingsView> {
     const row = await this.requireRow();
+    const changes: Partial<PlatformSettingsRow> = {
+      ...(patch.enabled !== undefined && { bkashEnabled: patch.enabled }),
+      ...(patch.sandbox !== undefined && { bkashSandbox: patch.sandbox }),
+      ...(patch.appKey !== undefined && {
+        bkashAppKey: patch.appKey.trim() || null,
+      }),
+      ...(patch.appSecret !== undefined && {
+        bkashAppSecret: patch.appSecret.trim() || null,
+      }),
+      ...(patch.username !== undefined && {
+        bkashUsername: patch.username.trim() || null,
+      }),
+      ...(patch.password !== undefined && {
+        bkashPassword: patch.password.trim() || null,
+      }),
+    };
+    if (!Object.keys(changes).length) return this.view();
+    const merged = { ...row, ...changes };
+    if (merged.bkashEnabled && !this.bkashComplete(merged)) {
+      throw new BadRequestException(
+        'Add the bKash app key, secret, username and password before enabling it.',
+      );
+    }
     await this.db
       .update(platformSettings)
-      .set({
-        ...(patch.enabled !== undefined && { bkashEnabled: patch.enabled }),
-        ...(patch.sandbox !== undefined && { bkashSandbox: patch.sandbox }),
-        ...(patch.appKey !== undefined && {
-          bkashAppKey: patch.appKey.trim() || null,
-        }),
-        ...(patch.appSecret !== undefined && {
-          bkashAppSecret: patch.appSecret.trim() || null,
-        }),
-        ...(patch.username !== undefined && {
-          bkashUsername: patch.username.trim() || null,
-        }),
-        ...(patch.password !== undefined && {
-          bkashPassword: patch.password.trim() || null,
-        }),
-      })
+      .set(changes)
       .where(eq(platformSettings.id, row.id));
     return this.view();
   }
@@ -180,23 +183,45 @@ export class GatewaySettingsService {
     storePassword?: string;
   }): Promise<GatewaySettingsView> {
     const row = await this.requireRow();
+    const changes: Partial<PlatformSettingsRow> = {
+      ...(patch.enabled !== undefined && {
+        sslcommerzEnabled: patch.enabled,
+      }),
+      ...(patch.sandbox !== undefined && {
+        sslcommerzSandbox: patch.sandbox,
+      }),
+      ...(patch.storeId !== undefined && {
+        sslcommerzStoreId: patch.storeId.trim() || null,
+      }),
+      ...(patch.storePassword !== undefined && {
+        sslcommerzStorePassword: patch.storePassword.trim() || null,
+      }),
+    };
+    if (!Object.keys(changes).length) return this.view();
+    const merged = { ...row, ...changes };
+    if (merged.sslcommerzEnabled && !this.sslcommerzComplete(merged)) {
+      throw new BadRequestException(
+        'Add the SSLCommerz store ID and password before enabling it.',
+      );
+    }
     await this.db
       .update(platformSettings)
-      .set({
-        ...(patch.enabled !== undefined && {
-          sslcommerzEnabled: patch.enabled,
-        }),
-        ...(patch.sandbox !== undefined && {
-          sslcommerzSandbox: patch.sandbox,
-        }),
-        ...(patch.storeId !== undefined && {
-          sslcommerzStoreId: patch.storeId.trim() || null,
-        }),
-        ...(patch.storePassword !== undefined && {
-          sslcommerzStorePassword: patch.storePassword.trim() || null,
-        }),
-      })
+      .set(changes)
       .where(eq(platformSettings.id, row.id));
     return this.view();
+  }
+  private bkashComplete(row?: PlatformSettingsRow): boolean {
+    return !!(
+      row?.bkashAppKey?.trim() &&
+      row.bkashAppSecret?.trim() &&
+      row.bkashUsername?.trim() &&
+      row.bkashPassword?.trim()
+    );
+  }
+
+  private sslcommerzComplete(row?: PlatformSettingsRow): boolean {
+    return !!(
+      row?.sslcommerzStoreId?.trim() && row.sslcommerzStorePassword?.trim()
+    );
   }
 }

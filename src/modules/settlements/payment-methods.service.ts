@@ -5,17 +5,13 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { asc, eq, sql } from 'drizzle-orm';
+import { asc, eq, isNull, and } from 'drizzle-orm';
 import { DRIZZLE } from '../../database/database.constants';
 import type { DrizzleDB } from '../../database/drizzle.types';
-import {
-  orders,
-  paymentMethods,
-  platformSettings,
-} from '../../database/schema';
+import { paymentMethods, platformSettings } from '../../database/schema';
 import type { PaymentMethodRow } from '../../database/schema';
 import { SERVICE_FEE_BP } from '../../common/constants/billing';
-import { CARD_FEE_BP, MBANK_FEE_BP } from './settlement.constants';
+import { GatewaySettingsService } from '../gateways/gateway-settings.service';
 
 /** Online (fee-carrying) method kinds an operator can add. */
 export type OnlineMethodKind = 'mbank' | 'card';
@@ -56,30 +52,42 @@ export interface PaymentMethodView {
  * The checkout payment methods, managed from the platform-admin console.
  * Checkout, the item form and all settlement math read the catalog through
  * here, so an operator's change is live everywhere immediately. COD is a
- * locked row: always present, always enabled, always fee-free. Deleting a
- * method that historical orders reference merely disables it, so those
- * orders keep settling with the fee rate they were sold under.
+ * locked row: always present, always enabled, always fee-free. Removed methods
+ * remain in the accounting catalog, and collection routes are immutable so
+ * changing checkout configuration cannot reclassify past receipts.
  */
 @Injectable()
 export class PaymentMethodsService {
-  constructor(@Inject(DRIZZLE) private readonly db: DrizzleDB) {}
+  constructor(
+    @Inject(DRIZZLE) private readonly db: DrizzleDB,
+    private readonly gateways: GatewaySettingsService,
+  ) {}
 
   /** Buyer/seller-facing catalog: enabled methods in display order. */
   async listEnabled(): Promise<PaymentMethodView[]> {
     const rows = await this.ensureSeeded();
-    return rows.filter((m) => m.enabled).map(view);
+    const gateways = await this.gateways.view();
+    return rows
+      .filter(
+        (m) =>
+          m.enabled &&
+          !m.archivedAt &&
+          (m.gateway === 'none' ||
+            (gateways[m.gateway].enabled && gateways[m.gateway].configured)),
+      )
+      .map(view);
   }
 
   /**
-   * Operator-facing catalog: every method, switched off ones included. The
+   * Operator-facing catalog: unarchived methods, switched off ones included. The
    * console is the one place that has to see a disabled method - it is what
    * you switch back on.
    */
   async listAll(): Promise<PaymentMethodView[]> {
-    return (await this.ensureSeeded()).map(view);
+    return (await this.ensureSeeded()).filter((m) => !m.archivedAt).map(view);
   }
 
-  /** Every method (disabled included), keyed by code - for settlement math. */
+  /** Every method (disabled and archived included), keyed by code for accounting. */
   async byCode(): Promise<Map<string, PaymentMethodRow>> {
     const rows = await this.ensureSeeded();
     return new Map(
@@ -92,7 +100,7 @@ export class PaymentMethodsService {
 
   async findEnabledByCode(code: string): Promise<PaymentMethodRow | undefined> {
     const rows = await this.ensureSeeded();
-    return rows.find((m) => m.code === code && m.enabled);
+    return rows.find((m) => m.code === code && m.enabled && !m.archivedAt);
   }
 
   async create(input: {
@@ -100,27 +108,40 @@ export class PaymentMethodsService {
     title: string;
     subtitle?: string;
     subtitleIcons?: boolean;
-    feePercent: number;
+    feePercent?: number;
+    gateway?: PaymentGatewayChoice;
+    enabled?: boolean;
   }): Promise<PaymentMethodView> {
     const rows = await this.ensureSeeded();
     const title = input.title.trim();
     if (!title) throw new BadRequestException('Enter a name for the method.');
 
-    const code = uniqueCode(title, rows);
-    const maxSort = Math.max(0, ...rows.map((m) => m.sortOrder));
-    const [row] = await this.db
-      .insert(paymentMethods)
-      .values({
-        code,
-        kind: input.kind,
-        title,
-        subtitle: input.subtitle?.trim() || null,
-        subtitleIcons: input.subtitleIcons ?? true,
-        feeBp: toBp(input.feePercent),
-        sortOrder: maxSort + 1,
-      })
-      .returning();
-    return view(row);
+    const gateway = input.gateway ?? 'none';
+    validateGatewayKind(input.kind, gateway);
+    const feeBp = processingFee(gateway, input.feePercent);
+    // The unique index arbitrates concurrent creates with the same title.
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const current = attempt === 0 ? rows : await this.ensureSeeded();
+      const [row] = await this.db
+        .insert(paymentMethods)
+        .values({
+          code: uniqueCode(title, current),
+          kind: input.kind,
+          title,
+          subtitle: input.subtitle?.trim() || null,
+          subtitleIcons: input.subtitleIcons ?? true,
+          gateway,
+          enabled: input.enabled ?? true,
+          feeBp,
+          sortOrder: Math.max(0, ...current.map((m) => m.sortOrder)) + 1,
+        })
+        .onConflictDoNothing({ target: paymentMethods.code })
+        .returning();
+      if (row) return view(row);
+    }
+    throw new ConflictException(
+      'Another method was added at the same time. Please try again.',
+    );
   }
 
   async update(
@@ -147,79 +168,50 @@ export class PaymentMethodsService {
     if (patch.subtitleIcons !== undefined) {
       set.subtitleIcons = patch.subtitleIcons;
     }
-    if (patch.feePercent !== undefined) {
-      if (row.locked && toBp(patch.feePercent) !== 0) {
-        throw new BadRequestException('Cash on Delivery is always free.');
-      }
-      set.feeBp = row.locked ? 0 : toBp(patch.feePercent);
-    }
     if (patch.enabled !== undefined) {
       // COD is the floor under every shop: there is always one way to buy
       // that needs no gateway, no card and no wallet. Switching it off would
       // leave a shop with no configured gateway unable to sell at all.
-      if (row.locked && !patch.enabled) {
+      if ((row.locked || row.kind === 'cod') && !patch.enabled) {
         throw new BadRequestException(
           'Cash on Delivery is built in and cannot be switched off.',
         );
       }
       set.enabled = patch.enabled;
     }
-    if (patch.gateway !== undefined) {
-      if (row.kind === 'cod' && patch.gateway !== 'none') {
-        throw new BadRequestException(
-          'Cash on Delivery cannot run through a gateway.',
-        );
-      }
-      set.gateway = patch.gateway;
+    // Orders store the method code, so changing its collector would reclassify
+    // existing receipts and unpaid settlements. A different route needs a new code.
+    if (patch.gateway !== undefined && patch.gateway !== row.gateway) {
+      throw new BadRequestException(
+        'Money collection cannot change on an existing method. Add a new method to preserve payment and settlement history.',
+      );
     }
-    // Gateway processing is fixed at 4.5%; direct collection is not charged
-    // here. Retail sales fees are accounted for separately, exactly once.
-    const gateway = set.gateway ?? row.gateway;
-    if (gateway !== 'none') {
-      if (
-        patch.feePercent !== undefined &&
-        toBp(patch.feePercent) !== SERVICE_FEE_BP
-      ) {
-        throw new BadRequestException(
-          `Online payment processing is fixed at ${SERVICE_FEE_BP / 100}%.`,
-        );
-      }
-      set.feeBp = SERVICE_FEE_BP;
-    } else {
-      set.feeBp = 0;
-    }
+    set.feeBp = processingFee(row.gateway, patch.feePercent);
     const [updated] = await this.db
       .update(paymentMethods)
       .set(set)
-      .where(eq(paymentMethods.id, id))
+      .where(and(eq(paymentMethods.id, id), isNull(paymentMethods.archivedAt)))
       .returning();
+    if (!updated)
+      throw new NotFoundException(
+        'Payment method was removed. Refresh the list.',
+      );
     return view(updated);
   }
 
-  /**
-   * Removes a method from checkout. Hard-deletes when no order ever used it;
-   * otherwise disables it so settlement history keeps its title and fee rate.
-   */
+  /** Archive without deleting or reusing a code an in-flight checkout may hold. */
   async remove(id: string): Promise<{ archived: boolean }> {
     const row = await this.requireById(id);
-    if (row.locked) {
+    if (row.locked || row.kind === 'cod') {
       throw new ConflictException(
         'Cash on Delivery is built in and cannot be removed.',
       );
     }
-    const [{ used }] = await this.db
-      .select({ used: sql<number>`count(*)::int` })
-      .from(orders)
-      .where(eq(orders.paymentMethod, row.code));
-    if (used > 0) {
-      await this.db
-        .update(paymentMethods)
-        .set({ enabled: false })
-        .where(eq(paymentMethods.id, id));
-      return { archived: true };
-    }
-    await this.db.delete(paymentMethods).where(eq(paymentMethods.id, id));
-    return { archived: false };
+    await this.db
+      .update(paymentMethods)
+      .set({ enabled: false, archivedAt: new Date() })
+      .where(eq(paymentMethods.id, id));
+    return { archived: true };
   }
 
   /* ── Settlement info banner ────────────────────────────────────── */
@@ -259,7 +251,8 @@ export class PaymentMethodsService {
     const row = await this.db.query.paymentMethods.findFirst({
       where: eq(paymentMethods.id, id),
     });
-    if (!row) throw new NotFoundException('Payment method not found');
+    if (!row || row.archivedAt)
+      throw new NotFoundException('Payment method not found');
     return row;
   }
 
@@ -289,7 +282,7 @@ export class PaymentMethodsService {
           kind: 'mbank',
           title: 'Mobile banking',
           subtitle: 'bKash · Nagad · Rocket',
-          feeBp: MBANK_FEE_BP,
+          feeBp: 0,
           sortOrder: 1,
         },
         {
@@ -297,7 +290,7 @@ export class PaymentMethodsService {
           kind: 'card',
           title: 'Card',
           subtitle: 'Visa · Mastercard - via SSLCommerz',
-          feeBp: CARD_FEE_BP,
+          feeBp: 0,
           sortOrder: 2,
         },
       ])
@@ -341,4 +334,33 @@ function view(m: PaymentMethodRow): PaymentMethodView {
     gateway: m.gateway,
     enabled: m.enabled,
   };
+}
+
+function validateGatewayKind(
+  kind: OnlineMethodKind,
+  gateway: PaymentGatewayChoice,
+): void {
+  if (kind === 'card' && gateway === 'bkash') {
+    throw new BadRequestException(
+      'bKash is a mobile banking gateway. Use SSLCommerz for a card method.',
+    );
+  }
+}
+
+function processingFee(
+  gateway: PaymentGatewayChoice,
+  percent?: number,
+): number {
+  const expected = gateway === 'none' ? 0 : SERVICE_FEE_BP;
+  if (
+    percent !== undefined &&
+    (!Number.isFinite(percent) || toBp(percent) !== expected)
+  ) {
+    throw new BadRequestException(
+      gateway === 'none'
+        ? 'Direct collection and Cash on Delivery have no processing fee.'
+        : `Online payment processing is fixed at ${SERVICE_FEE_BP / 100}%.`,
+    );
+  }
+  return expected;
 }

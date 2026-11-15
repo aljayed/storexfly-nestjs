@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import {
   Injectable,
   Logger,
@@ -50,7 +51,7 @@ export class BkashService {
   private readonly logger = new Logger(BkashService.name);
   private cachedToken: {
     token: string;
-    base: string;
+    credentialsKey: string;
     expiresAt: number;
   } | null = null;
 
@@ -61,8 +62,8 @@ export class BkashService {
     return !!(await this.settings.bkashConfig());
   }
 
-  private async requireConfig(): Promise<BkashConfig> {
-    const config = await this.settings.bkashConfig();
+  private async requireConfig(includeDisabled = false): Promise<BkashConfig> {
+    const config = await this.settings.bkashConfig(includeDisabled);
     if (!config) {
       throw new ServiceUnavailableException(
         'bKash payments are not available right now - please pick another method.',
@@ -99,9 +100,20 @@ export class BkashService {
   /** Grant (or reuse) an id_token for the configured environment. */
   private async token(config: BkashConfig): Promise<string> {
     const base = this.baseUrl(config);
+    const credentialsKey = createHash('sha256')
+      .update(
+        JSON.stringify([
+          base,
+          config.appKey,
+          config.appSecret,
+          config.username,
+          config.password,
+        ]),
+      )
+      .digest('hex');
     if (
       this.cachedToken &&
-      this.cachedToken.base === base &&
+      this.cachedToken.credentialsKey === credentialsKey &&
       this.cachedToken.expiresAt > Date.now()
     ) {
       return this.cachedToken.token;
@@ -119,7 +131,7 @@ export class BkashService {
     const ttlMs = (parseInt(data.expires_in ?? '3600', 10) || 3600) * 1000;
     this.cachedToken = {
       token: data.id_token,
-      base,
+      credentialsKey,
       expiresAt: Date.now() + ttlMs - TOKEN_SAFETY_MS,
     };
     return data.id_token;
@@ -173,7 +185,7 @@ export class BkashService {
 
   /** Capture the money after the buyer approved the payment on bKash. */
   async executePayment(paymentId: string): Promise<BkashExecuteResult> {
-    const config = await this.requireConfig();
+    const config = await this.requireConfig(true);
     try {
       const token = await this.token(config);
       const data = await this.post<{

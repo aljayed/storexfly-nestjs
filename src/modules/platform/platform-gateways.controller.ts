@@ -5,58 +5,64 @@ import {
   ApiPropertyOptional,
   ApiTags,
 } from '@nestjs/swagger';
-import { IsBoolean, IsOptional, IsString, MaxLength } from 'class-validator';
+import { IsBoolean, IsString, MaxLength, ValidateIf } from 'class-validator';
 import { Public } from '../../common/decorators/public.decorator';
 import { PlatformJwtAuthGuard } from '../../common/guards/platform-jwt-auth.guard';
 import { GatewaySettingsService } from '../gateways/gateway-settings.service';
 
 export class UpdateBkashSettingsDto {
-  @ApiPropertyOptional() @IsOptional() @IsBoolean() enabled?: boolean;
+  @ApiPropertyOptional()
+  @ValidateIf((_, value) => value !== undefined)
+  @IsBoolean()
+  enabled?: boolean;
   @ApiPropertyOptional({ description: 'true = bKash sandbox environment' })
-  @IsOptional()
+  @ValidateIf((_, value) => value !== undefined)
   @IsBoolean()
   sandbox?: boolean;
   @ApiPropertyOptional()
-  @IsOptional()
+  @ValidateIf((_, value) => value !== undefined)
   @IsString()
   @MaxLength(200)
   appKey?: string;
   @ApiPropertyOptional({
     description: 'Write-only; omit to keep the stored value',
   })
-  @IsOptional()
+  @ValidateIf((_, value) => value !== undefined)
   @IsString()
   @MaxLength(200)
   appSecret?: string;
   @ApiPropertyOptional()
-  @IsOptional()
+  @ValidateIf((_, value) => value !== undefined)
   @IsString()
   @MaxLength(200)
   username?: string;
   @ApiPropertyOptional({
     description: 'Write-only; omit to keep the stored value',
   })
-  @IsOptional()
+  @ValidateIf((_, value) => value !== undefined)
   @IsString()
   @MaxLength(200)
   password?: string;
 }
 
 export class UpdateSslcommerzSettingsDto {
-  @ApiPropertyOptional() @IsOptional() @IsBoolean() enabled?: boolean;
+  @ApiPropertyOptional()
+  @ValidateIf((_, value) => value !== undefined)
+  @IsBoolean()
+  enabled?: boolean;
   @ApiPropertyOptional({ description: 'true = sandbox.sslcommerz.com' })
-  @IsOptional()
+  @ValidateIf((_, value) => value !== undefined)
   @IsBoolean()
   sandbox?: boolean;
   @ApiPropertyOptional({ description: 'Merchant panel store id' })
-  @IsOptional()
+  @ValidateIf((_, value) => value !== undefined)
   @IsString()
   @MaxLength(200)
   storeId?: string;
   @ApiPropertyOptional({
     description: 'Write-only; omit to keep the stored value',
   })
-  @IsOptional()
+  @ValidateIf((_, value) => value !== undefined)
   @IsString()
   @MaxLength(200)
   storePassword?: string;

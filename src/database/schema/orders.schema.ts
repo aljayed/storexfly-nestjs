@@ -99,9 +99,8 @@ export const orders = pgTable(
     couponCode: varchar('coupon_code', { length: 40 }),
     discountCents: integer('discount_cents').notNull().default(0),
     // ── Courier consignment (set when the seller books) ────────────
-    // Which provider booked it ('carrybee' | 'steadfast' | 'pathao'); null on
-    // legacy rows booked before the provider was recorded, which were all
-    // Steadfast. Bookings run on the platform's own courier account.
+    // Provider recorded at booking. New parcels use CarryBee; keep historical
+    // provider values and consignments intact for order and settlement records.
     courierProvider: varchar('courier_provider', { length: 20 }),
     courierConsignmentId: varchar('courier_consignment_id', { length: 64 }),
     courierTrackingCode: varchar('courier_tracking_code', { length: 64 }),
