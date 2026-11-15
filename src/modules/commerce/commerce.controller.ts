@@ -22,6 +22,7 @@ import { CommerceService } from './commerce.service';
 import {
   DisputeDecisionDto,
   OpenDisputeDto,
+  PlatformDisputesQueryDto,
   QuoteDecisionDto,
   RequestQuoteDto,
   ResolveDisputeDto,
@@ -188,8 +189,8 @@ export class CommerceAdminController {
 @Controller('platform/trade')
 export class CommercePlatformController {
   constructor(private readonly service: CommerceService) {}
-  @Get('disputes') disputes() {
-    return this.service.platformDisputes();
+  @Get('disputes') disputes(@Query() query: PlatformDisputesQueryDto) {
+    return this.service.platformDisputes(query.status);
   }
   @Patch('disputes/:id') resolve(
     @Param('id', ParseUUIDPipe) id: string,

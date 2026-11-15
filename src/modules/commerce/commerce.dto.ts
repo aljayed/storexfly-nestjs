@@ -141,3 +141,9 @@ export class ResolveDisputeDto {
 export class DisputeDecisionDto {
   @IsIn(['accept', 'escalate']) action!: 'accept' | 'escalate';
 }
+
+export class PlatformDisputesQueryDto {
+  @IsOptional()
+  @IsIn(['active', 'resolved'])
+  status?: 'active' | 'resolved';
+}

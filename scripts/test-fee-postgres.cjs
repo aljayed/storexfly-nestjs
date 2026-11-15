@@ -65,7 +65,7 @@ const literal = value => "'" + value.replaceAll("'", "''") + "'";
     await client`UPDATE orders SET platform_fee_bp=0,reseller_shop_id=${retail},reseller_margin_cents=45000 WHERE reference='#cash'`;
     const db = drizzle(client, { schema });
     const methods = new Map((await db.query.paymentMethods.findMany()).map(m => [m.code,m]));
-    const feeService = new ServiceFeesService(db, { byCode: async () => methods }, {}, { send: async () => { throw Error('No outbound mail in a local test') } });
+    const feeService = new ServiceFeesService(db, { byCode: async () => methods }, {}, { send: async () => { throw Error('No outbound mail in a local test') } }, { getOrThrow: () => 'http://127.0.0.1:5177' });
     const svc = new SettlementsService(db, { requireById: async () => ({ id:supplier,name:'Supplier',handle:'supplier',currency:'BDT' }) }, { byCode: async () => methods }, feeService);
     const proof = { data:'data:application/pdf;base64,AAAA',name:'local-test.pdf' };
     // A normal transfer also settles a held earlier cycle and offsets 450 taka.

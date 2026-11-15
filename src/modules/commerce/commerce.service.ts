@@ -1194,19 +1194,28 @@ export class CommerceService {
       throw new ConflictException('There is no proposed resolution to review.');
     return row;
   }
-  async platformDisputes() {
+  async platformDisputes(status: 'active' | 'resolved' = 'active') {
     return this.db
       .select({
         dispute: tradeDisputes,
         reference: orders.reference,
         totalCents: orders.totalCents,
         supplierName: shops.name,
+        currency: shops.currency,
+        customerName: orders.customerName,
+        commerceMode: orders.commerceMode,
+        orderStatus: orders.status,
+        paymentStatus: orders.pay,
       })
       .from(tradeDisputes)
       .innerJoin(orders, eq(orders.id, tradeDisputes.orderId))
       .innerJoin(shops, eq(shops.id, tradeDisputes.shopId))
-      .where(ne(tradeDisputes.status, 'resolved'))
-      .orderBy(desc(tradeDisputes.createdAt))
+      .where(status === 'resolved'
+        ? eq(tradeDisputes.status, 'resolved')
+        : ne(tradeDisputes.status, 'resolved'))
+      .orderBy(status === 'resolved'
+        ? desc(tradeDisputes.resolvedAt)
+        : desc(tradeDisputes.createdAt))
       .limit(200);
   }
   async platformResolve(id: string, resolution: string) {

@@ -229,3 +229,9 @@ Apply `0119_archive_payment_methods.sql` with this release. Creating a method sa
 Checkout lists gateway methods only when the gateway is enabled and its credentials are complete. Disabling a gateway stops new payments while existing callbacks and SSLCommerz refunds can use its saved credentials. Omitted secret fields preserve stored values. Credential changes invalidate cached bKash tokens.
 
 After building, run `node scripts/test-payment-settings.cjs` for real HTTP validation and temporary PostgreSQL checks covering access control, gateway readiness, secret preservation, catalog changes, archiving, concurrent updates and banner settings. It accepts `PG_BIN` and never uses application database credentials or calls live gateways.
+
+## Balance reminder emails
+
+Service-fee and supplier-balance reminders, shop-paused notices, and shop-restored notices use a shared HTML design with a plain-text alternative. Payment actions link to `/admin/settlements#service-fees` using the configured `PUBLIC_WEB_URL`. The link opens the statement; payment starts only when the seller chooses to pay in the console. Restored-shop notices use a “View payouts” action.
+
+After building, run `node scripts/preview-service-fee-emails.cjs` to generate local HTML/text previews for all three notices; it never sends mail. Run `npm test -- --runInBand service-fee-email.spec.ts` to check content, escaping, deadline formatting, links and notification integration. Release with the frontend's balance-link sign-in return support. No database migration is required.

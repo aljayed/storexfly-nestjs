@@ -1,3 +1,4 @@
+import { ConfigService } from '@nestjs/config';
 import {
   BadRequestException,
   Inject,
@@ -41,6 +42,7 @@ import {
   type CollectingGateway,
 } from '../gateways/gateway-checkout.service';
 import { MailService } from '../mail/mail.service';
+import { serviceFeeEmail } from './service-fee-email';
 import { PaymentMethodsService } from '../settlements/payment-methods.service';
 import {
   allocate,
@@ -135,6 +137,7 @@ export class ServiceFeesService implements OnModuleInit, OnModuleDestroy {
     private readonly methods: PaymentMethodsService,
     private readonly gatewayCheckout: GatewayCheckoutService,
     private readonly mail: MailService,
+    private readonly config: ConfigService,
   ) {}
 
   onModuleInit(): void {
@@ -661,43 +664,16 @@ export class ServiceFeesService implements OnModuleInit, OnModuleDestroy {
           timeZone: 'Asia/Dhaka',
         })
       : '';
-    const balanceName =
-      position.feePercent === 0 ? 'supplier balance' : 'service fee balance';
-    const balanceSource =
-      position.feePercent === 0
-        ? 'reseller money you collected or online processing your proceeds did not cover'
-        : 'orders you collected payment for';
-    const copy = {
-      over: {
-        subject: `${shop.name}: ${balanceName} of ${amount} to pay by ${payBy}`,
-        lines: [
-          `Your shop ${shop.name} has a ${balanceName} of ${amount} from ${balanceSource}.`,
-          `Please pay it by ${payBy} to keep your shop open. It takes a minute: open your seller console, go to Payouts and choose Pay.`,
-        ],
-      },
-      suspended: {
-        subject: `${shop.name} is paused until its outstanding balance is paid`,
-        lines: [
-          `Your shop ${shop.name} has been paused because a ${balanceName} of ${amount} was not paid in time.`,
-          'Nothing is lost. Open your seller console, go to Payouts and choose Pay - your shop reopens the moment the balance is cleared.',
-        ],
-      },
-      restored: {
-        subject: `${shop.name} is open again`,
-        lines: [
-          `Thank you - the outstanding balance for ${shop.name} is cleared and your shop is live again.`,
-        ],
-      },
-    }[event];
-    const hello = `Hello ${owner.name?.split(' ')[0] || 'there'},`;
-    await this.mail.send({
-      to: owner.email,
-      subject: copy.subject,
-      text: [hello, ...copy.lines, 'Hoomri'].join('\n\n'),
-      html: [hello, ...copy.lines, 'Hoomri']
-        .map((line) => `<p>${escapeHtml(line)}</p>`)
-        .join(''),
+    const email = serviceFeeEmail({
+      event,
+      shopName: shop.name,
+      ownerName: owner.name,
+      amount,
+      payBy,
+      feePercent: position.feePercent,
+      webUrl: this.config.getOrThrow<string>('app.webUrl'),
     });
+    await this.mail.send({ to: owner.email, ...email });
   }
 }
 
@@ -775,11 +751,4 @@ function paymentResponse(row: ServiceFeePaymentRow): ServiceFeePaymentResponse {
     payoutPeriod: row.payoutPeriod ?? undefined,
     paidAt: row.paidAt.toISOString(),
   };
-}
-
-function escapeHtml(text: string): string {
-  return text
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;');
 }
