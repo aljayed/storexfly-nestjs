@@ -178,6 +178,12 @@ export class VariantCombinationDto {
   @MaxLength(64)
   sku?: string;
 
+  @ApiPropertyOptional({ example: '8941100501023' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  barcode?: string;
+
   @ApiPropertyOptional({ default: true })
   @IsOptional()
   @IsBoolean()
@@ -267,6 +273,25 @@ export class CreateProductDto {
   @IsString()
   @MaxLength(60)
   unit!: string;
+
+  @ApiPropertyOptional({
+    example: 'MNG-ALP-12',
+    description: "The seller's own stock code. Empty string clears it.",
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  sku?: string;
+
+  @ApiPropertyOptional({
+    example: '8941100501023',
+    description:
+      'The code printed on the pack (EAN/UPC or any scannable text). Empty string clears it.',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  barcode?: string;
 
   @ApiPropertyOptional({ example: 46, default: 0 })
   @IsOptional()

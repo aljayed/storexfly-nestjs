@@ -37,6 +37,7 @@ export interface PublicVariantCombination {
   stock: number;
   image?: string;
   sku?: string;
+  barcode?: string;
   available: boolean;
 }
 
@@ -71,6 +72,8 @@ export class ProductResponse {
   })
   comparePrice?: number;
   @ApiProperty({ example: 'box of 12' }) unit!: string;
+  @ApiPropertyOptional({ example: 'MNG-ALP-12' }) sku?: string;
+  @ApiPropertyOptional({ example: '8941100501023' }) barcode?: string;
   @ApiProperty() stock!: number;
   /**
    * This item's own delivery charges around its shop's city, each null when
@@ -163,6 +166,8 @@ export class ProductResponse {
         ? centsToDollars(row.comparePriceCents)
         : undefined,
       unit: row.unit,
+      sku: row.sku ?? undefined,
+      barcode: row.barcode ?? undefined,
       stock: row.stock,
       deliveryDhaka:
         row.deliveryDhakaCents == null
@@ -211,6 +216,7 @@ export class ProductResponse {
         stock: c.stock,
         image: c.image ?? undefined,
         sku: c.sku ?? undefined,
+        barcode: c.barcode ?? undefined,
         available: c.available,
       })),
       packs: (row.packs ?? []).map((p) => ({

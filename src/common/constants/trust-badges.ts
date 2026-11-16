@@ -25,6 +25,7 @@ export const TRUST_BADGE_ICONS = [
   'phone',
   'credit-card',
   'banknote',
+  'message-circle',
 ] as const;
 
 export type TrustBadgeIcon = (typeof TRUST_BADGE_ICONS)[number];

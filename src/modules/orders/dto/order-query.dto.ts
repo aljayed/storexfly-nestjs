@@ -1,5 +1,5 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { IsEnum, IsOptional, IsString, MaxLength } from 'class-validator';
+import { IsEnum, IsIn, IsOptional, IsString, MaxLength } from 'class-validator';
 import { PaginationQueryDto } from '../../../common/dto/pagination-query.dto';
 import {
   orderStatusEnum,
@@ -9,6 +9,19 @@ import {
 type OrderStatus = (typeof orderStatusEnum.enumValues)[number];
 type SalesChannel = (typeof salesChannelEnum.enumValues)[number];
 
+/**
+ * The stages where the next move is the seller's: confirm it, pack it, hand
+ * it to the courier. Past that the parcel is the courier's, and Delivered /
+ * Cancelled / Exchanged are finished - none of those need the seller.
+ */
+export const PENDING_ORDER_STATUSES = [
+  'New',
+  'Confirmed',
+  'Packed',
+] as const satisfies readonly OrderStatus[];
+/** `Pending` is a filter over {@link PENDING_ORDER_STATUSES}, not a status. */
+export type OrderStatusFilter = OrderStatus | 'Pending';
+
 export const ORDER_SORTS = ['newest', 'oldest', 'total'] as const;
 export type OrderSort = (typeof ORDER_SORTS)[number];
 
@@ -16,10 +29,14 @@ export const ORDER_MODES = ['retail', 'reseller', 'wholesale', 'trade'] as const
 export type OrderModeFilter = (typeof ORDER_MODES)[number];
 
 export class OrderQueryDto extends PaginationQueryDto {
-  @ApiPropertyOptional({ enum: orderStatusEnum.enumValues })
+  @ApiPropertyOptional({
+    enum: [...orderStatusEnum.enumValues, 'Pending'],
+    description:
+      'One status, or `Pending` for every order still waiting on the seller (New, Confirmed, Packed).',
+  })
   @IsOptional()
-  @IsEnum(orderStatusEnum.enumValues)
-  status?: OrderStatus;
+  @IsIn([...orderStatusEnum.enumValues, 'Pending'])
+  status?: OrderStatusFilter;
 
   @ApiPropertyOptional({ enum: salesChannelEnum.enumValues })
   @IsOptional()

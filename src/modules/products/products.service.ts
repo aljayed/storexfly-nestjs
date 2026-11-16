@@ -266,6 +266,7 @@ export class ProductsService {
             ? ((await this.storage.absorb(c.image, 'products')) ?? null)
             : null,
           sku,
+          barcode: c.barcode?.trim() || null,
           available: c.available ?? true,
         };
       }),
@@ -397,6 +398,8 @@ export class ProductsService {
             ? dollarsToCents(dto.comparePrice)
             : null,
         unit: dto.unit,
+        sku: dto.sku?.trim() || null,
+        barcode: dto.barcode?.trim() || null,
         stock:
           listingType === 'showcase'
             ? 0
@@ -487,6 +490,10 @@ export class ProductsService {
       cat: dto.cat ?? undefined,
       listingType: dto.listingType ?? undefined,
       unit: dto.unit ?? undefined,
+      // Absent leaves the code alone; an empty string clears it.
+      sku: dto.sku === undefined ? undefined : dto.sku.trim() || null,
+      barcode:
+        dto.barcode === undefined ? undefined : dto.barcode.trim() || null,
       stock: dto.stock ?? undefined,
       emoji: dto.emoji ?? undefined,
       tone: dto.tone ?? undefined,

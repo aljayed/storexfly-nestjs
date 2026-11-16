@@ -10,6 +10,10 @@ import {
   type OnModuleDestroy,
   type OnModuleInit,
 } from '@nestjs/common';
+import {
+  PENDING_ORDER_STATUSES,
+  type OrderStatusFilter,
+} from './dto/order-query.dto';
 import { commerceUnitPrice, resellerVariantCombinations, type CommerceMode } from '../../common/commerce/commerce';
 import { ConfigService } from '@nestjs/config';
 import {
@@ -2219,7 +2223,7 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
   async list(
     shopId: string,
     query: {
-      status?: OrderStatus;
+      status?: OrderStatusFilter;
       channel?: SalesChannel;
       q?: string;
       sort?: 'newest' | 'oldest' | 'total';
@@ -2242,7 +2246,11 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
           : undefined,
     )!;
     const conditions = [visible];
-    if (query.status) conditions.push(eq(orders.status, query.status));
+    if (query.status === 'Pending') {
+      conditions.push(inArray(orders.status, [...PENDING_ORDER_STATUSES]));
+    } else if (query.status) {
+      conditions.push(eq(orders.status, query.status));
+    }
     if (query.channel) conditions.push(eq(orders.channel, query.channel));
     const q = query.q?.trim();
     if (q) {
@@ -2293,6 +2301,10 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
       counts[r.status] = r.n;
       counts.All += r.n;
     }
+    counts.Pending = PENDING_ORDER_STATUSES.reduce(
+      (n, s) => n + (counts[s] ?? 0),
+      0,
+    );
     const revenueCents = Number(money.revenueCents);
     const paidCount = Number(money.paidCount);
 

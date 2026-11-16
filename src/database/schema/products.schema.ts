@@ -79,6 +79,8 @@ export interface ProductVariantCombination {
   stock: number;
   image?: string | null;
   sku?: string | null;
+  /** The code printed on this variant's own pack (EAN/UPC), if it has one. */
+  barcode?: string | null;
   available: boolean;
 }
 
@@ -119,6 +121,13 @@ export const products = pgTable(
     // unless it's genuinely above the selling price - never fabricated.
     comparePriceCents: integer('compare_price_cents'),
     unit: varchar('unit', { length: 60 }).notNull(),
+    // The seller's own identifiers, both optional and neither shown to buyers
+    // as a selling point: `sku` is the code they keep stock under, `barcode`
+    // the one printed on the pack (EAN/UPC/any scanner-readable string), so
+    // an item can be found by scanning it. Not unique - the same physical
+    // product is legitimately listed twice (retail and wholesale, say).
+    sku: varchar('sku', { length: 64 }),
+    barcode: varchar('barcode', { length: 64 }),
     stock: integer('stock').notNull().default(0),
     // This item's own delivery charge in integer cents, by zone: inside the
     // shop's dispatch city (named for Dhaka, which that city always was before
@@ -185,6 +194,7 @@ export const products = pgTable(
   (table) => [
     uniqueIndex('products_shop_slug_unique_idx').on(table.shopId, table.slug),
     index('products_shop_cat_idx').on(table.shopId, table.cat),
+    index('products_shop_barcode_idx').on(table.shopId, table.barcode),
   ],
 );
 
